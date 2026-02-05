@@ -68,11 +68,11 @@ services:
       COMPREFACE_API_KEY: "00000000-0000-0000-0000-000000000001"
       COMPREFACE_DETECTION_API_KEY: "00000000-0000-0000-0000-000000000003"
       FRONTEND_URL: http://localhost:3000
-      SMTP_HOST: smtp-relay.brevo.com
-      SMTP_PORT: "587"
-      SMTP_USERNAME: a19eb8001@smtp-brevo.com
-      SMTP_PASSWORD: xsmtpsib-3d8d1f34b735f57ff7587d924e68ac89548982956e6f8550332274b4b4692754-6QxUaiKfkbAo8UnC
-      SMTP_FROM_EMAIL: arvindhsekharan@gmail.com
+      SMTP_HOST: ${SMTP_HOST:-smtp-relay.brevo.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL}
     ports:
       - "8000:8000"
     volumes:
