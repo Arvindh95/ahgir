@@ -1,0 +1,4 @@
+# file: C:\Users\CSM-Arvindh\AppData\Roaming\Python\Python313\site-packages\fastapi\security\http.py
+# hypothesis_version: 6.150.2
+
+[':', 'Authorization', 'Basic', 'Bearer token format.', 'Not authenticated', 'WWW-Authenticate', 'ascii', 'basic', 'bearer', 'digest']

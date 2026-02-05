@@ -1,0 +1,4 @@
+# file: C:\Users\CSM-Arvindh\AppData\Roaming\Python\Python313\site-packages\langsmith\_internal\_background_thread.py
+# hypothesis_version: 6.150.2
+
+[0.05, 0.25, 0.5, 100, 20971520, '_manual_cleanup', 'getrefcount', 'item', 'langsmith.client', 'otel_context', 'priority', 'size_limit', 'size_limit_bytes']

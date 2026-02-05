@@ -1,0 +1,4 @@
+# file: C:\Users\CSM-Arvindh\AppData\Roaming\Python\Python313\site-packages\fastapi\datastructures.py
+# hypothesis_version: 6.150.2
+
+['DefaultType', 'UploadFile', 'binary', 'format', 'string', 'type']

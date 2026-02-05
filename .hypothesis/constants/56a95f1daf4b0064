@@ -1,0 +1,4 @@
+# file: C:\Users\CSM-Arvindh\AppData\Roaming\Python\Python313\site-packages\PIL\PcxImagePlugin.py
+# hypothesis_version: 6.150.2
+
+[b'\x00', b'\xff', -769, 100, 128, 256, 768, 769, '.pcx', '1', 'BBox: %s %s %s %s', 'L', 'P', 'PCX', 'Paintbrush', 'RGB', 'RGB;L', 'bad PCX image size', 'dpi', 'image/x-pcx', 'not a PCX file', 'pcx', 'size: %sx%s', 'unknown PCX mode']

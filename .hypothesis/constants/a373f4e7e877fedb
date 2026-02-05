@@ -1,0 +1,4 @@
+# file: C:\Users\CSM-Arvindh\AppData\Roaming\Python\Python313\site-packages\PIL\WebPImagePlugin.py
+# hypothesis_version: 6.150.2
+
+[b'Exif\x00\x00', b'RIFF', b'VP8 ', b'VP8L', b'VP8X', b'WEBP', 100, 255, 256, '.webp', 'EXIF', 'ICCP', 'RGB', 'RGBA', 'RGBX', 'WEBP', 'WebP image', 'XMP ', 'allow_mixed', 'alpha_quality', 'append_images', 'background', 'duration', 'exact', 'exif', 'icc_profile', 'image/webp', 'kmax', 'kmin', 'loop', 'lossless', 'method', 'minimize_size', 'n_frames', 'quality', 'raw', 'timestamp', 'xmp']

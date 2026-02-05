@@ -1,0 +1,4 @@
+# file: C:\Users\CSM-Arvindh\AppData\Roaming\Python\Python313\site-packages\sqlalchemy\dialects\postgresql\dml.py
+# hypothesis_version: 6.150.2
+
+['Insert', '_post_values_clause', 'excluded', 'insert', 'name', 'postgresql', 'where']

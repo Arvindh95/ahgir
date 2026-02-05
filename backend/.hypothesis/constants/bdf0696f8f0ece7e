@@ -1,0 +1,4 @@
+# file: D:\ahgir\backend\app\models.py
+# hypothesis_version: 6.150.2
+
+[255, 512, 'AuditLog', 'CASCADE', 'Event', 'Face', 'GuestSession', 'Image', 'User', 'action', 'all, delete-orphan', 'audit_logs', 'event', 'event_id', 'events', 'events.id', 'faces', 'file_hash', 'guest_sessions', 'idx_event_hash', 'image', 'images', 'images.id', 'metadata', 'owner', 'rate_limits', 'schema', 'session_id', 'users', 'users.id', 'valid_actor_type', 'valid_status', 'window_start']

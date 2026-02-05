@@ -1,0 +1,88 @@
+# Development configuration (localhost)
+localhost {
+    # Frontend - serve Next.js app
+    handle /* {
+        reverse_proxy frontend:3000
+    }
+
+    # Backend API - strip /api prefix and forward to FastAPI
+    handle /api/* {
+        uri strip_prefix /api
+        reverse_proxy backend:8000
+    }
+
+    # Health check endpoint
+    handle /health {
+        reverse_proxy backend:8000
+    }
+}
+
+# Production configuration (replace with your domain)
+# Uncomment and configure for production deployment
+# {$DOMAIN:picur.example.com} {
+#     # Enable automatic HTTPS with Let's Encrypt
+#     # Caddy will automatically obtain and renew SSL certificates
+#     
+#     # Security headers
+#     header {
+#         # Enable HSTS
+#         Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+#         # Prevent clickjacking
+#         X-Frame-Options "SAMEORIGIN"
+#         # Prevent MIME type sniffing
+#         X-Content-Type-Options "nosniff"
+#         # Enable XSS protection
+#         X-XSS-Protection "1; mode=block"
+#         # Referrer policy
+#         Referrer-Policy "strict-origin-when-cross-origin"
+#         # Remove server header
+#         -Server
+#     }
+#     
+#     # Enable compression
+#     encode gzip zstd
+#     
+#     # Frontend - serve Next.js app
+#     handle /* {
+#         reverse_proxy frontend:3000 {
+#             # Health check for frontend
+#             health_uri /
+#             health_interval 30s
+#             health_timeout 5s
+#         }
+#     }
+#     
+#     # Backend API - strip /api prefix and forward to FastAPI
+#     handle /api/* {
+#         uri strip_prefix /api
+#         reverse_proxy backend:8000 {
+#             # Health check for backend
+#             health_uri /health
+#             health_interval 30s
+#             health_timeout 5s
+#         }
+#     }
+#     
+#     # Health check endpoint (direct access)
+#     handle /health {
+#         reverse_proxy backend:8000
+#     }
+#     
+#     # Rate limiting for API endpoints (optional)
+#     # @api {
+#     #     path /api/*
+#     # }
+#     # rate_limit @api {
+#     #     zone api_limit {
+#     #         key {remote_host}
+#     #         events 100
+#     #         window 1m
+#     #     }
+#     # }
+#     
+#     # Logging
+#     log {
+#         output file /var/log/caddy/access.log
+#         format json
+#     }
+# }

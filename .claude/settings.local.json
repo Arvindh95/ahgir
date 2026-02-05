@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker compose down:*)",
+      "Bash(docker volume:*)",
+      "Bash(docker compose:*)",
+      "Bash(timeout /t 5)",
+      "Bash(docker exec:*)",
+      "Bash(docker logs:*)",
+      "Bash(python:*)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(tasklist:*)",
+      "Bash(wmic process where \"ProcessId=8500 or ProcessId=20240\" get ProcessId,Name,ExecutablePath)",
+      "Bash(powershell -Command \"Get-Process -Id 8500,20240 | Select-Object Id,ProcessName,Path\")",
+      "Bash(docker run:*)",
+      "Bash(docker ps:*)",
+      "Bash(docker build:*)",
+      "Bash(docker-compose logs:*)",
+      "Bash(docker-compose up:*)",
+      "Bash(docker-compose exec:*)",
+      "Bash(docker-compose restart:*)",
+      "Bash(docker-compose stop:*)",
+      "Bash(docker-compose start:*)",
+      "Bash(curl:*)",
+      "Bash(docker-compose build:*)",
+      "Bash(timeout:*)",
+      "Bash(ping:*)",
+      "Bash(docker-compose down:*)",
+      "Bash(docker rm:*)",
+      "Bash(\")"
+    ]
+  }
+}

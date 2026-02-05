@@ -1,0 +1,4 @@
+# file: C:\Users\CSM-Arvindh\AppData\Roaming\Python\Python313\site-packages\PIL\FitsImagePlugin.py
+# hypothesis_version: 6.150.2
+
+[b"'BINTABLE'", b"'GZIP_1  '", b'/', b'=', b'BITPIX', b'END', b'NAXIS', b'NAXIS1', b'NAXIS2', b'SIMPLE', b'T', b'XTENSION', b'Z', b'ZCMPTYPE', b'ZIMAGE', 2880, '.fit', '.fits', 'F', 'FITS', 'I', 'I;16', 'L', 'No image data', 'Not a FITS file', 'Truncated FITS file', 'fits_gzip', 'raw']

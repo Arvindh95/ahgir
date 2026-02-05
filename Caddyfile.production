@@ -1,0 +1,86 @@
+# Production Caddyfile for PicUr
+# Replace {$DOMAIN} with your actual domain in environment variables
+# Example: DOMAIN=picur.example.com
+
+{$DOMAIN:picur.example.com} {
+    # Automatic HTTPS with Let's Encrypt
+    # Caddy will automatically obtain and renew SSL certificates
+    # Ensure ports 80 and 443 are accessible from the internet
+    
+    # Security headers
+    header {
+        # Enable HSTS (HTTP Strict Transport Security)
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        # Prevent clickjacking attacks
+        X-Frame-Options "SAMEORIGIN"
+        # Prevent MIME type sniffing
+        X-Content-Type-Options "nosniff"
+        # Enable XSS protection
+        X-XSS-Protection "1; mode=block"
+        # Referrer policy
+        Referrer-Policy "strict-origin-when-cross-origin"
+        # Content Security Policy (adjust as needed)
+        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self';"
+        # Remove server header for security
+        -Server
+    }
+    
+    # Enable compression for better performance
+    encode gzip zstd
+    
+    # Frontend - serve Next.js app
+    handle /* {
+        reverse_proxy frontend:3000 {
+            # Health check for frontend
+            health_uri /
+            health_interval 30s
+            health_timeout 5s
+            # Load balancing (if multiple frontend instances)
+            lb_policy round_robin
+            # Timeouts
+            transport http {
+                dial_timeout 5s
+                response_header_timeout 30s
+            }
+        }
+    }
+    
+    # Backend API - strip /api prefix and forward to FastAPI
+    handle /api/* {
+        uri strip_prefix /api
+        reverse_proxy backend:8000 {
+            # Health check for backend
+            health_uri /health
+            health_interval 30s
+            health_timeout 5s
+            # Load balancing (if multiple backend instances)
+            lb_policy round_robin
+            # Timeouts
+            transport http {
+                dial_timeout 5s
+                response_header_timeout 60s
+            }
+        }
+    }
+    
+    # Health check endpoint (direct access)
+    handle /health {
+        reverse_proxy backend:8000
+    }
+    
+    # Logging
+    log {
+        output file /var/log/caddy/access.log {
+            roll_size 100mb
+            roll_keep 10
+            roll_keep_for 720h
+        }
+        format json
+        level INFO
+    }
+}
+
+# Redirect www to non-www (optional)
+# www.{$DOMAIN:picur.example.com} {
+#     redir https://{$DOMAIN:picur.example.com}{uri} permanent
+# }

@@ -1,0 +1,4 @@
+# file: D:\ahgir\backend\app\routers\auth.py
+# hypothesis_version: 6.150.2
+
+[3600, '/auth', '/login', '/me', '/register', 'Bearer', 'Invalid credentials', 'WWW-Authenticate', 'authentication', 'bearer', 'email', 'sub']

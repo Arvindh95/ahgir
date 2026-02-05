@@ -1,0 +1,4 @@
+# file: C:\Users\CSM-Arvindh\AppData\Roaming\Python\Python313\site-packages\httpx\_content.py
+# hypothesis_version: 6.150.2
+
+[65536, ',', ':', 'ByteStream', 'Content-Length', 'Content-Type', 'Transfer-Encoding', 'application/json', 'aread', 'chunked', 'read', 'utf-8']

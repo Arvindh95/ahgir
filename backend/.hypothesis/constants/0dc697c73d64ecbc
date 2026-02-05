@@ -1,0 +1,4 @@
+# file: D:\ahgir\backend\app\routers\events.py
+# hypothesis_version: 6.150.2
+
+[0.0, 100, '-', '/events', '/{event_id}', '/{event_id}/qr', 'Event not found', 'PNG', 'black', 'count', 'events', 'failed', 'image/png', 'indexed', 'no_faces', 'pending', 'white']

@@ -1,0 +1,4 @@
+# file: C:\Users\CSM-Arvindh\AppData\Roaming\Python\Python313\site-packages\fastapi\security\oauth2.py
+# hypothesis_version: 6.150.2
+
+['Authorization', 'Bearer', 'Not authenticated', 'WWW-Authenticate', '^password$', 'authorizationUrl', 'bearer', 'refreshUrl', 'scopes', 'tokenUrl']
