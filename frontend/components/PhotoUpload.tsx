@@ -1,5 +1,6 @@
 import { useState, useRef, DragEvent } from 'react'
 import { photoService, UploadResult } from '@/lib/photos'
+import { Upload, X, Check, FileImage, Loader2, AlertCircle } from 'lucide-react'
 
 interface PhotoUploadProps {
   eventId: string
@@ -52,6 +53,10 @@ export default function PhotoUpload({ eventId, onUploadComplete }: PhotoUploadPr
     }
   }
 
+  const handleRemoveFile = (index: number) => {
+    setSelectedFiles(prev => prev.filter((_, i) => i !== index))
+  }
+
   const handleUpload = async () => {
     if (selectedFiles.length === 0) {
       setError('Please select files to upload')
@@ -61,6 +66,7 @@ export default function PhotoUpload({ eventId, onUploadComplete }: PhotoUploadPr
     setIsUploading(true)
     setError('')
     setUploadProgress(0)
+    setUploadResult(null)
 
     try {
       // Simulate progress (in real app, use axios onUploadProgress)
@@ -92,8 +98,10 @@ export default function PhotoUpload({ eventId, onUploadComplete }: PhotoUploadPr
   }
 
   return (
-    <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '8px', marginBottom: '20px' }}>
-      <h2 style={{ marginTop: 0 }}>Upload Photos</h2>
+    <div className="glass-card rounded-2xl p-6 mb-8">
+      <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+        <Upload className="w-5 h-5 text-blue-400" /> Upload Photos
+      </h2>
 
       <div
         onDragEnter={handleDragEnter}
@@ -101,15 +109,13 @@ export default function PhotoUpload({ eventId, onUploadComplete }: PhotoUploadPr
         onDragOver={handleDragOver}
         onDrop={handleDrop}
         onClick={() => fileInputRef.current?.click()}
-        style={{
-          border: `2px dashed ${isDragging ? '#0070f3' : '#ddd'}`,
-          borderRadius: '8px',
-          padding: '40px',
-          textAlign: 'center',
-          cursor: 'pointer',
-          backgroundColor: isDragging ? '#f0f8ff' : '#fafafa',
-          marginBottom: '20px',
-        }}
+        className={`
+          border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-all duration-200
+          ${isDragging 
+            ? 'border-blue-500 bg-blue-500/10 scale-[1.01]' 
+            : 'border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20'
+          }
+        `}
       >
         <input
           ref={fileInputRef}
@@ -117,33 +123,59 @@ export default function PhotoUpload({ eventId, onUploadComplete }: PhotoUploadPr
           multiple
           accept="image/jpeg,image/png"
           onChange={handleFileSelect}
-          style={{ display: 'none' }}
+          className="hidden"
         />
-        <p style={{ fontSize: '18px', marginBottom: '10px' }}>
-          {isDragging ? 'Drop files here' : 'Drag and drop photos here'}
-        </p>
-        <p style={{ color: '#666', fontSize: '14px' }}>or click to select files</p>
-        <p style={{ color: '#999', fontSize: '12px', marginTop: '10px' }}>
-          Supported formats: JPEG, PNG
-        </p>
+        <div className="flex flex-col items-center gap-4">
+          <div className={`p-4 rounded-full ${isDragging ? 'bg-blue-500/20 text-blue-400' : 'bg-white/10 text-gray-400'}`}>
+             <Upload className="w-8 h-8" />
+          </div>
+          <div>
+            <p className="text-lg font-semibold text-white mb-2">
+              {isDragging ? 'Drop matching files here' : 'Drag and drop photos here'}
+            </p>
+            <p className="text-gray-400 text-sm mb-2">or click to browse from your computer</p>
+            <p className="text-gray-500 text-xs">
+              Supported formats: JPEG, PNG
+            </p>
+          </div>
+        </div>
       </div>
 
       {selectedFiles.length > 0 && (
-        <div style={{ marginBottom: '20px' }}>
-          <h3>Selected Files ({selectedFiles.length})</h3>
-          <div style={{ maxHeight: '200px', overflowY: 'auto', border: '1px solid #ddd', borderRadius: '4px', padding: '10px' }}>
+        <div className="mt-6 animate-in slide-in-from-top-4 duration-300">
+          <div className="flex justify-between items-center mb-4">
+             <h3 className="font-semibold text-gray-300 flex items-center gap-2">
+                <FileImage className="w-4 h-4" /> Selected Files ({selectedFiles.length})
+             </h3>
+             <button 
+               onClick={() => setSelectedFiles([])}
+               className="text-xs text-red-400 hover:text-red-300 transition-colors"
+             >
+               Clear all
+             </button>
+          </div>
+          
+          <div className="max-h-60 overflow-y-auto pr-2 space-y-2 custom-scrollbar">
             {selectedFiles.map((file, index) => (
               <div
                 key={index}
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  padding: '8px',
-                  borderBottom: index < selectedFiles.length - 1 ? '1px solid #eee' : 'none',
-                }}
+                className="flex justify-between items-center p-3 rounded-lg bg-white/5 border border-white/5 hover:bg-white/10 transition-colors group"
               >
-                <span style={{ fontSize: '14px' }}>{file.name}</span>
-                <span style={{ fontSize: '14px', color: '#666' }}>{formatFileSize(file.size)}</span>
+                <div className="flex items-center gap-3 overflow-hidden">
+                  <div className="w-8 h-8 rounded bg-gray-800 flex items-center justify-center flex-shrink-0">
+                     <FileImage className="w-4 h-4 text-gray-400" />
+                  </div>
+                  <div className="flex flex-col overflow-hidden">
+                     <span className="text-sm font-medium text-white truncate">{file.name}</span>
+                     <span className="text-xs text-gray-500">{formatFileSize(file.size)}</span>
+                  </div>
+                </div>
+                <button 
+                  onClick={(e) => { e.stopPropagation(); handleRemoveFile(index); }}
+                  className="p-1 rounded-full hover:bg-white/10 text-gray-500 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"
+                >
+                  <X className="w-4 h-4" />
+                </button>
               </div>
             ))}
           </div>
@@ -151,41 +183,41 @@ export default function PhotoUpload({ eventId, onUploadComplete }: PhotoUploadPr
       )}
 
       {isUploading && (
-        <div style={{ marginBottom: '20px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px' }}>
-            <span>Uploading...</span>
-            <span>{uploadProgress}%</span>
+        <div className="mt-6">
+          <div className="flex justify-between text-sm mb-2">
+            <span className="text-blue-400 font-medium flex items-center gap-2">
+               <Loader2 className="w-3 h-3 animate-spin" /> Uploading...
+            </span>
+            <span className="text-gray-400">{uploadProgress}%</span>
           </div>
-          <div style={{ width: '100%', height: '20px', backgroundColor: '#e0e0e0', borderRadius: '10px', overflow: 'hidden' }}>
+          <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden">
             <div
-              style={{
-                width: `${uploadProgress}%`,
-                height: '100%',
-                backgroundColor: '#0070f3',
-                transition: 'width 0.3s',
-              }}
+              className="h-full bg-blue-500 transition-all duration-300 ease-out"
+              style={{ width: `${uploadProgress}%` }}
             />
           </div>
         </div>
       )}
 
       {error && (
-        <div style={{ color: 'red', marginBottom: '20px', padding: '10px', backgroundColor: '#ffebee', borderRadius: '4px' }}>
-          {error}
+        <div className="mt-6 p-4 bg-red-500/10 border border-red-500/20 text-red-500 rounded-xl flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+          <p className="text-sm">{error}</p>
         </div>
       )}
 
       {uploadResult && (
-        <div style={{ marginBottom: '20px', padding: '15px', backgroundColor: '#e8f5e9', borderRadius: '4px' }}>
-          <p style={{ margin: '0 0 10px 0', fontWeight: 'bold', color: '#28a745' }}>
-            Upload Complete!
-          </p>
-          <p style={{ margin: '0 0 5px 0', fontSize: '14px' }}>
-            Uploaded: {uploadResult.uploaded.length} photos
+        <div className="mt-6 p-4 bg-green-500/10 border border-green-500/20 rounded-xl">
+          <div className="flex items-center gap-2 mb-2">
+             <Check className="w-5 h-5 text-green-400" />
+             <p className="font-bold text-green-400">Upload Complete!</p>
+          </div>
+          <p className="text-sm text-gray-300 ml-7">
+            Successfully uploaded <span className="text-white font-medium">{uploadResult.uploaded.length}</span> photos.
           </p>
           {uploadResult.duplicates.length > 0 && (
-            <p style={{ margin: '0', fontSize: '14px', color: '#ff9800' }}>
-              Duplicates skipped: {uploadResult.duplicates.length}
+            <p className="text-sm text-yellow-500/80 ml-7 mt-1">
+              {uploadResult.duplicates.length} duplicates were skipped.
             </p>
           )}
         </div>
@@ -194,18 +226,24 @@ export default function PhotoUpload({ eventId, onUploadComplete }: PhotoUploadPr
       <button
         onClick={handleUpload}
         disabled={selectedFiles.length === 0 || isUploading}
-        style={{
-          width: '100%',
-          padding: '12px',
-          backgroundColor: selectedFiles.length === 0 || isUploading ? '#ccc' : '#0070f3',
-          color: 'white',
-          border: 'none',
-          borderRadius: '4px',
-          cursor: selectedFiles.length === 0 || isUploading ? 'not-allowed' : 'pointer',
-          fontSize: '16px',
-        }}
+        className={`
+          w-full mt-6 py-3 rounded-xl text-lg font-bold flex items-center justify-center gap-2 transition-all
+          ${selectedFiles.length === 0 || isUploading 
+            ? 'bg-white/5 text-gray-500 cursor-not-allowed border border-white/5' 
+            : 'bg-blue-600 text-white hover:bg-blue-700 shadow-lg shadow-blue-600/20 hover:scale-[1.01] active:scale-[0.99]'
+          }
+        `}
       >
-        {isUploading ? 'Uploading...' : `Upload ${selectedFiles.length} Photo${selectedFiles.length !== 1 ? 's' : ''}`}
+        {isUploading ? (
+           <>
+              <Loader2 className="w-5 h-5 animate-spin" /> Processing...
+           </>
+        ) : (
+           <>
+              <Upload className="w-5 h-5" />
+              Upload {selectedFiles.length > 0 ? `${selectedFiles.length} Photo${selectedFiles.length !== 1 ? 's' : ''}` : 'Photos'}
+           </>
+        )}
       </button>
     </div>
   )
