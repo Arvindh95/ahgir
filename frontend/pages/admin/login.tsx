@@ -1,7 +1,7 @@
 import { useState, FormEvent, useEffect } from 'react'
 import { useRouter } from 'next/router'
 import { authService } from '@/lib/auth'
-import { Loader2, Lock, Mail, ArrowRight } from 'lucide-react'
+import { Loader2, Lock, Mail, ArrowRight, RefreshCw } from 'lucide-react'
 
 export default function Login() {
   const router = useRouter()
@@ -9,9 +9,11 @@ export default function Login() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [showResend, setShowResend] = useState(false)
+  const [resendLoading, setResendLoading] = useState(false)
+  const [resendSuccess, setResendSuccess] = useState(false)
 
   useEffect(() => {
-    // Redirect if already authenticated
     if (authService.isAuthenticated()) {
       router.push('/admin/events')
     }
@@ -34,6 +36,8 @@ export default function Login() {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
     setError('')
+    setShowResend(false)
+    setResendSuccess(false)
 
     if (!validateForm()) {
       return
@@ -45,16 +49,38 @@ export default function Login() {
       await authService.login(email, password)
       router.push('/admin/events')
     } catch (err: any) {
-      setError(err.response?.data?.error?.message || 'Login failed')
+      const errorCode = err.response?.data?.error?.code
+      const errorMessage = err.response?.data?.error?.message || 'Login failed'
+
+      setError(errorMessage)
+
+      if (errorCode === 'EMAIL_NOT_VERIFIED') {
+        setShowResend(true)
+      }
     } finally {
       setIsLoading(false)
     }
   }
 
+  const handleResend = async () => {
+    setResendLoading(true)
+    setResendSuccess(false)
+
+    try {
+      await authService.resendVerification(email)
+      setResendSuccess(true)
+    } catch (err: any) {
+      // Don't show error, the API always returns success for security
+      setResendSuccess(true)
+    } finally {
+      setResendLoading(false)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-black flex items-center justify-center p-4 overflow-hidden relative">
-       {/* Background Ambience */}
-       <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none z-0">
+      {/* Background Ambience */}
+      <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none z-0">
         <div className="absolute top-[-20%] left-[-10%] w-[60%] h-[60%] bg-blue-900/10 rounded-full blur-[120px]" />
         <div className="absolute bottom-[-20%] right-[-10%] w-[60%] h-[60%] bg-purple-900/10 rounded-full blur-[120px]" />
       </div>
@@ -105,6 +131,29 @@ export default function Login() {
           {error && (
             <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm text-center">
               {error}
+              {showResend && !resendSuccess && (
+                <button
+                  type="button"
+                  onClick={handleResend}
+                  disabled={resendLoading}
+                  className="mt-3 w-full flex items-center justify-center gap-2 text-blue-400 hover:text-blue-300 transition-colors"
+                >
+                  {resendLoading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Sending...
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="w-4 h-4" />
+                      Resend verification email
+                    </>
+                  )}
+                </button>
+              )}
+              {resendSuccess && (
+                <p className="mt-3 text-green-400">Verification email sent! Check your inbox.</p>
+              )}
             </div>
           )}
 
@@ -114,15 +163,15 @@ export default function Login() {
             className="group w-full bg-white text-black font-semibold py-3.5 px-4 rounded-xl hover:bg-gray-100 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
           >
             {isLoading ? (
-               <>
-               <Loader2 className="w-5 h-5 animate-spin" />
-               <span>Logging in...</span>
-             </>
+              <>
+                <Loader2 className="w-5 h-5 animate-spin" />
+                <span>Logging in...</span>
+              </>
             ) : (
               <>
-              <span>Sign In</span>
-              <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
-            </>
+                <span>Sign In</span>
+                <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+              </>
             )}
           </button>
         </form>

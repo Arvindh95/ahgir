@@ -42,4 +42,14 @@ export const authService = {
   isAuthenticated(): boolean {
     return !!localStorage.getItem('token')
   },
+
+  async verifyEmail(token: string): Promise<{ message: string }> {
+    const response = await api.post('/auth/verify', { token })
+    return response.data
+  },
+
+  async resendVerification(email: string): Promise<{ message: string }> {
+    const response = await api.post('/auth/resend-verify', { email })
+    return response.data
+  },
 }

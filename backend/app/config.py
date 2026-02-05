@@ -32,6 +32,13 @@ class Settings(BaseSettings):
     # Frontend URL (used for guest links and QR codes)
     frontend_url: str = "http://localhost:3000"
 
+    # SMTP (email)
+    smtp_host: str = "smtp-relay.brevo.com"
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from_email: str = "noreply@ahgir.com"
+
     # Rate Limiting
     scan_rate_limit: int = 30
     scan_rate_window_hours: int = 1
