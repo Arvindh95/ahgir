@@ -163,12 +163,12 @@ export default function FaceScanner() {
             lastDetectionRef.current = detections[0]
 
             // Draw green box around detected face
-            detections.forEach((detection: any) => {
-              const box = detection.box
-              ctx.strokeStyle = '#00ff00'
-              ctx.lineWidth = 3
-              ctx.strokeRect(box.x, box.y, box.width, box.height)
-            })
+            // detections.forEach((detection: any) => {
+            //   const box = detection.box
+            //   ctx.strokeStyle = '#00ff00'
+            //   ctx.lineWidth = 3
+            //   ctx.strokeRect(box.x, box.y, box.width, box.height)
+            // })
           } else {
             setFaceDetected(false)
             lastDetectionRef.current = null
@@ -413,7 +413,11 @@ export default function FaceScanner() {
           </div>
 
           {!useUpload ? (
-            <div className="relative rounded-xl overflow-hidden aspect-[4/3] md:aspect-video bg-black shadow-2xl mb-6">
+            <div className={`
+                relative rounded-xl overflow-hidden aspect-[4/3] md:aspect-video bg-black shadow-2xl mb-6 border-4
+                ${faceDetected ? 'border-green-500 shadow-[0_0_20px_rgba(34,197,94,0.5)]' : 'border-transparent'}
+                transition-all duration-300
+              `}>
               <video
                 ref={videoRef}
                 autoPlay
@@ -427,24 +431,25 @@ export default function FaceScanner() {
               />
               <canvas ref={canvasRef} style={{ display: 'none' }} />
 
-              {/* Status indicator */}
-              <div className="absolute bottom-6 left-1/2 -translate-x-1/2 px-6 py-3 rounded-full backdrop-blur-md bg-black/60 border border-white/10">
-                {loadingModels ? (
-                  <span className="flex items-center gap-2 text-yellow-500 font-semibold">
-                    <Loader2 className="w-4 h-4 animate-spin" /> Loading face detection...
-                  </span>
+              {/* Status indicator - Moved to be subtle and non-blocking */}
+              <div className="absolute bottom-4 left-0 w-full flex justify-center pointer-events-none">
+                 {loadingModels ? (
+                  <div className="px-4 py-2 rounded-full backdrop-blur-md bg-black/60 border border-white/10 flex items-center gap-2 text-yellow-500 font-semibold text-sm">
+                    <Loader2 className="w-4 h-4 animate-spin" /> Loading AI models...
+                  </div>
                 ) : !cameraReady ? (
-                  <span className="flex items-center gap-2 text-yellow-500 font-semibold">
-                    <Loader2 className="w-4 h-4 animate-spin" /> Initializing camera...
-                  </span>
+                   <div className="px-4 py-2 rounded-full backdrop-blur-md bg-black/60 border border-white/10 flex items-center gap-2 text-yellow-500 font-semibold text-sm">
+                    <Loader2 className="w-4 h-4 animate-spin" /> Starting camera...
+                  </div>
                 ) : faceDetected ? (
-                  <span className="flex items-center gap-2 text-green-400 font-semibold animate-pulse">
-                    <ScanFace className="w-4 h-4" /> Face detected - Ready!
-                  </span>
+                   // Face detected, green frame is the main indicator, show minimal text
+                   <div className="px-4 py-2 rounded-full backdrop-blur-md bg-green-500/20 border border-green-500/50 flex items-center gap-2 text-green-400 font-bold text-sm shadow-lg">
+                    <ScanFace className="w-4 h-4" /> Ready to Scan
+                  </div>
                 ) : (
-                  <span className="text-gray-300 font-medium">
+                   <div className="px-4 py-2 rounded-full backdrop-blur-md bg-black/60 border border-white/10 text-gray-300 font-medium text-sm">
                      Position your face in the frame
-                  </span>
+                  </div>
                 )}
               </div>
             </div>
@@ -480,29 +485,17 @@ export default function FaceScanner() {
             </div>
           )}
 
-          {/* Instructions */}
-          <div className="bg-white/5 rounded-xl p-6 mb-8 border border-white/5">
-            <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
-               <ScanFace className="w-5 h-5 text-blue-400" /> How to scan
-            </h2>
-            <ol className="list-decimal list-inside space-y-2 text-gray-300 ml-2">
-              <li>Position your face clearly in the frame</li>
-              <li>Ensure good lighting (avoid strong backlight)</li>
-              <li>Wait for the green indicator</li>
-              <li>Click "Scan My Face" to search</li>
-            </ol>
-          </div>
-
           {error && (
             <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 text-red-500 rounded-xl text-center">
               {error}
             </div>
           )}
 
+          {/* Action Button - Moved ABOVE instructions */}
           <button
             onClick={handleScan}
             disabled={!canScan || scanning}
-            className={`w-full py-4 rounded-xl text-lg font-bold flex items-center justify-center gap-2 transition-all ${
+            className={`w-full py-4 rounded-xl text-lg font-bold flex items-center justify-center gap-2 transition-all mb-8 ${
                !canScan || scanning
                ? 'bg-white/10 text-gray-500 cursor-not-allowed'
                : 'bg-gradient-to-r from-blue-600 to-blue-500 text-white hover:shadow-lg hover:shadow-blue-500/30 hover:scale-[1.02] active:scale-[0.98]'
@@ -518,6 +511,20 @@ export default function FaceScanner() {
                </>
             )}
           </button>
+
+          {/* Instructions */}
+          <div className="bg-white/5 rounded-xl p-6 border border-white/5">
+            <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
+               <ScanFace className="w-5 h-5 text-blue-400" /> How to scan
+            </h2>
+            <ol className="list-decimal list-inside space-y-2 text-gray-300 ml-2">
+              <li>Position your face clearly in the frame</li>
+              <li>Wait for the green border around the video</li>
+              <li>Click "Scan My Face" above</li>
+              <li>We will find your photos automatically</li>
+            </ol>
+          </div>
+
         </div>
       </div>
     </div>
