@@ -200,7 +200,7 @@ class StorageService:
         # Use direct URL for public bucket (no signature needed)
         from app.config import settings
         external_endpoint = settings.minio_external_endpoint
-        protocol = "https" if settings.minio_secure else "http"
+        protocol = "https" if settings.minio_external_secure else "http"
 
         # Build direct URL for public bucket access
         url = f"{protocol}://{external_endpoint}/{self.bucket}/{object_path}"

@@ -335,7 +335,8 @@ async def get_event(
     # Generate cover image URL if exists
     cover_image_url = None
     if event.cover_image:
-        cover_image_url = f"http://{settings.minio_external_endpoint}/{settings.minio_bucket}/{event.cover_image}"
+        _protocol = "https" if settings.minio_external_secure else "http"
+        cover_image_url = f"{_protocol}://{settings.minio_external_endpoint}/{settings.minio_bucket}/{event.cover_image}"
 
     return EventDetailResponse(
         event_id=str(event.id),

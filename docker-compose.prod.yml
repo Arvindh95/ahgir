@@ -1,0 +1,201 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: picur-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    container_name: picur-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: picur-redis
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: picur-backend
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      MINIO_ENDPOINT: minio:9000
+      MINIO_EXTERNAL_ENDPOINT: ${DOMAIN}/storage
+      MINIO_EXTERNAL_SECURE: "true"
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: ${MINIO_BUCKET}
+      MINIO_SECURE: "false"
+      REDIS_URL: redis://redis:6379/0
+      COMPREFACE_API_URL: http://compreface-api:8080
+      COMPREFACE_API_KEY: ${COMPREFACE_API_KEY}
+      COMPREFACE_DETECTION_API_KEY: ${COMPREFACE_DETECTION_API_KEY}
+      FRONTEND_URL: https://${DOMAIN}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      compreface-api:
+        condition: service_started
+    security_opt:
+      - seccomp:unconfined
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: picur-worker
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: ${MINIO_BUCKET}
+      MINIO_SECURE: "false"
+      REDIS_URL: redis://redis:6379/0
+      COMPREFACE_API_URL: http://compreface-api:8080
+      COMPREFACE_API_KEY: ${COMPREFACE_API_KEY}
+      COMPREFACE_DETECTION_API_KEY: ${COMPREFACE_DETECTION_API_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      compreface-api:
+        condition: service_started
+    security_opt:
+      - seccomp:unconfined
+    command: rq worker --url redis://redis:6379/0 face_indexing retention default
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+      args:
+        NEXT_PUBLIC_API_URL: https://${DOMAIN}/api
+    container_name: picur-frontend
+    environment:
+      NEXT_PUBLIC_API_URL: https://${DOMAIN}/api
+    depends_on:
+      - backend
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: picur-caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile.prod:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+      - frontend
+
+  # ============ CompreFace ============
+  compreface-postgres-db:
+    image: postgres:11.5
+    container_name: compreface-postgres-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${COMPREFACE_DB_PASSWORD}
+      POSTGRES_DB: frs
+    volumes:
+      - compreface_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d frs"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  compreface-admin:
+    image: exadel/compreface-admin:1.2.0
+    container_name: compreface-admin
+    ports:
+      - "8082:8080"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${COMPREFACE_DB_PASSWORD}
+      POSTGRES_URL: jdbc:postgresql://compreface-postgres-db:5432/frs
+      SPRING_PROFILES_ACTIVE: dev
+      ENABLE_EMAIL_SERVER: "false"
+      EMAIL_HOST: smtp.example.com
+      EMAIL_USERNAME: user@example.com
+      EMAIL_PASSWORD: password
+      ADMIN_PORTAL_URL: http://localhost:8082
+      REGISTRATION_DISABLED: "false"
+    depends_on:
+      compreface-postgres-db:
+        condition: service_healthy
+
+  compreface-api:
+    image: exadel/compreface-api:1.2.0
+    container_name: compreface-api
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${COMPREFACE_DB_PASSWORD}
+      POSTGRES_URL: jdbc:postgresql://compreface-postgres-db:5432/frs
+      SPRING_PROFILES_ACTIVE: dev
+      API_JAVA_OPTS: "-Xmx4g"
+      SAVE_IMAGES_TO_DB: "true"
+      MAX_FILE_SIZE: "10MB"
+      MAX_REQUEST_SIZE: "10MB"
+    depends_on:
+      compreface-postgres-db:
+        condition: service_healthy
+      compreface-core:
+        condition: service_started
+
+  compreface-core:
+    image: exadel/compreface-core:1.2.0
+    container_name: compreface-core
+    environment:
+      ML_PORT: "3000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+volumes:
+  postgres_data:
+  minio_data:
+  redis_data:
+  caddy_data:
+  caddy_config:
+  compreface_postgres_data:

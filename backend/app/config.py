@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     minio_secret_key: str = "minioadmin"
     minio_bucket: str = "photos"
     minio_secure: bool = False
+    minio_external_secure: bool = False  # True in production (URLs served via HTTPS reverse proxy)
     
     # Redis
     redis_url: str = "redis://redis:6379/0"
