@@ -4,6 +4,7 @@ import ProtectedRoute from '@/components/ProtectedRoute'
 import AdminLayout from '@/components/AdminLayout'
 import PhotoUpload from '@/components/PhotoUpload'
 import { photoService, Photo } from '@/lib/photos'
+import { ArrowLeft, Trash2, Filter, Loader2, Image as ImageIcon, CheckCircle, AlertTriangle, Clock, XCircle } from 'lucide-react'
 
 export default function EventPhotosPage() {
   const router = useRouter()
@@ -47,50 +48,55 @@ export default function EventPhotosPage() {
     }
   }
 
-  const getStatusColor = (status: string): string => {
+  const getStatusBadge = (status: string) => {
     switch (status) {
       case 'indexed':
-        return '#28a745'
+        return (
+          <span className="flex items-center gap-1 bg-green-500/20 text-green-400 px-2 py-0.5 rounded text-xs font-bold">
+            <CheckCircle className="w-3 h-3" /> Indexed
+          </span>
+        )
       case 'pending':
-        return '#ff9800'
+        return (
+          <span className="flex items-center gap-1 bg-orange-500/20 text-orange-400 px-2 py-0.5 rounded text-xs font-bold">
+            <Clock className="w-3 h-3" /> Pending
+          </span>
+        )
       case 'no_faces':
-        return '#666'
+        return (
+          <span className="flex items-center gap-1 bg-gray-500/20 text-gray-400 px-2 py-0.5 rounded text-xs font-bold">
+            <AlertTriangle className="w-3 h-3" /> No Faces
+          </span>
+        )
       case 'failed':
-        return '#dc3545'
+        return (
+          <span className="flex items-center gap-1 bg-red-500/20 text-red-400 px-2 py-0.5 rounded text-xs font-bold">
+            <XCircle className="w-3 h-3" /> Failed
+          </span>
+        )
       default:
-        return '#999'
+        return (
+          <span className="flex items-center gap-1 bg-gray-500/20 text-gray-400 px-2 py-0.5 rounded text-xs font-bold">
+             {status}
+          </span>
+        )
     }
   }
-
-  const getStatusBadgeStyle = (status: string) => ({
-    display: 'inline-block',
-    padding: '4px 8px',
-    borderRadius: '4px',
-    fontSize: '12px',
-    fontWeight: 'bold',
-    color: 'white',
-    backgroundColor: getStatusColor(status),
-  })
 
   return (
     <ProtectedRoute>
       <AdminLayout>
-        <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-            <h1>Manage Photos</h1>
-            <button
-              onClick={() => router.push(`/admin/events/${id}`)}
-              style={{
-                backgroundColor: '#f5f5f5',
-                color: '#333',
-                border: '1px solid #ddd',
-                padding: '10px 20px',
-                borderRadius: '4px',
-                cursor: 'pointer',
-              }}
-            >
-              Back to Event
-            </button>
+        <div className="max-w-7xl mx-auto">
+          <div className="flex justify-between items-center mb-8">
+            <div className="flex items-center gap-4">
+              <button 
+                onClick={() => router.push(`/admin/events/${id}`)}
+                className="p-2 rounded-lg hover:bg-white/10 transition-colors"
+               >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+              <h1 className="text-3xl font-bold">Manage Photos</h1>
+            </div>
           </div>
 
           {id && typeof id === 'string' && (
@@ -100,138 +106,107 @@ export default function EventPhotosPage() {
             />
           )}
 
-          <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '8px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-              <h2 style={{ margin: 0, color: '#333' }}>Photos ({total})</h2>
-              <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                <label htmlFor="statusFilter" style={{ fontSize: '14px', color: '#333' }}>Filter:</label>
-                <select
+          <div className="glass-card p-6 rounded-2xl mt-8">
+            <div className="flex flex-col sm:flex-row justify-between items-center gap-4 mb-6">
+              <h2 className="text-xl font-bold flex items-center gap-2">
+                 <ImageIcon className="w-5 h-5" /> Photos <span className="text-gray-500 text-sm font-normal">({total})</span>
+              </h2>
+              <div className="flex items-center gap-2 bg-white/5 px-3 py-1.5 rounded-lg border border-white/10 w-full sm:w-auto">
+                 <Filter className="w-4 h-4 text-gray-400" />
+                 <label htmlFor="statusFilter" className="text-sm text-gray-400">Filter:</label>
+                 <select
                   id="statusFilter"
                   value={statusFilter}
                   onChange={(e) => {
                     setStatusFilter(e.target.value)
                     setPage(1)
                   }}
-                  style={{
-                    padding: '8px',
-                    border: '1px solid #ddd',
-                    borderRadius: '4px',
-                    fontSize: '14px',
-                    color: '#333',
-                  }}
+                  className="bg-transparent border-none text-sm text-white focus:ring-0 cursor-pointer w-full focus:outline-none"
                 >
-                  <option value="">All</option>
-                  <option value="pending">Pending</option>
-                  <option value="indexed">Indexed</option>
-                  <option value="no_faces">No Faces</option>
-                  <option value="failed">Failed</option>
+                  <option value="" className="bg-black">All Photos</option>
+                  <option value="pending" className="bg-black">Pending</option>
+                  <option value="indexed" className="bg-black">Indexed</option>
+                  <option value="no_faces" className="bg-black">No Faces</option>
+                  <option value="failed" className="bg-black">Failed</option>
                 </select>
               </div>
             </div>
 
             {error && (
-              <div style={{ color: 'red', marginBottom: '20px', padding: '10px', backgroundColor: '#ffebee', borderRadius: '4px' }}>
+              <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 text-red-500 rounded-xl">
                 {error}
               </div>
             )}
 
             {isLoading ? (
-              <p>Loading photos...</p>
+               <div className="flex justify-center p-12">
+                  <Loader2 className="w-8 h-8 animate-spin text-white" />
+               </div>
             ) : photos.length === 0 ? (
-              <p style={{ textAlign: 'center', color: '#666', padding: '40px' }}>
-                No photos found
-              </p>
+              <div className="text-center py-12 bg-white/5 rounded-xl border border-white/5 border-dashed">
+                <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-4">
+                   <ImageIcon className="w-8 h-8 text-gray-500" />
+                </div>
+                <p className="text-lg text-gray-300 font-medium">No photos found</p>
+                <p className="text-gray-500 text-sm">Upload some photos to get started</p>
+              </div>
             ) : (
               <>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '15px' }}>
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
                   {photos.map((photo) => (
                     <div
                       key={photo.image_id}
-                      style={{
-                        border: '1px solid #ddd',
-                        borderRadius: '8px',
-                        overflow: 'hidden',
-                        backgroundColor: '#fafafa',
-                      }}
+                      className="bg-white/5 border border-white/10 rounded-xl overflow-hidden hover:border-white/20 transition-colors group"
                     >
-                      <div style={{ position: 'relative', paddingTop: '100%', backgroundColor: '#e0e0e0' }}>
+                      <div className="aspect-square relative bg-black/40">
                         <img
                           src={photo.thumbnail_url}
                           alt={photo.filename}
-                          style={{
-                            position: 'absolute',
-                            top: 0,
-                            left: 0,
-                            width: '100%',
-                            height: '100%',
-                            objectFit: 'cover',
-                          }}
+                          className="w-full h-full object-cover"
                         />
+                        <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                           <button
+                             onClick={() => handleDelete(photo.image_id)}
+                             className="bg-red-500 hover:bg-red-600 text-white p-2 rounded-lg transition-colors"
+                             title="Delete photo"
+                           >
+                             <Trash2 className="w-5 h-5" />
+                           </button>
+                        </div>
                       </div>
-                      <div style={{ padding: '10px' }}>
-                        <div style={{ fontSize: '12px', marginBottom: '5px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#333' }}>
+                      <div className="p-3">
+                        <div className="text-xs text-gray-400 mb-2 truncate" title={photo.filename}>
                           {photo.filename}
                         </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                          <span style={getStatusBadgeStyle(photo.status)}>
-                            {photo.status}
-                          </span>
+                        <div className="flex justify-between items-center">
+                          {getStatusBadge(photo.status)}
                           {photo.status === 'indexed' && (
-                            <span style={{ fontSize: '12px', color: '#666' }}>
+                            <span className="text-xs text-gray-500">
                               {photo.face_count} face{photo.face_count !== 1 ? 's' : ''}
                             </span>
                           )}
                         </div>
-                        <button
-                          onClick={() => handleDelete(photo.image_id)}
-                          style={{
-                            width: '100%',
-                            padding: '6px',
-                            backgroundColor: '#dc3545',
-                            color: 'white',
-                            border: 'none',
-                            borderRadius: '4px',
-                            cursor: 'pointer',
-                            fontSize: '12px',
-                          }}
-                        >
-                          Delete
-                        </button>
                       </div>
                     </div>
                   ))}
                 </div>
 
                 {total > 50 && (
-                  <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', marginTop: '20px' }}>
+                  <div className="flex justify-center gap-2 mt-8">
                     <button
                       onClick={() => setPage(page - 1)}
                       disabled={page === 1}
-                      style={{
-                        padding: '8px 16px',
-                        backgroundColor: page === 1 ? '#ccc' : '#0070f3',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '4px',
-                        cursor: page === 1 ? 'not-allowed' : 'pointer',
-                      }}
+                      className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                     >
                       Previous
                     </button>
-                    <span style={{ padding: '8px 16px', display: 'flex', alignItems: 'center', color: '#333' }}>
+                    <span className="px-4 py-2 text-sm text-gray-400">
                       Page {page} of {Math.ceil(total / 50)}
                     </span>
                     <button
                       onClick={() => setPage(page + 1)}
                       disabled={page >= Math.ceil(total / 50)}
-                      style={{
-                        padding: '8px 16px',
-                        backgroundColor: page >= Math.ceil(total / 50) ? '#ccc' : '#0070f3',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '4px',
-                        cursor: page >= Math.ceil(total / 50) ? 'not-allowed' : 'pointer',
-                      }}
+                       className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                     >
                       Next
                     </button>
