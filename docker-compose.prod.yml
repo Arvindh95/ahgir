@@ -60,6 +60,11 @@ services:
       COMPREFACE_DETECTION_API_KEY: ${COMPREFACE_DETECTION_API_KEY}
       FRONTEND_URL: https://${DOMAIN}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_USERNAME: ${SMTP_USERNAME}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL}
     depends_on:
       postgres:
         condition: service_healthy

@@ -43,7 +43,12 @@
       "Bash(git commit:*)",
       "Bash(dir:*)",
       "Bash(ssh:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(git fetch:*)",
+      "Bash(git merge:*)",
+      "Bash(git stash:*)",
+      "Bash(git stash pop:*)",
+      "Bash(docker restart:*)"
     ]
   }
 }

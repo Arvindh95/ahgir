@@ -1,15 +1,14 @@
 import { useState, FormEvent } from 'react'
-import { useRouter } from 'next/router'
 import { authService } from '@/lib/auth'
-import { Loader2, Lock, Mail, UserPlus } from 'lucide-react'
+import { Loader2, Lock, Mail, UserPlus, CheckCircle } from 'lucide-react'
 
 export default function Register() {
-  const router = useRouter()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [registeredEmail, setRegisteredEmail] = useState('')
 
   const validateForm = (): boolean => {
     if (!email || !password || !confirmPassword) {
@@ -47,13 +46,44 @@ export default function Register() {
 
     try {
       await authService.register(email, password)
-      await authService.login(email, password)
-      router.push('/admin/events')
+      setRegisteredEmail(email)
     } catch (err: any) {
       setError(err.response?.data?.error?.message || 'Registration failed')
     } finally {
       setIsLoading(false)
     }
+  }
+
+  // Show success screen after registration
+  if (registeredEmail) {
+    return (
+      <div className="min-h-screen bg-black flex items-center justify-center p-4 overflow-hidden relative">
+        <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none z-0">
+          <div className="absolute top-[-20%] left-[-10%] w-[60%] h-[60%] bg-green-900/10 rounded-full blur-[120px]" />
+          <div className="absolute bottom-[-20%] right-[-10%] w-[60%] h-[60%] bg-blue-900/10 rounded-full blur-[120px]" />
+        </div>
+
+        <div className="glass-card w-full max-w-md p-8 rounded-2xl relative z-10 text-center">
+          <div className="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
+            <CheckCircle className="w-8 h-8 text-green-400" />
+          </div>
+          <h1 className="text-2xl font-bold mb-3">Check your email</h1>
+          <p className="text-gray-400 mb-6">
+            We sent a verification link to<br />
+            <span className="text-white font-medium">{registeredEmail}</span>
+          </p>
+          <p className="text-gray-500 text-sm mb-8">
+            Click the link in the email to verify your account, then you can sign in.
+          </p>
+          <a
+            href="/admin/login"
+            className="inline-block bg-white text-black font-semibold py-3 px-8 rounded-xl hover:bg-gray-100 transition-all"
+          >
+            Go to Sign In
+          </a>
+        </div>
+      </div>
+    )
   }
 
   return (

@@ -37,9 +37,16 @@ class TokenExpiredError(PicUrException):
 
 class InvalidCredentialsError(PicUrException):
     """Email/password combination is incorrect."""
-    
+
     def __init__(self, message: str = "Invalid credentials", details: Optional[Dict[str, Any]] = None):
         super().__init__(message, "INVALID_CREDENTIALS", 401, details)
+
+
+class EmailNotVerifiedError(PicUrException):
+    """User has not verified their email address."""
+
+    def __init__(self, message: str = "Email not verified", details: Optional[Dict[str, Any]] = None):
+        super().__init__(message, "EMAIL_NOT_VERIFIED", 403, details)
 
 
 class InvalidPasscodeError(PicUrException):
