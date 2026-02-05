@@ -1,0 +1,39 @@
+ahgir.com {
+    # Security headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Frame-Options "SAMEORIGIN"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+
+    encode gzip zstd
+
+    # MinIO storage (public bucket access for photos and cover images)
+    handle /storage/* {
+        uri strip_prefix /storage
+        reverse_proxy minio:9000
+    }
+
+    # Backend API - strip /api prefix and forward to FastAPI
+    handle /api/* {
+        uri strip_prefix /api
+        reverse_proxy backend:8000
+    }
+
+    # Health check
+    handle /health {
+        reverse_proxy backend:8000
+    }
+
+    # Frontend - catch-all (must be last)
+    handle {
+        reverse_proxy frontend:3000
+    }
+
+    log {
+        output file /var/log/caddy/access.log
+        format json
+    }
+}

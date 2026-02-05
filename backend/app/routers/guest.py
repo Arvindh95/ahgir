@@ -93,7 +93,8 @@ async def get_event_by_slug(slug: str, db: Session = Depends(get_db)):
     cover_image_url = None
     if event.cover_image:
         from app.config import settings as _settings
-        cover_image_url = f"http://{_settings.minio_external_endpoint}/{_settings.minio_bucket}/{event.cover_image}"
+        _protocol = "https" if _settings.minio_external_secure else "http"
+        cover_image_url = f"{_protocol}://{_settings.minio_external_endpoint}/{_settings.minio_bucket}/{event.cover_image}"
 
     return EventInfoResponse(
         event_id=str(event.id),

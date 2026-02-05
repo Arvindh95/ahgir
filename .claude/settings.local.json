@@ -32,7 +32,8 @@
       "Bash(docker-compose ps:*)",
       "Bash(npm install:*)",
       "Bash(grep:*)",
-      "WebFetch(domain:foto.jkdreams.com)"
+      "WebFetch(domain:foto.jkdreams.com)",
+      "Bash(openssl rand:*)"
     ]
   }
 }
