@@ -64,10 +64,18 @@ export default function ScanResults() {
 
   const handleDownload = async (photo: MatchedPhoto) => {
     if (!photo.download_url) return
-    
+
     try {
-      // Open download URL in new tab
-      window.open(photo.download_url, '_blank')
+      const res = await fetch(photo.download_url)
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `photo_${photo.image_id}.jpg`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
     } catch (err) {
       console.error('Download error:', err)
       alert('Failed to download photo')
