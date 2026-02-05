@@ -28,6 +28,9 @@ class Event(Base):
     name = Column(String(255), nullable=False)
     date = Column(Date)
     passcode_hash = Column(String(255))  # NULL if no passcode
+    location = Column(String(500), nullable=True)
+    description = Column(String(2000), nullable=True)
+    cover_image = Column(String(500), nullable=True)  # MinIO object key for cover image
     allow_downloads = Column(Boolean, default=True, nullable=False)
     retention_days = Column(Integer, default=90, nullable=False)
     created_at = Column(TIMESTAMP, server_default=func.now(), nullable=False)
