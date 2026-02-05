@@ -102,9 +102,9 @@ export default function EventPhotosPage() {
 
           <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '8px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-              <h2 style={{ margin: 0 }}>Photos ({total})</h2>
+              <h2 style={{ margin: 0, color: '#333' }}>Photos ({total})</h2>
               <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                <label htmlFor="statusFilter" style={{ fontSize: '14px' }}>Filter:</label>
+                <label htmlFor="statusFilter" style={{ fontSize: '14px', color: '#333' }}>Filter:</label>
                 <select
                   id="statusFilter"
                   value={statusFilter}
@@ -117,6 +117,7 @@ export default function EventPhotosPage() {
                     border: '1px solid #ddd',
                     borderRadius: '4px',
                     fontSize: '14px',
+                    color: '#333',
                   }}
                 >
                   <option value="">All</option>
@@ -168,7 +169,7 @@ export default function EventPhotosPage() {
                         />
                       </div>
                       <div style={{ padding: '10px' }}>
-                        <div style={{ fontSize: '12px', marginBottom: '5px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        <div style={{ fontSize: '12px', marginBottom: '5px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#333' }}>
                           {photo.filename}
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
@@ -217,7 +218,7 @@ export default function EventPhotosPage() {
                     >
                       Previous
                     </button>
-                    <span style={{ padding: '8px 16px', display: 'flex', alignItems: 'center' }}>
+                    <span style={{ padding: '8px 16px', display: 'flex', alignItems: 'center', color: '#333' }}>
                       Page {page} of {Math.ceil(total / 50)}
                     </span>
                     <button
