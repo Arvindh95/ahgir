@@ -1,0 +1,64 @@
+import api from './api'
+
+export interface Photo {
+  image_id: string
+  filename: string
+  status: string
+  face_count: number
+  thumbnail_url: string
+  uploaded_at: string
+}
+
+export interface UploadResult {
+  uploaded: Array<{
+    image_id: string
+    filename: string
+    size_bytes: number
+    status: string
+  }>
+  duplicates: Array<{
+    filename: string
+    reason: string
+  }>
+}
+
+export interface PhotosResponse {
+  photos: Photo[]
+  total: number
+  page: number
+  limit: number
+}
+
+export const photoService = {
+  async uploadPhotos(eventId: string, files: File[]): Promise<UploadResult> {
+    const formData = new FormData()
+    files.forEach((file) => {
+      formData.append('files', file)
+    })
+
+    const response = await api.post(`/events/${eventId}/photos`, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    })
+    return response.data
+  },
+
+  async getPhotos(
+    eventId: string,
+    page: number = 1,
+    limit: number = 50,
+    status?: string
+  ): Promise<PhotosResponse> {
+    const params: any = { page, limit }
+    if (status) {
+      params.status = status
+    }
+    const response = await api.get(`/events/${eventId}/photos`, { params })
+    return response.data
+  },
+
+  async deletePhoto(eventId: string, imageId: string): Promise<void> {
+    await api.delete(`/events/${eventId}/photos/${imageId}`)
+  },
+}
