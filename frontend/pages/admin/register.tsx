@@ -68,7 +68,7 @@ export default function Register() {
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            style={{ width: '100%', padding: '8px', fontSize: '14px' }}
+            style={{ width: '100%', padding: '8px', fontSize: '14px', color: '#000000' }}
             disabled={isLoading}
           />
         </div>
@@ -82,7 +82,7 @@ export default function Register() {
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            style={{ width: '100%', padding: '8px', fontSize: '14px' }}
+            style={{ width: '100%', padding: '8px', fontSize: '14px', color: '#000000' }}
             disabled={isLoading}
           />
         </div>
@@ -96,7 +96,7 @@ export default function Register() {
             type="password"
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
-            style={{ width: '100%', padding: '8px', fontSize: '14px' }}
+            style={{ width: '100%', padding: '8px', fontSize: '14px', color: '#000000' }}
             disabled={isLoading}
           />
         </div>
