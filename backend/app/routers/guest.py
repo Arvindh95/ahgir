@@ -58,6 +58,9 @@ class EventInfoResponse(BaseModel):
     name: str
     date: Optional[str] = None
     requires_passcode: bool
+    location: Optional[str] = None
+    description: Optional[str] = None
+    cover_image_url: Optional[str] = None
 
 class PasscodeRequest(BaseModel):
     passcode: str = None
@@ -87,11 +90,19 @@ async def get_event_by_slug(slug: str, db: Session = Depends(get_db)):
             detail="Event not found"
         )
     
+    cover_image_url = None
+    if event.cover_image:
+        from app.config import settings as _settings
+        cover_image_url = f"http://{_settings.minio_external_endpoint}/{_settings.minio_bucket}/{event.cover_image}"
+
     return EventInfoResponse(
         event_id=str(event.id),
         name=event.name,
         date=event.date.isoformat() if event.date else None,
-        requires_passcode=event.passcode_hash is not None
+        requires_passcode=event.passcode_hash is not None,
+        location=event.location,
+        description=event.description,
+        cover_image_url=cover_image_url
     )
 
 @router.post("/e/{slug}/auth", response_model=EventTokenResponse)

@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     compreface_api_key: str = ""  # Recognition service API key
     compreface_detection_api_key: str = ""  # Detection service API key
     
+    # Frontend URL (used for guest links and QR codes)
+    frontend_url: str = "http://localhost:3000"
+
     # Rate Limiting
     scan_rate_limit: int = 30
     scan_rate_window_hours: int = 1

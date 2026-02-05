@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/router'
 import axios from 'axios'
+import { Camera, Upload, LogOut, Loader2, ScanFace, Image as ImageIcon } from 'lucide-react'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -167,11 +168,6 @@ export default function FaceScanner() {
               ctx.strokeStyle = '#00ff00'
               ctx.lineWidth = 3
               ctx.strokeRect(box.x, box.y, box.width, box.height)
-
-              // Draw label
-              ctx.fillStyle = '#00ff00'
-              ctx.font = '16px Arial'
-              ctx.fillText('Face detected', box.x, box.y - 5)
             })
           } else {
             setFaceDetected(false)
@@ -371,292 +367,159 @@ export default function FaceScanner() {
     : (cameraReady && (faceDetected || !modelsLoaded))
 
   return (
-    <div style={styles.container}>
-      <div style={styles.header}>
-        <h1 style={styles.title}>{eventName}</h1>
-        <button onClick={handleLogout} style={styles.logoutButton}>
-          Exit
-        </button>
-      </div>
+    <div className="min-h-screen relative overflow-hidden bg-black text-white">
+      {/* Background Ambience */}
+      <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-br from-black via-[#0a0a0a] to-[#050505] z-0"></div>
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-blue-500/10 rounded-full blur-[120px] z-0"></div>
 
-      <div style={styles.content}>
-        <div style={styles.modeToggle}>
-          <button
-            onClick={() => setUseUpload(false)}
-            style={{
-              ...styles.modeButton,
-              ...(useUpload ? {} : styles.modeButtonActive)
-            }}
+      <div className="relative z-10 max-w-4xl mx-auto px-4 py-8">
+        {/* Header */}
+        <div className="flex justify-between items-center mb-8 glass-card p-4 rounded-xl">
+          <h1 className="text-xl font-bold truncate pr-4">{eventName}</h1>
+          <button 
+            onClick={handleLogout} 
+            className="p-2 text-gray-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors flex items-center gap-2"
           >
-            Use Camera
-          </button>
-          <button
-            onClick={() => setUseUpload(true)}
-            style={{
-              ...styles.modeButton,
-              ...(!useUpload ? {} : styles.modeButtonActive)
-            }}
-          >
-            Upload Photo
+            <LogOut className="w-5 h-5" />
+            <span className="hidden sm:inline">Exit</span>
           </button>
         </div>
 
-        {!useUpload ? (
-          <div style={styles.videoContainer}>
-            <video
-              ref={videoRef}
-              autoPlay
-              playsInline
-              muted
-              style={styles.video}
-            />
-            <canvas
-              ref={overlayCanvasRef}
-              style={styles.overlayCanvas}
-            />
-            <canvas ref={canvasRef} style={{ display: 'none' }} />
+        <div className="glass-card p-6 md:p-8 rounded-2xl">
+          {/* Mode Toggle */}
+          <div className="flex justify-center gap-4 mb-8">
+            <button
+              onClick={() => setUseUpload(false)}
+              className={`flex items-center gap-2 px-6 py-3 rounded-xl font-medium transition-all ${
+                !useUpload 
+                ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20' 
+                : 'bg-white/5 text-gray-400 hover:bg-white/10'
+              }`}
+            >
+              <Camera className="w-5 h-5" />
+              Camera
+            </button>
+            <button
+              onClick={() => setUseUpload(true)}
+              className={`flex items-center gap-2 px-6 py-3 rounded-xl font-medium transition-all ${
+                useUpload 
+                ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20' 
+                : 'bg-white/5 text-gray-400 hover:bg-white/10'
+              }`}
+            >
+              <Upload className="w-5 h-5" />
+              Upload
+            </button>
+          </div>
 
-            {/* Status indicator */}
-            <div style={styles.statusIndicator}>
-              {loadingModels ? (
-                <span style={styles.statusLoading}>Loading face detection...</span>
-              ) : !cameraReady ? (
-                <span style={styles.statusLoading}>Initializing camera...</span>
-              ) : faceDetected ? (
-                <span style={styles.statusSuccess}>Face detected - Ready to scan!</span>
-              ) : (
-                <span style={styles.statusWarning}>Position your face in the frame</span>
-              )}
-            </div>
+          {!useUpload ? (
+            <div className="relative rounded-xl overflow-hidden aspect-[4/3] md:aspect-video bg-black shadow-2xl mb-6">
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                className="w-full h-full object-cover scale-x-[-1]"
+              />
+              <canvas
+                ref={overlayCanvasRef}
+                className="absolute top-0 left-0 w-full h-full pointer-events-none scale-x-[-1]"
+              />
+              <canvas ref={canvasRef} style={{ display: 'none' }} />
 
-            {!cameraReady && !error && (
-              <div style={styles.overlay}>
-                <p>Initializing camera...</p>
+              {/* Status indicator */}
+              <div className="absolute bottom-6 left-1/2 -translate-x-1/2 px-6 py-3 rounded-full backdrop-blur-md bg-black/60 border border-white/10">
+                {loadingModels ? (
+                  <span className="flex items-center gap-2 text-yellow-500 font-semibold">
+                    <Loader2 className="w-4 h-4 animate-spin" /> Loading face detection...
+                  </span>
+                ) : !cameraReady ? (
+                  <span className="flex items-center gap-2 text-yellow-500 font-semibold">
+                    <Loader2 className="w-4 h-4 animate-spin" /> Initializing camera...
+                  </span>
+                ) : faceDetected ? (
+                  <span className="flex items-center gap-2 text-green-400 font-semibold animate-pulse">
+                    <ScanFace className="w-4 h-4" /> Face detected - Ready!
+                  </span>
+                ) : (
+                  <span className="text-gray-300 font-medium">
+                     Position your face in the frame
+                  </span>
+                )}
               </div>
+            </div>
+          ) : (
+             <div className="border-2 border-dashed border-white/10 rounded-xl p-12 mb-6 text-center hover:border-white/20 transition-colors bg-white/5">
+              <input
+                type="file"
+                ref={fileInputRef}
+                accept="image/*"
+                onChange={(e) => {
+                  if (e.target.files?.[0]) {
+                    setError('')
+                    setFileSelected(true)
+                  } else {
+                    setFileSelected(false)
+                  }
+                }}
+                className="hidden"
+                id="file-upload"
+              />
+              <label htmlFor="file-upload" className="cursor-pointer flex flex-col items-center gap-4">
+                 <div className="w-20 h-20 rounded-full bg-white/5 flex items-center justify-center">
+                    <ImageIcon className="w-10 h-10 text-gray-400" />
+                 </div>
+                 <div>
+                    <p className="text-xl font-semibold mb-2 text-white">Select a photo</p>
+                    <p className="text-gray-400 text-sm">{fileInputRef.current?.files?.[0]?.name || "JPG or PNG with your face visible"}</p>
+                 </div>
+                 <div className="bg-white/10 text-white px-6 py-2 rounded-lg font-medium hover:bg-white/20 transition-colors">
+                    Browse Files
+                 </div>
+              </label>
+            </div>
+          )}
+
+          {/* Instructions */}
+          <div className="bg-white/5 rounded-xl p-6 mb-8 border border-white/5">
+            <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
+               <ScanFace className="w-5 h-5 text-blue-400" /> How to scan
+            </h2>
+            <ol className="list-decimal list-inside space-y-2 text-gray-300 ml-2">
+              <li>Position your face clearly in the frame</li>
+              <li>Ensure good lighting (avoid strong backlight)</li>
+              <li>Wait for the green indicator</li>
+              <li>Click "Scan My Face" to search</li>
+            </ol>
+          </div>
+
+          {error && (
+            <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 text-red-500 rounded-xl text-center">
+              {error}
+            </div>
+          )}
+
+          <button
+            onClick={handleScan}
+            disabled={!canScan || scanning}
+            className={`w-full py-4 rounded-xl text-lg font-bold flex items-center justify-center gap-2 transition-all ${
+               !canScan || scanning
+               ? 'bg-white/10 text-gray-500 cursor-not-allowed'
+               : 'bg-gradient-to-r from-blue-600 to-blue-500 text-white hover:shadow-lg hover:shadow-blue-500/30 hover:scale-[1.02] active:scale-[0.98]'
+            }`}
+          >
+            {scanning ? (
+               <>
+                  <Loader2 className="w-6 h-6 animate-spin" /> Scanning...
+               </>
+            ) : (
+               <>
+                  <ScanFace className="w-6 h-6" /> {faceDetected || useUpload ? 'Scan My Face' : 'Waiting for face...'}
+               </>
             )}
-          </div>
-        ) : (
-          <div style={styles.uploadContainer}>
-            <input
-              type="file"
-              ref={fileInputRef}
-              accept="image/*"
-              style={styles.fileInput}
-              onChange={(e) => {
-                if (e.target.files?.[0]) {
-                  setError('')
-                  setFileSelected(true)
-                } else {
-                  setFileSelected(false)
-                }
-              }}
-            />
-            <p style={styles.uploadText}>Select a photo with your face</p>
-          </div>
-        )}
-
-        <div style={styles.instructions}>
-          <h2 style={styles.instructionsTitle}>How to scan:</h2>
-          <ol style={styles.instructionsList}>
-            <li>Position your face in the camera frame</li>
-            <li>Wait for the green "Face detected" indicator</li>
-            <li>Click the "Scan My Face" button</li>
-            <li>Wait while we search for your photos</li>
-          </ol>
+          </button>
         </div>
-
-        {error && (
-          <div style={styles.errorBox}>
-            <p style={styles.error}>{error}</p>
-          </div>
-        )}
-
-        <button
-          onClick={handleScan}
-          disabled={!canScan || scanning}
-          style={{
-            ...styles.scanButton,
-            ...((!canScan || scanning) && styles.scanButtonDisabled)
-          }}
-        >
-          {scanning ? 'Scanning...' : faceDetected || useUpload ? 'Scan My Face' : 'Waiting for face...'}
-        </button>
       </div>
     </div>
   )
-}
-
-const styles = {
-  container: {
-    minHeight: '100vh',
-    backgroundColor: '#f5f5f5',
-    padding: '20px',
-  } as React.CSSProperties,
-  header: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    maxWidth: '1200px',
-    margin: '0 auto 30px',
-    padding: '20px',
-    backgroundColor: 'white',
-    borderRadius: '8px',
-    boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-  } as React.CSSProperties,
-  title: {
-    fontSize: '24px',
-    fontWeight: 'bold',
-    color: '#333',
-    margin: 0,
-  } as React.CSSProperties,
-  logoutButton: {
-    padding: '8px 16px',
-    fontSize: '14px',
-    color: '#666',
-    backgroundColor: 'transparent',
-    border: '1px solid #ddd',
-    borderRadius: '4px',
-    cursor: 'pointer',
-  } as React.CSSProperties,
-  content: {
-    maxWidth: '1200px',
-    margin: '0 auto',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '20px',
-  } as React.CSSProperties,
-  modeToggle: {
-    display: 'flex',
-    gap: '10px',
-    justifyContent: 'center',
-  } as React.CSSProperties,
-  modeButton: {
-    padding: '12px 24px',
-    fontSize: '16px',
-    border: '2px solid #ddd',
-    borderRadius: '8px',
-    backgroundColor: 'white',
-    cursor: 'pointer',
-    transition: 'all 0.2s',
-  } as React.CSSProperties,
-  modeButtonActive: {
-    borderColor: '#007bff',
-    backgroundColor: '#e7f1ff',
-    color: '#007bff',
-  } as React.CSSProperties,
-  videoContainer: {
-    position: 'relative',
-    backgroundColor: 'black',
-    borderRadius: '8px',
-    overflow: 'hidden',
-    aspectRatio: '16/9',
-    maxHeight: '500px',
-  } as React.CSSProperties,
-  uploadContainer: {
-    backgroundColor: 'white',
-    borderRadius: '8px',
-    padding: '40px',
-    textAlign: 'center',
-    border: '2px dashed #ddd',
-  } as React.CSSProperties,
-  fileInput: {
-    fontSize: '16px',
-    marginBottom: '10px',
-  } as React.CSSProperties,
-  uploadText: {
-    color: '#666',
-    margin: 0,
-  } as React.CSSProperties,
-  video: {
-    width: '100%',
-    height: '100%',
-    objectFit: 'cover',
-    transform: 'scaleX(-1)', // Mirror the video for selfie view
-  } as React.CSSProperties,
-  overlayCanvas: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    width: '100%',
-    height: '100%',
-    pointerEvents: 'none',
-    transform: 'scaleX(-1)', // Mirror to match video
-  } as React.CSSProperties,
-  statusIndicator: {
-    position: 'absolute',
-    bottom: '20px',
-    left: '50%',
-    transform: 'translateX(-50%)',
-    padding: '10px 20px',
-    borderRadius: '20px',
-    fontSize: '14px',
-    fontWeight: '600',
-    backgroundColor: 'rgba(0,0,0,0.7)',
-  } as React.CSSProperties,
-  statusLoading: {
-    color: '#ffc107',
-  } as React.CSSProperties,
-  statusSuccess: {
-    color: '#00ff00',
-  } as React.CSSProperties,
-  statusWarning: {
-    color: '#ff9800',
-  } as React.CSSProperties,
-  overlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    display: 'flex',
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    color: 'white',
-    fontSize: '18px',
-  } as React.CSSProperties,
-  instructions: {
-    backgroundColor: 'white',
-    padding: '20px',
-    borderRadius: '8px',
-    boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-  } as React.CSSProperties,
-  instructionsTitle: {
-    fontSize: '18px',
-    fontWeight: 'bold',
-    marginBottom: '12px',
-    color: '#333',
-  } as React.CSSProperties,
-  instructionsList: {
-    margin: 0,
-    paddingLeft: '20px',
-    color: '#555',
-    lineHeight: '1.8',
-  } as React.CSSProperties,
-  errorBox: {
-    backgroundColor: '#fff3cd',
-    border: '1px solid #ffc107',
-    borderRadius: '4px',
-    padding: '12px',
-  } as React.CSSProperties,
-  error: {
-    color: '#856404',
-    margin: 0,
-    fontSize: '14px',
-  } as React.CSSProperties,
-  scanButton: {
-    padding: '16px',
-    fontSize: '18px',
-    fontWeight: '600',
-    color: 'white',
-    backgroundColor: '#007bff',
-    border: 'none',
-    borderRadius: '8px',
-    cursor: 'pointer',
-    transition: 'background-color 0.2s',
-  } as React.CSSProperties,
-  scanButtonDisabled: {
-    backgroundColor: '#ccc',
-    cursor: 'not-allowed',
-  } as React.CSSProperties,
 }

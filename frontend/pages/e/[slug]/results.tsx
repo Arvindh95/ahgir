@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/router'
+import { ArrowLeft, Download, Eye, Image as ImageIcon, Loader2, X } from 'lucide-react'
 
 interface MatchedPhoto {
   image_id: string
@@ -83,79 +84,93 @@ export default function ScanResults() {
 
   if (!scanResult) {
     return (
-      <div style={styles.container}>
-        <p>Loading results...</p>
+      <div className="min-h-screen bg-black flex items-center justify-center">
+        <Loader2 className="w-8 h-8 text-white animate-spin" />
       </div>
     )
   }
 
   return (
-    <div style={styles.container}>
-      <div style={styles.header}>
-        <h1 style={styles.title}>{eventName}</h1>
-        <button onClick={handleBackToScanner} style={styles.backButton}>
-          ← Back to Scanner
-        </button>
-      </div>
+    <div className="min-h-screen relative bg-black text-white">
+      {/* Background Ambience */}
+      <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-br from-black via-[#0a0a0a] to-[#050505] z-0 fixed"></div>
+      
+      <div className="relative z-10 max-w-7xl mx-auto px-4 py-8">
+        <div className="flex flex-col sm:flex-row justify-between items-center gap-4 mb-8 glass-card p-4 rounded-xl">
+          <h1 className="text-xl font-bold">{eventName}</h1>
+          <button 
+             onClick={handleBackToScanner} 
+             className="flex items-center gap-2 text-blue-400 hover:text-blue-300 transition-colors font-medium"
+          >
+            <ArrowLeft className="w-5 h-5" />
+            Back to Scanner
+          </button>
+        </div>
 
-      <div style={styles.content}>
         {scanResult.total_matches === 0 ? (
-          <div style={styles.emptyState}>
-            <div style={styles.emptyIcon}>📷</div>
-            <h2 style={styles.emptyTitle}>No Photos Found</h2>
-            <p style={styles.emptyText}>
-              We couldn't find any photos matching your face in this event.
-              This could be because:
+          <div className="glass-card p-12 rounded-2xl text-center max-w-2xl mx-auto">
+            <div className="w-24 h-24 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-6">
+               <ImageIcon className="w-12 h-12 text-gray-500" />
+            </div>
+            <h2 className="text-2xl font-bold mb-4">No Photos Found</h2>
+            <p className="text-gray-400 mb-8 max-w-md mx-auto">
+              We couldn't find any photos matching your face. It's possible your photos haven't been uploaded yet or the match confidence was too low.
             </p>
-            <ul style={styles.emptyList}>
-              <li>Your photos haven't been uploaded yet</li>
-              <li>The lighting conditions were different</li>
-              <li>You were wearing different accessories (glasses, hat, etc.)</li>
-            </ul>
-            <button onClick={handleBackToScanner} style={styles.tryAgainButton}>
+            <button 
+               onClick={handleBackToScanner} 
+               className="bg-blue-600 text-white px-8 py-3 rounded-xl font-bold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/20"
+            >
               Try Scanning Again
             </button>
           </div>
         ) : (
           <>
-            <div style={styles.resultsHeader}>
-              <h2 style={styles.resultsTitle}>
-                Found {scanResult.total_matches} {scanResult.total_matches === 1 ? 'Photo' : 'Photos'}
-              </h2>
-              <p style={styles.resultsSubtitle}>
-                Photos are sorted by similarity to your face
-              </p>
+            <div className="mb-6 flex items-end justify-between px-2">
+              <div>
+                 <h2 className="text-2xl font-bold flex items-center gap-2">
+                   Found {scanResult.total_matches} {scanResult.total_matches === 1 ? 'Photo' : 'Photos'}
+                 </h2>
+                 <p className="text-gray-400 text-sm mt-1">Sorted by match confidence</p>
+              </div>
             </div>
 
-            <div style={styles.gallery}>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
               {scanResult.matches.map((photo) => (
-                <div key={photo.image_id} style={styles.photoCard}>
-                  <div style={styles.photoContainer}>
+                <div key={photo.image_id} className="glass-card rounded-2xl overflow-hidden group hover:bg-white/10 transition-colors">
+                  <div 
+                     className="aspect-[4/3] relative overflow-hidden cursor-pointer"
+                     onClick={() => handleViewOriginal(photo)}
+                  >
                     <img
                       src={photo.thumbnail_url}
                       alt="Matched photo"
-                      style={styles.photo}
-                      onClick={() => handleViewOriginal(photo)}
+                      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                     />
-                    <div style={styles.similarityBadge}>
-                      {Math.round(photo.similarity * 100)}% match
+                    <div className="absolute top-3 right-3 bg-black/60 backdrop-blur-md px-3 py-1 rounded-full text-xs font-bold border border-white/10 flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-green-500"></span>
+                      {Math.round(photo.similarity * 100)}%
+                    </div>
+                    
+                    {/* Hover Overlay */}
+                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                       <Eye className="w-8 h-8 text-white drop-shadow-lg" />
                     </div>
                   </div>
                   
-                  <div style={styles.photoActions}>
+                  <div className="p-4 flex gap-3">
                     <button
                       onClick={() => handleViewOriginal(photo)}
-                      style={styles.viewButton}
+                      className="flex-1 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-sm font-medium transition-colors border border-white/5"
                     >
-                      View Full Size
+                      View
                     </button>
                     
                     {allowDownloads && photo.download_url && (
                       <button
                         onClick={() => handleDownload(photo)}
-                        style={styles.downloadButton}
+                        className="flex-1 py-2 bg-white text-black hover:bg-gray-200 rounded-lg text-sm font-bold transition-colors flex items-center justify-center gap-2"
                       >
-                        Download
+                        <Download className="w-4 h-4" /> Download
                       </button>
                     )}
                   </div>
@@ -168,27 +183,42 @@ export default function ScanResults() {
 
       {/* Modal for viewing full-size photo */}
       {selectedPhoto && (
-        <div style={styles.modal} onClick={closeModal}>
-          <div style={styles.modalContent} onClick={(e) => e.stopPropagation()}>
-            <button onClick={closeModal} style={styles.closeButton}>
-              ✕
-            </button>
+        <div 
+           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/95 backdrop-blur-sm animate-in fade-in duration-200"
+           onClick={closeModal}
+        >
+          <button 
+             onClick={closeModal} 
+             className="absolute top-6 right-6 p-3 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors z-50"
+          >
+            <X className="w-6 h-6" />
+          </button>
+          
+          <div 
+             className="relative max-w-6xl w-full max-h-screen flex flex-col items-center" 
+             onClick={(e) => e.stopPropagation()}
+          >
             <img
               src={selectedPhoto.original_url}
               alt="Full size photo"
-              style={styles.modalImage}
+              className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl"
             />
-            <div style={styles.modalActions}>
-              <div style={styles.modalSimilarity}>
-                {Math.round(selectedPhoto.similarity * 100)}% match
+            
+            <div className="mt-6 flex items-center gap-4 bg-black/50 backdrop-blur-xl px-6 py-4 rounded-2xl border border-white/10">
+              <div className="text-lg font-bold">
+                 Match Confidence: <span className="text-green-400">{Math.round(selectedPhoto.similarity * 100)}%</span>
               </div>
+              
               {allowDownloads && selectedPhoto.download_url && (
-                <button
-                  onClick={() => handleDownload(selectedPhoto)}
-                  style={styles.modalDownloadButton}
-                >
-                  Download Photo
-                </button>
+                <>
+                  <div className="w-px h-6 bg-white/20"></div>
+                  <button
+                    onClick={() => handleDownload(selectedPhoto)}
+                    className="flex items-center gap-2 bg-white text-black px-6 py-2 rounded-lg font-bold hover:bg-gray-200 transition-colors"
+                  >
+                    <Download className="w-4 h-4" /> Download Photo
+                  </button>
+                </>
               )}
             </div>
           </div>
@@ -196,223 +226,4 @@ export default function ScanResults() {
       )}
     </div>
   )
-}
-
-const styles = {
-  container: {
-    minHeight: '100vh',
-    backgroundColor: '#f5f5f5',
-    padding: '20px',
-  } as React.CSSProperties,
-  header: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    maxWidth: '1400px',
-    margin: '0 auto 30px',
-    padding: '20px',
-    backgroundColor: 'white',
-    borderRadius: '8px',
-    boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-  } as React.CSSProperties,
-  title: {
-    fontSize: '24px',
-    fontWeight: 'bold',
-    color: '#333',
-    margin: 0,
-  } as React.CSSProperties,
-  backButton: {
-    padding: '8px 16px',
-    fontSize: '14px',
-    color: '#007bff',
-    backgroundColor: 'transparent',
-    border: '1px solid #007bff',
-    borderRadius: '4px',
-    cursor: 'pointer',
-  } as React.CSSProperties,
-  content: {
-    maxWidth: '1400px',
-    margin: '0 auto',
-  } as React.CSSProperties,
-  emptyState: {
-    backgroundColor: 'white',
-    borderRadius: '8px',
-    padding: '60px 40px',
-    textAlign: 'center',
-    boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-  } as React.CSSProperties,
-  emptyIcon: {
-    fontSize: '64px',
-    marginBottom: '20px',
-  } as React.CSSProperties,
-  emptyTitle: {
-    fontSize: '24px',
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: '12px',
-  } as React.CSSProperties,
-  emptyText: {
-    fontSize: '16px',
-    color: '#666',
-    marginBottom: '16px',
-    lineHeight: '1.5',
-  } as React.CSSProperties,
-  emptyList: {
-    textAlign: 'left',
-    display: 'inline-block',
-    color: '#666',
-    marginBottom: '30px',
-    lineHeight: '1.8',
-  } as React.CSSProperties,
-  tryAgainButton: {
-    padding: '12px 24px',
-    fontSize: '16px',
-    fontWeight: '600',
-    color: 'white',
-    backgroundColor: '#007bff',
-    border: 'none',
-    borderRadius: '4px',
-    cursor: 'pointer',
-  } as React.CSSProperties,
-  resultsHeader: {
-    backgroundColor: 'white',
-    borderRadius: '8px',
-    padding: '20px',
-    marginBottom: '20px',
-    boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-  } as React.CSSProperties,
-  resultsTitle: {
-    fontSize: '24px',
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: '8px',
-  } as React.CSSProperties,
-  resultsSubtitle: {
-    fontSize: '14px',
-    color: '#666',
-    margin: 0,
-  } as React.CSSProperties,
-  gallery: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
-    gap: '20px',
-  } as React.CSSProperties,
-  photoCard: {
-    backgroundColor: 'white',
-    borderRadius: '8px',
-    overflow: 'hidden',
-    boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-    transition: 'transform 0.2s, box-shadow 0.2s',
-  } as React.CSSProperties,
-  photoContainer: {
-    position: 'relative',
-    aspectRatio: '4/3',
-    overflow: 'hidden',
-    cursor: 'pointer',
-  } as React.CSSProperties,
-  photo: {
-    width: '100%',
-    height: '100%',
-    objectFit: 'cover',
-    transition: 'transform 0.2s',
-  } as React.CSSProperties,
-  similarityBadge: {
-    position: 'absolute',
-    top: '10px',
-    right: '10px',
-    backgroundColor: 'rgba(0, 123, 255, 0.9)',
-    color: 'white',
-    padding: '6px 12px',
-    borderRadius: '20px',
-    fontSize: '12px',
-    fontWeight: '600',
-  } as React.CSSProperties,
-  photoActions: {
-    padding: '12px',
-    display: 'flex',
-    gap: '8px',
-  } as React.CSSProperties,
-  viewButton: {
-    flex: 1,
-    padding: '10px',
-    fontSize: '14px',
-    color: '#007bff',
-    backgroundColor: 'transparent',
-    border: '1px solid #007bff',
-    borderRadius: '4px',
-    cursor: 'pointer',
-  } as React.CSSProperties,
-  downloadButton: {
-    flex: 1,
-    padding: '10px',
-    fontSize: '14px',
-    color: 'white',
-    backgroundColor: '#28a745',
-    border: 'none',
-    borderRadius: '4px',
-    cursor: 'pointer',
-  } as React.CSSProperties,
-  modal: {
-    position: 'fixed',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.9)',
-    display: 'flex',
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 1000,
-    padding: '20px',
-  } as React.CSSProperties,
-  modalContent: {
-    position: 'relative',
-    maxWidth: '90vw',
-    maxHeight: '90vh',
-    backgroundColor: 'white',
-    borderRadius: '8px',
-    overflow: 'hidden',
-  } as React.CSSProperties,
-  closeButton: {
-    position: 'absolute',
-    top: '10px',
-    right: '10px',
-    width: '40px',
-    height: '40px',
-    fontSize: '24px',
-    color: 'white',
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    border: 'none',
-    borderRadius: '50%',
-    cursor: 'pointer',
-    zIndex: 1001,
-  } as React.CSSProperties,
-  modalImage: {
-    width: '100%',
-    height: 'auto',
-    maxHeight: 'calc(90vh - 80px)',
-    objectFit: 'contain',
-  } as React.CSSProperties,
-  modalActions: {
-    padding: '16px',
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#f8f9fa',
-  } as React.CSSProperties,
-  modalSimilarity: {
-    fontSize: '16px',
-    fontWeight: '600',
-    color: '#007bff',
-  } as React.CSSProperties,
-  modalDownloadButton: {
-    padding: '10px 20px',
-    fontSize: '14px',
-    fontWeight: '600',
-    color: 'white',
-    backgroundColor: '#28a745',
-    border: 'none',
-    borderRadius: '4px',
-    cursor: 'pointer',
-  } as React.CSSProperties,
 }

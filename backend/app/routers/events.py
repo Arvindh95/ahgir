@@ -22,6 +22,7 @@ from app.models import User, Event, Image, AuditLog
 from app.storage import storage_service
 from app.queue import enqueue_face_indexing
 from app.audit import log_action
+from app.config import settings
 
 router = APIRouter(prefix="/events", tags=["events"])
 
@@ -30,6 +31,8 @@ class EventCreate(BaseModel):
     name: str
     date: Optional[str] = None  # ISO date string
     passcode: Optional[str] = None
+    location: Optional[str] = None
+    description: Optional[str] = None
     allow_downloads: bool = True
     retention_days: int = 90
 
@@ -73,6 +76,9 @@ class EventDetailResponse(BaseModel):
     name: str
     date: Optional[str] = None
     guest_link: str
+    location: Optional[str] = None
+    description: Optional[str] = None
+    cover_image_url: Optional[str] = None
     allow_downloads: bool
     retention_days: int
     status: EventStatusResponse
@@ -199,6 +205,8 @@ async def create_event(
         name=event_data.name,
         date=event_date,
         passcode_hash=passcode_hash,
+        location=event_data.location,
+        description=event_data.description,
         allow_downloads=event_data.allow_downloads,
         retention_days=event_data.retention_days
     )
@@ -219,8 +227,8 @@ async def create_event(
     
     # Generate guest link (assuming domain is configured)
     # In production, this would use the actual domain from config
-    guest_link = f"https://domain/e/{slug}"
-    qr_code_url = f"https://domain/api/events/{new_event.id}/qr"
+    guest_link = f"{settings.frontend_url}/e/{slug}"
+    qr_code_url = f"{settings.frontend_url}/api/events/{new_event.id}/qr"
     
     return EventResponse(
         event_id=str(new_event.id),
@@ -322,19 +330,125 @@ async def get_event(
     status_info = get_event_status(event.id, db)
     
     # Generate guest link
-    guest_link = f"https://domain/e/{event.slug}"
+    guest_link = f"{settings.frontend_url}/e/{event.slug}"
     
+    # Generate cover image URL if exists
+    cover_image_url = None
+    if event.cover_image:
+        cover_image_url = f"http://{settings.minio_external_endpoint}/{settings.minio_bucket}/{event.cover_image}"
+
     return EventDetailResponse(
         event_id=str(event.id),
         slug=event.slug,
         name=event.name,
         date=event.date.isoformat() if event.date else None,
         guest_link=guest_link,
+        location=event.location,
+        description=event.description,
+        cover_image_url=cover_image_url,
         allow_downloads=event.allow_downloads,
         retention_days=event.retention_days,
         status=status_info,
         created_at=event.created_at
     )
+
+class EventUpdate(BaseModel):
+    slug: Optional[str] = None
+    location: Optional[str] = None
+    description: Optional[str] = None
+
+@router.patch("/{event_id}")
+async def update_event(
+    event_id: str,
+    update_data: EventUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update event details (slug, location, description)"""
+    try:
+        event_uuid = uuid.UUID(event_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid event ID format")
+
+    event = db.query(Event).filter(Event.id == event_uuid).first()
+    if not event:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+    if event.owner_user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to update this event")
+
+    if update_data.slug is not None:
+        existing = db.query(Event).filter(Event.slug == update_data.slug, Event.id != event_uuid).first()
+        if existing:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Slug is already in use")
+        event.slug = update_data.slug
+    if update_data.location is not None:
+        event.location = update_data.location
+    if update_data.description is not None:
+        event.description = update_data.description
+
+    db.commit()
+    db.refresh(event)
+    return {"message": "Event updated", "slug": event.slug}
+
+@router.post("/{event_id}/cover")
+async def upload_cover_image(
+    event_id: str,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Upload a cover/hero image for the event"""
+    try:
+        event_uuid = uuid.UUID(event_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid event ID format")
+
+    event = db.query(Event).filter(Event.id == event_uuid).first()
+    if not event:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+    if event.owner_user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
+
+    # Validate file type
+    if not file.content_type or not file.content_type.startswith('image/'):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File must be an image")
+
+    # Read and process image
+    image_bytes = await file.read()
+    img = PILImage.open(BytesIO(image_bytes))
+    if img.mode in ('RGBA', 'LA', 'P'):
+        img = img.convert('RGB')
+
+    # Resize to max 1920px on longest side for cover
+    max_size = 1920
+    img.thumbnail((max_size, max_size), PILImage.LANCZOS)
+    buffer = BytesIO()
+    img.save(buffer, format='JPEG', quality=85)
+    buffer.seek(0)
+
+    # Upload to MinIO
+    object_key = f"events/{event_uuid}/cover.jpg"
+    from minio import Minio
+    minio_client = Minio(
+        settings.minio_endpoint,
+        access_key=settings.minio_access_key,
+        secret_key=settings.minio_secret_key,
+        secure=settings.minio_secure
+    )
+    minio_client.put_object(
+        settings.minio_bucket,
+        object_key,
+        buffer,
+        length=buffer.getbuffer().nbytes,
+        content_type="image/jpeg"
+    )
+
+    # Update event
+    event.cover_image = object_key
+    db.commit()
+
+    cover_url = f"http://{settings.minio_external_endpoint}/{settings.minio_bucket}/{object_key}"
+    return {"message": "Cover image uploaded", "cover_image_url": cover_url}
 
 @router.get("/{event_id}/qr")
 async def get_event_qr_code(
@@ -374,7 +488,7 @@ async def get_event_qr_code(
         )
     
     # Generate guest link and QR code
-    guest_link = f"https://domain/e/{event.slug}"
+    guest_link = f"{settings.frontend_url}/e/{event.slug}"
     qr_code_bytes = generate_qr_code(guest_link)
     
     return Response(content=qr_code_bytes, media_type="image/png")
