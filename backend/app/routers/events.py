@@ -253,10 +253,13 @@ async def list_events(
     
     Returns a list of events with photo counts and indexing status
     """
-    # Query events owned by current user
-    events = db.query(Event).filter(
-        Event.owner_user_id == current_user.id
-    ).order_by(Event.created_at.desc()).all()
+    # Query events - superadmin sees all, regular users see only their own
+    if current_user.is_superadmin:
+        events = db.query(Event).order_by(Event.created_at.desc()).all()
+    else:
+        events = db.query(Event).filter(
+            Event.owner_user_id == current_user.id
+        ).order_by(Event.created_at.desc()).all()
     
     # Build response with counts
     event_list = []
@@ -319,13 +322,13 @@ async def get_event(
             detail="Event not found"
         )
     
-    # Validate ownership
-    if event.owner_user_id != current_user.id:
+    # Validate ownership (superadmin bypasses)
+    if not current_user.is_superadmin and event.owner_user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have permission to access this event"
         )
-    
+
     # Get status information
     status_info = get_event_status(event.id, db)
     
@@ -374,7 +377,7 @@ async def update_event(
     event = db.query(Event).filter(Event.id == event_uuid).first()
     if not event:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
-    if event.owner_user_id != current_user.id:
+    if not current_user.is_superadmin and event.owner_user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to update this event")
 
     if update_data.slug is not None:
@@ -407,7 +410,7 @@ async def upload_cover_image(
     event = db.query(Event).filter(Event.id == event_uuid).first()
     if not event:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
-    if event.owner_user_id != current_user.id:
+    if not current_user.is_superadmin and event.owner_user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
 
     # Validate file type
@@ -481,13 +484,13 @@ async def get_event_qr_code(
             detail="Event not found"
         )
     
-    # Validate ownership
-    if event.owner_user_id != current_user.id:
+    # Validate ownership (superadmin bypasses)
+    if not current_user.is_superadmin and event.owner_user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have permission to access this event"
         )
-    
+
     # Generate guest link and QR code
     guest_link = f"{settings.frontend_url}/e/{event.slug}"
     qr_code_bytes = generate_qr_code(guest_link)
@@ -641,13 +644,13 @@ async def upload_photos(
             detail="Event not found"
         )
     
-    # Validate ownership
-    if event.owner_user_id != current_user.id:
+    # Validate ownership (superadmin bypasses)
+    if not current_user.is_superadmin and event.owner_user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have permission to upload photos to this event"
         )
-    
+
     uploaded = []
     duplicates = []
     
@@ -801,13 +804,13 @@ async def list_photos(
             detail="Event not found"
         )
     
-    # Validate ownership
-    if event.owner_user_id != current_user.id:
+    # Validate ownership (superadmin bypasses)
+    if not current_user.is_superadmin and event.owner_user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have permission to access this event"
         )
-    
+
     # Build query
     query = db.query(Image).filter(Image.event_id == event_uuid)
     
@@ -890,13 +893,13 @@ async def delete_photo(
             detail="Event not found"
         )
     
-    # Validate ownership
-    if event.owner_user_id != current_user.id:
+    # Validate ownership (superadmin bypasses)
+    if not current_user.is_superadmin and event.owner_user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have permission to delete photos from this event"
         )
-    
+
     # Query image
     image = db.query(Image).filter(
         Image.id == image_uuid,
@@ -974,13 +977,13 @@ async def reindex_event(
             detail="Event not found"
         )
     
-    # Validate ownership
-    if event.owner_user_id != current_user.id:
+    # Validate ownership (superadmin bypasses)
+    if not current_user.is_superadmin and event.owner_user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have permission to reindex this event"
         )
-    
+
     # Get all images for this event
     images = db.query(Image).filter(Image.event_id == event_uuid).all()
     
@@ -1060,13 +1063,13 @@ async def get_audit_logs(
             detail="Event not found"
         )
     
-    # Validate ownership
-    if event.owner_user_id != current_user.id:
+    # Validate ownership (superadmin bypasses)
+    if not current_user.is_superadmin and event.owner_user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have permission to access logs for this event"
         )
-    
+
     # Build query
     query = db.query(AuditLog).filter(AuditLog.event_id == event_uuid)
     
@@ -1141,13 +1144,13 @@ async def delete_event(
             detail="Event not found"
         )
     
-    # Validate ownership
-    if event.owner_user_id != current_user.id:
+    # Validate ownership (superadmin bypasses)
+    if not current_user.is_superadmin and event.owner_user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have permission to delete this event"
         )
-    
+
     # Log event deletion before deleting (audit log will be deleted with cascade)
     log_action(
         db=db,
