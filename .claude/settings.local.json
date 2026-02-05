@@ -33,7 +33,12 @@
       "Bash(npm install:*)",
       "Bash(grep:*)",
       "WebFetch(domain:foto.jkdreams.com)",
-      "Bash(openssl rand:*)"
+      "Bash(openssl rand:*)",
+      "Bash(git rm:*)",
+      "Bash(git add:*)",
+      "Bash(git checkout:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nfix\\(security\\): remove hardcoded secrets from .env.production\n\nRemove .env.production from version control — it contained live\nPOSTGRES_PASSWORD, MINIO_ROOT_PASSWORD, JWT_SECRET_KEY, and\nCOMPREFACE_DB_PASSWORD values that were flagged by GitGuardian.\n\n- Delete .env.production from git tracking \\(file kept locally\\)\n- Add .env.production to .gitignore\n- Add missing CompreFace vars to the safe .env.production.example template\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(python3:*)"
     ]
   }
 }
