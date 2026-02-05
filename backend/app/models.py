@@ -65,13 +65,13 @@ class Image(Base):
     
     # Indexes and constraints
     __table_args__ = (
-        Index("idx_event_hash", "event_id", "file_hash"),
+        Index("idx_event_filename", "event_id", "filename"),
         CheckConstraint("status IN ('pending', 'indexed', 'no_faces', 'failed')", name="valid_status"),
         {"schema": None}
     )
 
-# Add unique constraint for hash per event
-Index("unique_hash_per_event", Image.event_id, Image.file_hash, unique=True)
+# Unique filename per event
+Index("unique_filename_per_event", Image.event_id, Image.filename, unique=True)
 
 class Face(Base):
     __tablename__ = "faces"

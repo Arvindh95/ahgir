@@ -664,19 +664,19 @@ async def upload_photos(
                 ))
                 continue
             
-            # Compute hash for deduplication
+            # Compute hash (stored for reference)
             file_hash = compute_file_hash(file_data)
-            
-            # Check for duplicate within this event
+
+            # Check for duplicate filename within this event
             existing = db.query(Image).filter(
                 Image.event_id == event_uuid,
-                Image.file_hash == file_hash
+                Image.filename == file.filename
             ).first()
-            
+
             if existing:
                 duplicates.append(PhotoDuplicate(
                     filename=file.filename,
-                    reason="Hash match with existing image"
+                    reason="File with this name already exists in event"
                 ))
                 continue
             
