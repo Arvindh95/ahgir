@@ -13,13 +13,19 @@ export default function EventMonitoring({ eventId }: EventMonitoringProps) {
   const [isLoadingEvent, setIsLoadingEvent] = useState(true)
   const [isLoadingLogs, setIsLoadingLogs] = useState(true)
   const [error, setError] = useState('')
-  const [actionFilter, setActionFilter] = useState<string>('')
+  const [actionFilter, setActionFilter] = useState<string>('admin_only')
   const [isReindexing, setIsReindexing] = useState(false)
+  const [page, setPage] = useState(1)
+  const [total, setTotal] = useState(0)
+  const logsPerPage = 20
 
   useEffect(() => {
     loadEvent()
+  }, [eventId])
+
+  useEffect(() => {
     loadAuditLogs()
-  }, [eventId, actionFilter])
+  }, [eventId, actionFilter, page])
 
   const loadEvent = async () => {
     try {
@@ -36,8 +42,24 @@ export default function EventMonitoring({ eventId }: EventMonitoringProps) {
   const loadAuditLogs = async () => {
     try {
       setIsLoadingLogs(true)
-      const data = await auditService.getAuditLogs(eventId, 1, 20, actionFilter || undefined)
-      setAuditLogs(data.logs)
+      // Handle special filter cases
+      let action: string | undefined = undefined
+      if (actionFilter && actionFilter !== 'admin_only' && actionFilter !== 'guest_only') {
+        action = actionFilter
+      }
+
+      const data = await auditService.getAuditLogs(eventId, page, logsPerPage, action)
+
+      // Client-side filtering for actor_type (admin_only/guest_only)
+      let filteredLogs = data.logs
+      if (actionFilter === 'admin_only') {
+        filteredLogs = data.logs.filter(log => log.actor_type === 'admin')
+      } else if (actionFilter === 'guest_only') {
+        filteredLogs = data.logs.filter(log => log.actor_type === 'guest')
+      }
+
+      setAuditLogs(filteredLogs)
+      setTotal(actionFilter === 'admin_only' || actionFilter === 'guest_only' ? filteredLogs.length : data.total)
     } catch (err: any) {
       setError(err.response?.data?.error?.message || 'Failed to load audit logs')
     } finally {
@@ -74,6 +96,8 @@ export default function EventMonitoring({ eventId }: EventMonitoringProps) {
 
   const getActionColorDetails = (action: string) => {
     switch (action) {
+      case 'access':
+        return 'bg-cyan-500/20 text-cyan-400'
       case 'scan':
         return 'bg-blue-500/20 text-blue-400'
       case 'upload':
@@ -179,10 +203,15 @@ export default function EventMonitoring({ eventId }: EventMonitoringProps) {
             <select
               id="actionFilter"
               value={actionFilter}
-              onChange={(e) => setActionFilter(e.target.value)}
+              onChange={(e) => {
+                setActionFilter(e.target.value)
+                setPage(1)
+              }}
               className="bg-transparent border-none text-sm text-white focus:ring-0 cursor-pointer w-full"
             >
-              <option value="" className="bg-black">All Actions</option>
+              <option value="admin_only" className="bg-black">Admin Only</option>
+              <option value="" className="bg-black">All Activity</option>
+              <option value="guest_only" className="bg-black">Guest Only</option>
               <option value="access" className="bg-black">Access</option>
               <option value="scan" className="bg-black">Scan</option>
               <option value="upload" className="bg-black">Upload</option>
@@ -201,46 +230,71 @@ export default function EventMonitoring({ eventId }: EventMonitoringProps) {
             No audit logs found
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-white/10 text-gray-400">
-                  <th className="pb-3 pl-2 font-medium">Timestamp</th>
-                  <th className="pb-3 font-medium">Actor</th>
-                  <th className="pb-3 font-medium">Action</th>
-                  <th className="pb-3 font-medium">Details</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {auditLogs.map((log) => (
-                  <tr key={log.log_id} className="hover:bg-white/5 transition-colors">
-                    <td className="py-3 pl-2 text-gray-300 whitespace-nowrap">
-                      {formatTimestamp(log.timestamp)}
-                    </td>
-                    <td className="py-3">
-                      <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                         log.actor_type === 'admin' ? 'bg-purple-500/20 text-purple-300' : 'bg-gray-500/20 text-gray-300'
-                      }`}>
-                        {log.actor_type}
-                      </span>
-                    </td>
-                    <td className="py-3">
-                      <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wider ${getActionColorDetails(log.action)}`}>
-                        {log.action}
-                      </span>
-                    </td>
-                    <td className="py-3 text-gray-400 font-mono text-xs break-all pr-2">
-                      {log.metadata && Object.keys(log.metadata).length > 0 ? (
-                        <span>{JSON.stringify(log.metadata)}</span>
-                      ) : (
-                        <span className="opacity-50">-</span>
-                      )}
-                    </td>
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-white/10 text-gray-400">
+                    <th className="pb-3 pl-2 font-medium">Timestamp</th>
+                    <th className="pb-3 font-medium">Actor</th>
+                    <th className="pb-3 font-medium">Action</th>
+                    <th className="pb-3 font-medium">Details</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {auditLogs.map((log) => (
+                    <tr key={log.log_id} className="hover:bg-white/5 transition-colors">
+                      <td className="py-3 pl-2 text-gray-300 whitespace-nowrap">
+                        {formatTimestamp(log.timestamp)}
+                      </td>
+                      <td className="py-3">
+                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                           log.actor_type === 'admin' ? 'bg-purple-500/20 text-purple-300' : 'bg-gray-500/20 text-gray-300'
+                        }`}>
+                          {log.actor_type}
+                        </span>
+                      </td>
+                      <td className="py-3">
+                        <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wider ${getActionColorDetails(log.action)}`}>
+                          {log.action}
+                        </span>
+                      </td>
+                      <td className="py-3 text-gray-400 font-mono text-xs break-all pr-2">
+                        {log.metadata && Object.keys(log.metadata).length > 0 ? (
+                          <span>{JSON.stringify(log.metadata)}</span>
+                        ) : (
+                          <span className="opacity-50">-</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Pagination */}
+            {total > logsPerPage && (
+              <div className="flex justify-center items-center gap-2 mt-6 pt-4 border-t border-white/10">
+                <button
+                  onClick={() => setPage(page - 1)}
+                  disabled={page === 1}
+                  className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  Previous
+                </button>
+                <span className="px-4 py-2 text-sm text-gray-400">
+                  Page {page} of {Math.ceil(total / logsPerPage)}
+                </span>
+                <button
+                  onClick={() => setPage(page + 1)}
+                  disabled={page >= Math.ceil(total / logsPerPage)}
+                  className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  Next
+                </button>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

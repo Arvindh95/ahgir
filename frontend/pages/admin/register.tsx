@@ -1,6 +1,7 @@
 import { useState, FormEvent } from 'react'
 import { useRouter } from 'next/router'
 import { authService } from '@/lib/auth'
+import { Loader2, Lock, Mail, UserPlus } from 'lucide-react'
 
 export default function Register() {
   const router = useRouter()
@@ -56,81 +57,106 @@ export default function Register() {
   }
 
   return (
-    <div style={{ maxWidth: '400px', margin: '100px auto', padding: '20px' }}>
-      <h1>Admin Registration</h1>
-      <form onSubmit={handleSubmit}>
-        <div style={{ marginBottom: '15px' }}>
-          <label htmlFor="email" style={{ display: 'block', marginBottom: '5px' }}>
-            Email
-          </label>
-          <input
-            id="email"
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            style={{ width: '100%', padding: '8px', fontSize: '14px', color: '#000000' }}
-            disabled={isLoading}
-          />
+    <div className="min-h-screen bg-black flex items-center justify-center p-4 overflow-hidden relative">
+      {/* Background Ambience */}
+      <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none z-0">
+        <div className="absolute top-[-20%] left-[-10%] w-[60%] h-[60%] bg-purple-900/10 rounded-full blur-[120px]" />
+        <div className="absolute bottom-[-20%] right-[-10%] w-[60%] h-[60%] bg-blue-900/10 rounded-full blur-[120px]" />
+      </div>
+
+      <div className="glass-card w-full max-w-md p-8 rounded-2xl relative z-10">
+        <div className="text-center mb-8">
+          <h1 className="text-3xl font-bold mb-2">Create Account</h1>
+          <p className="text-gray-400 text-sm">Register to start managing events</p>
         </div>
 
-        <div style={{ marginBottom: '15px' }}>
-          <label htmlFor="password" style={{ display: 'block', marginBottom: '5px' }}>
-            Password
-          </label>
-          <input
-            id="password"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            style={{ width: '100%', padding: '8px', fontSize: '14px', color: '#000000' }}
-            disabled={isLoading}
-          />
-        </div>
-
-        <div style={{ marginBottom: '15px' }}>
-          <label htmlFor="confirmPassword" style={{ display: 'block', marginBottom: '5px' }}>
-            Confirm Password
-          </label>
-          <input
-            id="confirmPassword"
-            type="password"
-            value={confirmPassword}
-            onChange={(e) => setConfirmPassword(e.target.value)}
-            style={{ width: '100%', padding: '8px', fontSize: '14px', color: '#000000' }}
-            disabled={isLoading}
-          />
-        </div>
-
-        {error && (
-          <div style={{ color: 'red', marginBottom: '15px', fontSize: '14px' }}>
-            {error}
+        <form onSubmit={handleSubmit} className="space-y-5">
+          <div className="space-y-2">
+            <label htmlFor="email" className="block text-sm font-medium text-gray-300 ml-1">
+              Email Address
+            </label>
+            <div className="relative">
+              <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
+              <input
+                id="email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="glass-input w-full pl-12 pr-4 py-3 rounded-xl bg-white/5 border border-white/10 focus:ring-2 focus:ring-white/20 transition-all placeholder:text-gray-600"
+                placeholder="admin@example.com"
+                disabled={isLoading}
+              />
+            </div>
           </div>
-        )}
 
-        <button
-          type="submit"
-          disabled={isLoading}
-          style={{
-            width: '100%',
-            padding: '10px',
-            backgroundColor: '#0070f3',
-            color: 'white',
-            border: 'none',
-            borderRadius: '4px',
-            cursor: isLoading ? 'not-allowed' : 'pointer',
-            fontSize: '16px',
-          }}
-        >
-          {isLoading ? 'Registering...' : 'Register'}
-        </button>
-      </form>
+          <div className="space-y-2">
+            <label htmlFor="password" className="block text-sm font-medium text-gray-300 ml-1">
+              Password
+            </label>
+            <div className="relative">
+              <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
+              <input
+                id="password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="glass-input w-full pl-12 pr-4 py-3 rounded-xl bg-white/5 border border-white/10 focus:ring-2 focus:ring-white/20 transition-all placeholder:text-gray-600"
+                placeholder="••••••••"
+                disabled={isLoading}
+              />
+            </div>
+          </div>
 
-      <p style={{ marginTop: '20px', textAlign: 'center' }}>
-        Already have an account?{' '}
-        <a href="/admin/login" style={{ color: '#0070f3' }}>
-          Login
-        </a>
-      </p>
+          <div className="space-y-2">
+            <label htmlFor="confirmPassword" className="block text-sm font-medium text-gray-300 ml-1">
+              Confirm Password
+            </label>
+            <div className="relative">
+              <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
+              <input
+                id="confirmPassword"
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                className="glass-input w-full pl-12 pr-4 py-3 rounded-xl bg-white/5 border border-white/10 focus:ring-2 focus:ring-white/20 transition-all placeholder:text-gray-600"
+                placeholder="••••••••"
+                disabled={isLoading}
+              />
+            </div>
+          </div>
+
+          {error && (
+            <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm text-center">
+              {error}
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={isLoading}
+            className="group w-full bg-white text-black font-semibold py-3.5 px-4 rounded-xl hover:bg-gray-100 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+          >
+            {isLoading ? (
+              <>
+                <Loader2 className="w-5 h-5 animate-spin" />
+                <span>Creating account...</span>
+              </>
+            ) : (
+              <>
+                <span>Create Account</span>
+                <UserPlus className="w-5 h-5 group-hover:scale-110 transition-transform" />
+              </>
+            )}
+          </button>
+        </form>
+
+        <p className="mt-8 text-center text-sm text-gray-500">
+          Already have an account?{' '}
+          <a href="/admin/login" className="text-white hover:underline decoration-white/30 underline-offset-4">
+            Sign In
+          </a>
+        </p>
+      </div>
     </div>
   )
 }
