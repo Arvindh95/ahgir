@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { eventService, EventDetails } from '@/lib/events'
 import { auditService, AuditLog } from '@/lib/audit'
+import { RefreshCcw, Activity, Upload, Trash2, ScanFace, Search, Loader2 } from 'lucide-react'
 
 interface EventMonitoringProps {
   eventId: string
@@ -62,31 +63,41 @@ export default function EventMonitoring({ eventId }: EventMonitoringProps) {
   }
 
   const formatTimestamp = (timestamp: string) => {
-    return new Date(timestamp).toLocaleString()
+    return new Date(timestamp).toLocaleString('en-US', {
+       month: 'short',
+       day: 'numeric',
+       hour: 'numeric',
+       minute: 'numeric',
+       second: 'numeric'
+    })
   }
 
-  const getActionColor = (action: string): string => {
+  const getActionColorDetails = (action: string) => {
     switch (action) {
       case 'scan':
-        return '#2196f3'
+        return 'bg-blue-500/20 text-blue-400'
       case 'upload':
-        return '#28a745'
+        return 'bg-green-500/20 text-green-400'
       case 'reindex':
-        return '#ff9800'
+        return 'bg-orange-500/20 text-orange-400'
       case 'delete':
-        return '#dc3545'
+        return 'bg-red-500/20 text-red-400'
       default:
-        return '#666'
+        return 'bg-gray-500/20 text-gray-400'
     }
   }
 
   if (isLoadingEvent) {
-    return <p>Loading monitoring data...</p>
+    return (
+       <div className="flex justify-center p-8">
+          <Loader2 className="w-6 h-6 animate-spin text-white" />
+       </div>
+    )
   }
 
   if (error || !event) {
     return (
-      <div style={{ color: 'red', padding: '20px', backgroundColor: '#ffebee', borderRadius: '4px' }}>
+      <div className="p-4 bg-red-500/10 border border-red-500/20 text-red-500 rounded-xl">
         {error || 'Failed to load monitoring data'}
       </div>
     )
@@ -95,169 +106,134 @@ export default function EventMonitoring({ eventId }: EventMonitoringProps) {
   return (
     <div>
       {/* Indexing Status Section */}
-      <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '8px', marginBottom: '20px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-          <h2 style={{ margin: 0 }}>Indexing Status</h2>
+      <div className="glass-card p-6 rounded-2xl mb-8">
+        <div className="flex justify-between items-center mb-6">
+          <h2 className="text-xl font-bold flex items-center gap-2">
+             <Activity className="w-5 h-5" /> Indexing Status
+          </h2>
           <button
             onClick={handleReindex}
             disabled={isReindexing}
-            style={{
-              backgroundColor: isReindexing ? '#ccc' : '#28a745',
-              color: 'white',
-              border: 'none',
-              padding: '8px 16px',
-              borderRadius: '4px',
-              cursor: isReindexing ? 'not-allowed' : 'pointer',
-            }}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
+               isReindexing 
+               ? 'bg-white/5 text-gray-500 cursor-not-allowed' 
+               : 'bg-green-600 text-white hover:bg-green-700'
+            }`}
           >
+            {isReindexing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCcw className="w-4 h-4" />}
             {isReindexing ? 'Reindexing...' : 'Reindex All'}
           </button>
         </div>
 
         {/* Progress Bar */}
-        <div style={{ marginBottom: '20px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px' }}>
-            <span style={{ fontWeight: 'bold' }}>Indexing Progress</span>
-            <span style={{ fontWeight: 'bold' }}>{event.status.indexing_percentage.toFixed(1)}%</span>
+        <div className="mb-8">
+          <div className="flex justify-between mb-2 text-sm">
+            <span className="font-medium text-gray-300">Progress</span>
+            <span className="font-bold">{event.status.indexing_percentage.toFixed(1)}%</span>
           </div>
-          <div style={{ width: '100%', height: '24px', backgroundColor: '#e0e0e0', borderRadius: '12px', overflow: 'hidden' }}>
+          <div className="w-full h-3 bg-white/10 rounded-full overflow-hidden">
             <div
-              style={{
-                width: `${event.status.indexing_percentage}%`,
-                height: '100%',
-                backgroundColor: '#0070f3',
-                transition: 'width 0.3s',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: 'white',
-                fontSize: '12px',
-                fontWeight: 'bold',
-              }}
-            >
-              {event.status.indexing_percentage > 10 && `${event.status.indexing_percentage.toFixed(0)}%`}
-            </div>
+              className="h-full bg-blue-500 transition-all duration-500 ease-out"
+              style={{ width: `${event.status.indexing_percentage}%` }}
+            />
           </div>
         </div>
 
         {/* Photo Counts Grid */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '15px' }}>
-          <div style={{ padding: '15px', backgroundColor: '#f5f5f5', borderRadius: '8px', textAlign: 'center' }}>
-            <div style={{ fontSize: '32px', fontWeight: 'bold', marginBottom: '5px' }}>
-              {event.status.total_photos}
-            </div>
-            <div style={{ color: '#666', fontSize: '14px' }}>Total Photos</div>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+          <div className="p-4 bg-white/5 rounded-xl text-center border border-white/5">
+            <div className="text-2xl font-bold mb-1">{event.status.total_photos}</div>
+            <div className="text-xs text-gray-400 uppercase tracking-wider">Total Photos</div>
           </div>
-          <div style={{ padding: '15px', backgroundColor: '#e8f5e9', borderRadius: '8px', textAlign: 'center' }}>
-            <div style={{ fontSize: '32px', fontWeight: 'bold', marginBottom: '5px', color: '#28a745' }}>
-              {event.status.indexed}
-            </div>
-            <div style={{ color: '#666', fontSize: '14px' }}>Indexed</div>
+          <div className="p-4 bg-green-500/10 rounded-xl text-center border border-green-500/20">
+            <div className="text-2xl font-bold mb-1 text-green-400">{event.status.indexed}</div>
+            <div className="text-xs text-green-500/70 uppercase tracking-wider">Indexed</div>
           </div>
-          <div style={{ padding: '15px', backgroundColor: '#fff3e0', borderRadius: '8px', textAlign: 'center' }}>
-            <div style={{ fontSize: '32px', fontWeight: 'bold', marginBottom: '5px', color: '#ff9800' }}>
-              {event.status.pending}
-            </div>
-            <div style={{ color: '#666', fontSize: '14px' }}>Pending</div>
+          <div className="p-4 bg-orange-500/10 rounded-xl text-center border border-orange-500/20">
+            <div className="text-2xl font-bold mb-1 text-orange-400">{event.status.pending}</div>
+            <div className="text-xs text-orange-500/70 uppercase tracking-wider">Pending</div>
           </div>
-          <div style={{ padding: '15px', backgroundColor: '#f5f5f5', borderRadius: '8px', textAlign: 'center' }}>
-            <div style={{ fontSize: '32px', fontWeight: 'bold', marginBottom: '5px' }}>
-              {event.status.no_faces}
-            </div>
-            <div style={{ color: '#666', fontSize: '14px' }}>No Faces</div>
+          <div className="p-4 bg-white/5 rounded-xl text-center border border-white/5">
+            <div className="text-2xl font-bold mb-1 text-gray-300">{event.status.no_faces}</div>
+            <div className="text-xs text-gray-500 uppercase tracking-wider">No Faces</div>
           </div>
-          <div style={{ padding: '15px', backgroundColor: '#ffebee', borderRadius: '8px', textAlign: 'center' }}>
-            <div style={{ fontSize: '32px', fontWeight: 'bold', marginBottom: '5px', color: '#dc3545' }}>
-              {event.status.failed}
-            </div>
-            <div style={{ color: '#666', fontSize: '14px' }}>Failed</div>
+          <div className="p-4 bg-red-500/10 rounded-xl text-center border border-red-500/20">
+            <div className="text-2xl font-bold mb-1 text-red-400">{event.status.failed}</div>
+            <div className="text-xs text-red-500/70 uppercase tracking-wider">Failed</div>
           </div>
-          <div style={{ padding: '15px', backgroundColor: '#e3f2fd', borderRadius: '8px', textAlign: 'center' }}>
-            <div style={{ fontSize: '32px', fontWeight: 'bold', marginBottom: '5px', color: '#2196f3' }}>
-              {event.status.total_faces}
-            </div>
-            <div style={{ color: '#666', fontSize: '14px' }}>Total Faces</div>
+          <div className="p-4 bg-blue-500/10 rounded-xl text-center border border-blue-500/20">
+            <div className="text-2xl font-bold mb-1 text-blue-400">{event.status.total_faces}</div>
+            <div className="text-xs text-blue-500/70 uppercase tracking-wider">Total Faces</div>
           </div>
         </div>
       </div>
 
       {/* Audit Logs Section */}
-      <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '8px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-          <h2 style={{ margin: 0 }}>Audit Logs</h2>
-          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-            <label htmlFor="actionFilter" style={{ fontSize: '14px' }}>Filter:</label>
+      <div className="glass-card p-6 rounded-2xl">
+        <div className="flex flex-col sm:flex-row justify-between items-center gap-4 mb-6">
+          <h2 className="text-xl font-bold flex items-center gap-2">
+             <Search className="w-5 h-5" /> Audit Logs
+          </h2>
+          <div className="flex items-center gap-2 bg-white/5 px-3 py-1.5 rounded-lg border border-white/10 w-full sm:w-auto">
+            <label htmlFor="actionFilter" className="text-sm text-gray-400">Filter:</label>
             <select
               id="actionFilter"
               value={actionFilter}
               onChange={(e) => setActionFilter(e.target.value)}
-              style={{
-                padding: '8px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-                fontSize: '14px',
-              }}
+              className="bg-transparent border-none text-sm text-white focus:ring-0 cursor-pointer w-full"
             >
-              <option value="">All Actions</option>
-              <option value="access">Access</option>
-              <option value="scan">Scan</option>
-              <option value="upload">Upload</option>
-              <option value="reindex">Reindex</option>
-              <option value="delete">Delete</option>
+              <option value="" className="bg-black">All Actions</option>
+              <option value="access" className="bg-black">Access</option>
+              <option value="scan" className="bg-black">Scan</option>
+              <option value="upload" className="bg-black">Upload</option>
+              <option value="reindex" className="bg-black">Reindex</option>
+              <option value="delete" className="bg-black">Delete</option>
             </select>
           </div>
         </div>
 
         {isLoadingLogs ? (
-          <p>Loading audit logs...</p>
+          <div className="flex justify-center p-8">
+             <Loader2 className="w-6 h-6 animate-spin text-white" />
+          </div>
         ) : auditLogs.length === 0 ? (
-          <p style={{ textAlign: 'center', color: '#666', padding: '20px' }}>
+          <div className="text-center text-gray-500 p-8">
             No audit logs found
-          </p>
+          </div>
         ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
               <thead>
-                <tr style={{ backgroundColor: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-                  <th style={{ padding: '12px', textAlign: 'left', fontSize: '14px' }}>Timestamp</th>
-                  <th style={{ padding: '12px', textAlign: 'left', fontSize: '14px' }}>Actor</th>
-                  <th style={{ padding: '12px', textAlign: 'left', fontSize: '14px' }}>Action</th>
-                  <th style={{ padding: '12px', textAlign: 'left', fontSize: '14px' }}>Details</th>
+                <tr className="border-b border-white/10 text-gray-400">
+                  <th className="pb-3 pl-2 font-medium">Timestamp</th>
+                  <th className="pb-3 font-medium">Actor</th>
+                  <th className="pb-3 font-medium">Action</th>
+                  <th className="pb-3 font-medium">Details</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-white/5">
                 {auditLogs.map((log) => (
-                  <tr key={log.log_id} style={{ borderBottom: '1px solid #eee' }}>
-                    <td style={{ padding: '12px', fontSize: '13px' }}>
+                  <tr key={log.log_id} className="hover:bg-white/5 transition-colors">
+                    <td className="py-3 pl-2 text-gray-300 whitespace-nowrap">
                       {formatTimestamp(log.timestamp)}
                     </td>
-                    <td style={{ padding: '12px', fontSize: '13px' }}>
-                      <span style={{
-                        padding: '4px 8px',
-                        borderRadius: '4px',
-                        backgroundColor: log.actor_type === 'admin' ? '#e3f2fd' : '#f3e5f5',
-                        fontSize: '12px',
-                      }}>
+                    <td className="py-3">
+                      <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                         log.actor_type === 'admin' ? 'bg-purple-500/20 text-purple-300' : 'bg-gray-500/20 text-gray-300'
+                      }`}>
                         {log.actor_type}
                       </span>
                     </td>
-                    <td style={{ padding: '12px', fontSize: '13px' }}>
-                      <span style={{
-                        padding: '4px 8px',
-                        borderRadius: '4px',
-                        backgroundColor: getActionColor(log.action),
-                        color: 'white',
-                        fontSize: '12px',
-                        fontWeight: 'bold',
-                      }}>
+                    <td className="py-3">
+                      <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wider ${getActionColorDetails(log.action)}`}>
                         {log.action}
                       </span>
                     </td>
-                    <td style={{ padding: '12px', fontSize: '13px', color: '#666' }}>
+                    <td className="py-3 text-gray-400 font-mono text-xs break-all pr-2">
                       {log.metadata && Object.keys(log.metadata).length > 0 ? (
                         <span>{JSON.stringify(log.metadata)}</span>
                       ) : (
-                        <span>-</span>
+                        <span className="opacity-50">-</span>
                       )}
                     </td>
                   </tr>

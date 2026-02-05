@@ -3,6 +3,7 @@ import { useRouter } from 'next/router'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import AdminLayout from '@/components/AdminLayout'
 import { eventService, Event } from '@/lib/events'
+import { Plus, Calendar, Image as ImageIcon, Users, ScanFace, ArrowRight, Loader2 } from 'lucide-react'
 
 export default function EventsPage() {
   const router = useRouter()
@@ -27,85 +28,90 @@ export default function EventsPage() {
   }
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString()
+    return new Date(dateString).toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    })
   }
 
   return (
     <ProtectedRoute>
       <AdminLayout>
-        <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px' }}>
-            <h1>My Events</h1>
+        <div className="max-w-7xl mx-auto">
+          <div className="flex justify-between items-center mb-8">
+            <h1 className="text-3xl font-bold">My Events</h1>
             <button
               onClick={() => router.push('/admin/events/create')}
-              style={{
-                backgroundColor: '#0070f3',
-                color: 'white',
-                border: 'none',
-                padding: '10px 20px',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                fontSize: '16px',
-              }}
+              className="flex items-center gap-2 bg-white text-black px-4 py-2 rounded-lg font-semibold hover:bg-gray-200 transition-colors"
             >
+              <Plus className="w-5 h-5" />
               Create Event
             </button>
           </div>
 
           {error && (
-            <div style={{ color: 'red', marginBottom: '20px', padding: '10px', backgroundColor: '#ffebee', borderRadius: '4px' }}>
+            <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 text-red-500 rounded-xl">
               {error}
             </div>
           )}
 
           {isLoading ? (
-            <p>Loading events...</p>
+            <div className="flex items-center justify-center h-64">
+               <Loader2 className="w-8 h-8 text-white animate-spin" />
+            </div>
           ) : events.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '40px', backgroundColor: 'white', borderRadius: '8px' }}>
-              <p style={{ fontSize: '18px', color: '#666' }}>No events yet</p>
-              <p style={{ color: '#999' }}>Create your first event to get started</p>
+            <div className="glass-card p-12 text-center rounded-2xl">
+              <p className="text-xl text-gray-300 mb-2">No events yet</p>
+              <p className="text-gray-500">Create your first event to get started</p>
             </div>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px' }}>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {events.map((event) => (
                 <div
                   key={event.event_id}
                   onClick={() => router.push(`/admin/events/${event.event_id}`)}
-                  style={{
-                    backgroundColor: 'white',
-                    padding: '20px',
-                    borderRadius: '8px',
-                    cursor: 'pointer',
-                    boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-                    transition: 'box-shadow 0.2s',
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.boxShadow = '0 4px 8px rgba(0,0,0,0.15)'
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.boxShadow = '0 2px 4px rgba(0,0,0,0.1)'
-                  }}
+                  className="glass-card p-6 rounded-2xl cursor-pointer hover:bg-white/10 transition-colors group relative overflow-hidden"
                 >
-                  <h3 style={{ marginTop: 0, marginBottom: '10px' }}>{event.name}</h3>
-                  <p style={{ color: '#666', fontSize: '14px', marginBottom: '5px' }}>
-                    Date: {formatDate(event.date)}
-                  </p>
-                  <p style={{ color: '#666', fontSize: '14px', marginBottom: '5px' }}>
-                    Slug: {event.slug}
-                  </p>
-                  {event.photo_count !== undefined && (
-                    <div style={{ marginTop: '15px', paddingTop: '15px', borderTop: '1px solid #eee' }}>
-                      <p style={{ fontSize: '14px', marginBottom: '5px' }}>
-                        Photos: {event.photo_count}
-                      </p>
-                      <p style={{ fontSize: '14px', marginBottom: '5px' }}>
-                        Indexed: {event.indexed_count}
-                      </p>
-                      <p style={{ fontSize: '14px', marginBottom: '0' }}>
-                        Faces: {event.face_count}
-                      </p>
+                  <div className="relative z-10">
+                    <div className="flex justify-between items-start mb-4">
+                      <h3 className="text-xl font-bold truncate pr-4">{event.name}</h3>
+                      <ArrowRight className="w-5 h-5 text-gray-500 group-hover:text-white transition-colors group-hover:translate-x-1 transform" />
                     </div>
-                  )}
+                    
+                    <div className="space-y-2 mb-6">
+                      <div className="flex items-center gap-2 text-gray-400 text-sm">
+                        <Calendar className="w-4 h-4" />
+                        <span>{formatDate(event.date)}</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-gray-400 text-sm">
+                        <span className="font-mono bg-white/5 px-2 py-0.5 rounded text-xs">/{event.slug}</span>
+                      </div>
+                    </div>
+
+                    {event.photo_count !== undefined && (
+                      <div className="grid grid-cols-3 gap-2 border-t border-white/10 pt-4 mt-4">
+                        <div className="text-center">
+                           <div className="flex items-center justify-center gap-1 text-gray-400 text-xs mb-1">
+                              <ImageIcon className="w-3 h-3" /> Photos
+                           </div>
+                           <span className="font-semibold">{event.photo_count}</span>
+                        </div>
+                        <div className="text-center border-l border-white/10">
+                           <div className="flex items-center justify-center gap-1 text-gray-400 text-xs mb-1">
+                              <ScanFace className="w-3 h-3" /> Indexed
+                           </div>
+                           <span className="font-semibold">{event.indexed_count}</span>
+                        </div>
+                        <div className="text-center border-l border-white/10">
+                           <div className="flex items-center justify-center gap-1 text-gray-400 text-xs mb-1">
+                              <Users className="w-3 h-3" /> Faces
+                           </div>
+                           <span className="font-semibold">{event.face_count}</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>

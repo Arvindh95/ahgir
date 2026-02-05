@@ -28,7 +28,8 @@
       "Bash(ping:*)",
       "Bash(docker-compose down:*)",
       "Bash(docker rm:*)",
-      "Bash(\")"
+      "Bash(\")",
+      "Bash(docker-compose ps:*)"
     ]
   }
 }
