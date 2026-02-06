@@ -29,12 +29,13 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center gap-8">
-              <h2
-                className="text-xl font-bold cursor-pointer hover:opacity-80 transition-opacity"
+              <div
+                className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity"
                 onClick={() => router.push('/admin/events')}
               >
-                PicUr Admin
-              </h2>
+                <img src="/favicon-96x96.png" alt="PicUr" className="w-8 h-8" />
+                <span className="text-xl font-bold">PicUr Admin</span>
+              </div>
               <div className="hidden md:flex gap-6">
                 <a
                   href="/admin/events"
