@@ -3,8 +3,10 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 from app.config import settings
+from app.retry_utils import exponential_backoff
 
 
+@exponential_backoff(max_retries=2, base_delay=2.0, exceptions=(smtplib.SMTPException, OSError, ConnectionError))
 def send_email(to_email: str, subject: str, html_body: str) -> None:
     """Send an HTML email via SMTP."""
     msg = MIMEMultipart("alternative")

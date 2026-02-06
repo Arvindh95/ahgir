@@ -26,7 +26,10 @@ class CompreFaceClient:
         """Check if CompreFace is healthy."""
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(f"{self.base_url}/status")
+                response = await client.get(
+                    f"{self.base_url}/status",
+                    headers=self._get_headers()
+                )
                 return response.status_code == 200
         except Exception as e:
             logger.error(f"CompreFace health check failed: {e}")

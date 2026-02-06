@@ -11,6 +11,7 @@ from app.auth import get_current_user
 from app.database import get_db
 from app.models import User, Event, Image, Face
 from app.storage import storage_service
+from app.queue import get_failed_jobs, retry_failed_job
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -171,3 +172,28 @@ async def admin_delete_event(
     db.commit()
 
     return {"message": "Event deleted successfully", "event_id": str(event_uuid)}
+
+
+@router.get("/failed-jobs")
+async def list_failed_jobs(
+    current_user: User = Depends(get_superadmin_user),
+):
+    """List all failed jobs across queues."""
+    jobs = get_failed_jobs()
+    return {"failed_jobs": jobs, "total": len(jobs)}
+
+
+@router.post("/retry-job/{job_id}")
+async def retry_job(
+    job_id: str,
+    current_user: User = Depends(get_superadmin_user),
+):
+    """Requeue a failed job for retry."""
+    try:
+        requeued_id = retry_failed_job(job_id)
+        return {"message": "Job requeued successfully", "job_id": requeued_id}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Job not found or cannot be retried: {str(e)}"
+        )

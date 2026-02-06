@@ -206,7 +206,7 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    command: rq worker --url redis://redis:6379/0 --burst
+    command: rq worker --url redis://redis:6379/0 face_indexing retention default
 
   frontend:
     build:
