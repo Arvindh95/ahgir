@@ -318,6 +318,7 @@ export default function ScanResults() {
                     <img
                       src={photo.thumbnail_url}
                       alt="Matched photo"
+                      loading="lazy"
                       className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                     />
 

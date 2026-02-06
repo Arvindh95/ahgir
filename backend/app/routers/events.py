@@ -564,27 +564,7 @@ def validate_image_format(file_data: bytes, filename: str) -> bool:
     except Exception:
         return False
 
-def generate_thumbnail(file_data: bytes, target_width: int = 512) -> bytes:
-    """Generate thumbnail with specified width, maintaining aspect ratio"""
-    img = PILImage.open(BytesIO(file_data))
-    
-    # Convert to RGB if necessary (handles PNG with transparency)
-    if img.mode in ('RGBA', 'LA', 'P'):
-        img = img.convert('RGB')
-    
-    # Calculate new height maintaining aspect ratio
-    width, height = img.size
-    aspect_ratio = height / width
-    new_height = int(target_width * aspect_ratio)
-    
-    # Resize image
-    img_resized = img.resize((target_width, new_height), PILImage.Resampling.LANCZOS)
-    
-    # Save to bytes
-    buffer = BytesIO()
-    img_resized.save(buffer, format='JPEG', quality=85)
-    buffer.seek(0)
-    return buffer.getvalue()
+from app.utils.thumbnail import generate_thumbnail
 
 def extract_exif_data(file_data: bytes) -> dict:
     """Extract EXIF metadata from image"""
@@ -830,14 +810,8 @@ async def list_photos(
     # Build response with presigned URLs
     photo_list = []
     for image in images:
-        # Generate presigned URL for thumbnail
-        thumbnail_url = storage_service.generate_presigned_url(
-            event_id=event_uuid,
-            image_id=image.id,
-            photo_type='thumb',
-            expiry_minutes=15,
-            db=db,
-            validate_event=False  # Already validated ownership
+        thumbnail_url = storage_service.generate_url(
+            event_id=event_uuid, image_id=image.id, photo_type='thumb'
         )
         
         photo_list.append(PhotoListItem(
