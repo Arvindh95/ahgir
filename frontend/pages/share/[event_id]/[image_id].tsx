@@ -1,9 +1,7 @@
-import { useState, useEffect } from 'react'
 import { useRouter } from 'next/router'
 import Head from 'next/head'
-import { Camera, Loader2 } from 'lucide-react'
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+import { Camera } from 'lucide-react'
+import { GetServerSideProps } from 'next'
 
 interface ShareInfo {
   event_name: string
@@ -12,49 +10,45 @@ interface ShareInfo {
   event_slug: string
 }
 
-export default function SharedPhoto() {
-  const router = useRouter()
-  const { event_id, image_id } = router.query
+interface SharedPhotoProps {
+  shareInfo: ShareInfo | null
+  error: boolean
+}
 
-  const [shareInfo, setShareInfo] = useState<ShareInfo | null>(null)
-  const [error, setError] = useState('')
-  const [loading, setLoading] = useState(true)
+export const getServerSideProps: GetServerSideProps<SharedPhotoProps> = async (context) => {
+  const { event_id, image_id } = context.params!
 
-  useEffect(() => {
-    if (!event_id || !image_id) return
+  // Use internal Docker URL for server-side fetch, fall back to public URL
+  const serverApiUrl = process.env.SERVER_API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
-    const fetchShareInfo = async () => {
-      try {
-        const res = await fetch(`${API_URL}/share/${event_id}/${image_id}`)
-        if (!res.ok) throw new Error('Photo not found')
-        const data = await res.json()
-        setShareInfo(data)
-      } catch {
-        setError('This photo is no longer available.')
-      } finally {
-        setLoading(false)
-      }
+  try {
+    const res = await fetch(`${serverApiUrl}/share/${event_id}/${image_id}`)
+    if (!res.ok) {
+      return { props: { shareInfo: null, error: true } }
     }
-
-    fetchShareInfo()
-  }, [event_id, image_id])
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-black flex items-center justify-center">
-        <Loader2 className="w-8 h-8 text-white animate-spin" />
-      </div>
-    )
+    const shareInfo: ShareInfo = await res.json()
+    return { props: { shareInfo, error: false } }
+  } catch {
+    return { props: { shareInfo: null, error: true } }
   }
+}
+
+export default function SharedPhoto({ shareInfo, error }: SharedPhotoProps) {
+  const router = useRouter()
 
   if (error || !shareInfo) {
     return (
-      <div className="min-h-screen bg-black flex items-center justify-center text-white">
-        <div className="glass-card p-12 rounded-2xl text-center max-w-md">
-          <h1 className="text-2xl font-bold mb-4">Photo Unavailable</h1>
-          <p className="text-gray-400">{error || 'This photo could not be found.'}</p>
+      <>
+        <Head>
+          <title>Photo Unavailable - PicUr</title>
+        </Head>
+        <div className="min-h-screen bg-black flex items-center justify-center text-white">
+          <div className="glass-card p-12 rounded-2xl text-center max-w-md">
+            <h1 className="text-2xl font-bold mb-4">Photo Unavailable</h1>
+            <p className="text-gray-400">This photo could not be found.</p>
+          </div>
         </div>
-      </div>
+      </>
     )
   }
 
@@ -65,7 +59,6 @@ export default function SharedPhoto() {
         <meta property="og:title" content={`Photo from ${shareInfo.event_name}`} />
         <meta property="og:image" content={shareInfo.thumbnail_url} />
         <meta property="og:type" content="website" />
-        <meta property="og:url" content={typeof window !== 'undefined' ? window.location.href : ''} />
         <meta name="twitter:card" content="summary_large_image" />
         <meta name="twitter:title" content={`Photo from ${shareInfo.event_name}`} />
         <meta name="twitter:image" content={shareInfo.thumbnail_url} />

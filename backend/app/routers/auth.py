@@ -1,5 +1,5 @@
 from datetime import timedelta
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -97,6 +97,12 @@ async def login(credentials: UserLogin, request: Request, db: Session = Depends(
     if not user.is_verified:
         raise EmailNotVerifiedError()
 
+    if user.is_disabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account has been disabled. Contact an administrator."
+        )
+
     access_token_expires = timedelta(hours=settings.jwt_expiration_hours)
     access_token = create_access_token(
         data={"sub": str(user.id), "email": user.email},
@@ -174,5 +180,6 @@ async def get_me(current_user: User = Depends(get_current_user)):
     return UserResponse(
         user_id=str(current_user.id),
         email=current_user.email,
+        is_superadmin=current_user.is_superadmin,
         created_at=current_user.created_at
     )

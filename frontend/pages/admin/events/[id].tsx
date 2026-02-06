@@ -3,6 +3,7 @@ import { useRouter } from 'next/router'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import AdminLayout from '@/components/AdminLayout'
 import EventMonitoring from '@/components/EventMonitoring'
+import EventAnalytics from '@/components/EventAnalytics'
 import { eventService, EventDetails } from '@/lib/events'
 import api from '@/lib/api'
 import { Loader2, ArrowLeft, Image as ImageIcon, Trash2, Calendar, Link as LinkIcon, Download, Clock, QrCode, Copy, Check, Pencil, Save, MapPin, Upload } from 'lucide-react'
@@ -358,6 +359,11 @@ export default function EventDetailsPage() {
 
           {/* Event Monitoring Dashboard */}
           <EventMonitoring eventId={event.event_id} />
+
+          {/* Analytics Dashboard */}
+          <div className="mt-8">
+            <EventAnalytics eventId={event.event_id} />
+          </div>
         </div>
       </AdminLayout>
     </ProtectedRoute>

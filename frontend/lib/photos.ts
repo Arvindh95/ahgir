@@ -30,7 +30,11 @@ export interface PhotosResponse {
 }
 
 export const photoService = {
-  async uploadPhotos(eventId: string, files: File[]): Promise<UploadResult> {
+  async uploadPhotos(
+    eventId: string,
+    files: File[],
+    onUploadProgress?: (progress: number) => void
+  ): Promise<UploadResult> {
     const formData = new FormData()
     files.forEach((file) => {
       formData.append('files', file)
@@ -39,6 +43,12 @@ export const photoService = {
     const response = await api.post(`/events/${eventId}/photos`, formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
+      },
+      onUploadProgress: (progressEvent) => {
+        if (progressEvent.total && onUploadProgress) {
+          const pct = Math.round((progressEvent.loaded * 100) / progressEvent.total)
+          onUploadProgress(pct)
+        }
       },
     })
     return response.data
