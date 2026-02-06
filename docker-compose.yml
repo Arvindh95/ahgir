@@ -67,7 +67,7 @@ services:
       COMPREFACE_API_URL: http://compreface-api:8080
       COMPREFACE_API_KEY: "00000000-0000-0000-0000-000000000001"
       COMPREFACE_DETECTION_API_KEY: "00000000-0000-0000-0000-000000000003"
-      FRONTEND_URL: http://localhost:3000
+      FRONTEND_URL: https://ahgir.com
       SMTP_HOST: ${SMTP_HOST:-smtp-relay.brevo.com}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USERNAME: ${SMTP_USERNAME}
@@ -136,8 +136,8 @@ services:
     image: caddy:2-alpine
     container_name: picur-caddy
     ports:
-      - "8080:80"
-      - "8443:443"
+      - "80:80"
+      - "443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data
