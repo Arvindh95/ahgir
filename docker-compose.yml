@@ -123,7 +123,7 @@ services:
       dockerfile: Dockerfile
     container_name: picur-frontend
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_API_URL: /api
     ports:
       - "3000:3000"
     volumes:
