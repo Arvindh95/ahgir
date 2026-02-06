@@ -23,11 +23,11 @@ class CompreFaceClient:
         }
 
     async def health_check(self) -> bool:
-        """Check if CompreFace is healthy."""
+        """Check if CompreFace is healthy by listing subjects."""
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.get(
-                    f"{self.base_url}/status",
+                    f"{self.base_url}/api/v1/recognition/subjects",
                     headers=self._get_headers()
                 )
                 return response.status_code == 200
