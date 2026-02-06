@@ -18,6 +18,12 @@ ahgir.com {
         reverse_proxy backend:8000
     }
 
+    # MinIO storage - proxy to MinIO for photo access
+    handle /storage/* {
+        uri strip_prefix /storage
+        reverse_proxy minio:9000
+    }
+
     # Health check endpoint
     handle /health {
         reverse_proxy backend:8000

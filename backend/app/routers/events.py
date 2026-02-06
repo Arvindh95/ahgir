@@ -451,7 +451,8 @@ async def upload_cover_image(
     event.cover_image = object_key
     db.commit()
 
-    cover_url = f"http://{settings.minio_external_endpoint}/{settings.minio_bucket}/{object_key}"
+    _protocol = "https" if settings.minio_external_secure else "http"
+    cover_url = f"{_protocol}://{settings.minio_external_endpoint}/{settings.minio_bucket}/{object_key}"
     return {"message": "Cover image uploaded", "cover_image_url": cover_url}
 
 @router.get("/{event_id}/qr")
