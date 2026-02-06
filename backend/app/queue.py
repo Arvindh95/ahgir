@@ -8,7 +8,7 @@ from app.config import settings
 # Import worker functions at module level so RQ can serialize them properly
 from app.workers.face_indexer_compreface import index_photo_compreface
 from app.workers.retention_policy import check_and_delete_expired_events
-from app.email import send_verification_email
+from app.email import send_verification_email, send_password_reset_email
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +64,20 @@ def enqueue_email(to_email: str, verify_url: str) -> str:
         result_ttl='1h'
     )
     logger.info(f"Enqueued verification email job {job.id} for {to_email}")
+    return job.id
+
+
+def enqueue_password_reset_email(to_email: str, reset_url: str) -> str:
+    """Enqueue a password reset email to be sent in the background."""
+    job = default_queue.enqueue(
+        send_password_reset_email,
+        to_email,
+        reset_url,
+        job_timeout='2m',
+        failure_ttl='1d',
+        result_ttl='1h'
+    )
+    logger.info(f"Enqueued password reset email job {job.id} for {to_email}")
     return job.id
 
 

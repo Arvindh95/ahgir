@@ -7,13 +7,13 @@ from sqlalchemy.exc import IntegrityError
 from app.auth import (
     UserRegister, UserLogin, TokenResponse, UserResponse,
     hash_password, verify_password, create_access_token, get_current_user,
-    create_verification_token, decode_token
+    create_verification_token, create_password_reset_token, decode_token
 )
 from app.database import get_db
 from app.models import User
 from app.config import settings
 from app.exceptions import DuplicateEmailError, InvalidCredentialsError, EmailNotVerifiedError, InvalidTokenError
-from app.queue import enqueue_email
+from app.queue import enqueue_email, enqueue_password_reset_email
 from app.rate_limiter import auth_rate_limiter
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
@@ -25,6 +25,15 @@ class VerifyRequest(BaseModel):
 
 class ResendVerifyRequest(BaseModel):
     email: EmailStr
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
 
 
 class MessageResponse(BaseModel):
@@ -168,6 +177,64 @@ async def resend_verification(request: ResendVerifyRequest, db: Session = Depend
         print(f"Failed to enqueue verification email: {e}")
 
     return MessageResponse(message="If the email is registered, a verification link has been sent")
+
+
+@router.post("/forgot-password", response_model=MessageResponse)
+async def forgot_password(request_data: ForgotPasswordRequest, request: Request, db: Session = Depends(get_db)):
+    """
+    Request a password reset link. Always returns success to prevent email enumeration.
+    """
+    client_ip = request.client.host if request.client else "unknown"
+    auth_rate_limiter.enforce_rate_limit(client_ip, action="forgot_password")
+
+    user = db.query(User).filter(User.email == request_data.email).first()
+
+    # Only send if user exists and is verified
+    if user and user.is_verified:
+        token = create_password_reset_token(user.id)
+        reset_url = f"{settings.frontend_url}/admin/reset-password?token={token}"
+        try:
+            enqueue_password_reset_email(user.email, reset_url)
+        except Exception as e:
+            print(f"Failed to enqueue password reset email: {e}")
+
+    return MessageResponse(message="If the email is registered, a password reset link has been sent")
+
+
+@router.post("/reset-password", response_model=MessageResponse)
+async def reset_password(request_data: ResetPasswordRequest, db: Session = Depends(get_db)):
+    """
+    Reset password using a token from the reset email.
+    """
+    try:
+        payload = decode_token(request_data.token)
+    except Exception:
+        raise InvalidTokenError("Invalid or expired reset link")
+
+    if payload.get("type") != "password_reset":
+        raise InvalidTokenError("Invalid reset token")
+
+    user_id = payload.get("sub")
+    if not user_id:
+        raise InvalidTokenError("Invalid reset token")
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise InvalidTokenError("User not found")
+
+    # Validate password strength using the same rules as registration
+    try:
+        UserRegister.model_validate({"email": user.email, "password": request_data.new_password})
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+
+    user.password_hash = hash_password(request_data.new_password)
+    db.commit()
+
+    return MessageResponse(message="Password reset successfully")
 
 
 @router.get("/me", response_model=UserResponse)

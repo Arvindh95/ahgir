@@ -128,6 +128,12 @@ export default function Login() {
             </div>
           </div>
 
+          <div className="text-right -mt-2">
+            <a href="/admin/forgot-password" className="text-sm text-gray-400 hover:text-white transition-colors">
+              Forgot password?
+            </a>
+          </div>
+
           {error && (
             <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm text-center">
               {error}

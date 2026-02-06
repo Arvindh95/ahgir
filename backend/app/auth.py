@@ -97,6 +97,17 @@ def create_verification_token(user_id: uuid.UUID) -> str:
     return jwt.encode(to_encode, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
 
+def create_password_reset_token(user_id: uuid.UUID) -> str:
+    """Create a JWT token for password reset (expires in 1 hour)"""
+    to_encode = {
+        "sub": str(user_id),
+        "type": "password_reset"
+    }
+    expire = datetime.utcnow() + timedelta(hours=1)
+    to_encode.update({"exp": expire, "iat": datetime.utcnow()})
+    return jwt.encode(to_encode, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+
+
 def create_event_token(event_id: uuid.UUID, session_id: uuid.UUID, expires_delta: Optional[timedelta] = None) -> str:
     """Create a JWT token scoped to a specific event"""
     to_encode = {
