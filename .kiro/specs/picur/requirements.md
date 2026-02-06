@@ -62,7 +62,7 @@ PicUr is a multi-tenant wedding photo sharing platform that enables photographer
 #### Acceptance Criteria
 
 1. WHEN a photo is uploaded with status 'pending', THE Face_Indexer SHALL process it asynchronously using a background worker
-2. WHEN processing a photo, THE Face_Indexer SHALL use InsightFace (ArcFace) to detect all faces in the image
+2. WHEN processing a photo, THE Face_Indexer SHALL use CompreFace (ArcFace) to detect all faces in the image
 3. WHEN a face is detected, THE Face_Indexer SHALL compute a 512-dimensional embedding vector
 4. THE Face_Indexer SHALL store each face embedding in the Vector_Database with image_id, bounding box coordinates, and quality score
 5. WHEN face indexing completes, THE System SHALL update the image status to 'indexed'
@@ -189,7 +189,7 @@ PicUr is a multi-tenant wedding photo sharing platform that enables photographer
 #### Acceptance Criteria
 
 1. THE System SHALL provide a Docker Compose configuration that deploys all services
-2. THE System SHALL use only open-source components: PostgreSQL, MinIO, Redis, FastAPI, Next.js, InsightFace
+2. THE System SHALL use only open-source components: PostgreSQL, MinIO, Redis, FastAPI, Next.js, CompreFace
 3. WHEN deployed, THE System SHALL use Caddy or Nginx as a reverse proxy with automatic HTTPS
 4. THE System SHALL provide database migration scripts using Alembic
 5. THE System SHALL include health check endpoints for all services

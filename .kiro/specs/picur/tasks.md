@@ -153,15 +153,15 @@ This implementation plan breaks down the PicUr multi-tenant wedding photo sharin
     - Add job queuing after photo upload
     - _Requirements: 4.1_
   
-  - [x] 8.2 Implement InsightFace face detection
-    - Initialize InsightFace with buffalo_l model
+  - [x] 8.2 Implement CompreFace face detection
+    - Initialize CompreFace with buffalo_l model
     - Create face detection function that processes image and returns faces
     - Extract 512-dim embeddings, bounding boxes, and quality scores
     - _Requirements: 4.2, 4.3_
   
   - [x] 8.3 Create face indexing job handler
     - Download photo from MinIO
-    - Detect faces using InsightFace
+    - Detect faces using CompreFace
     - Store face embeddings in database with event_id
     - Update image status to 'indexed', 'no_faces', or 'failed'
     - _Requirements: 4.1, 4.4, 4.5, 4.6, 4.7_
@@ -215,7 +215,7 @@ This implementation plan breaks down the PicUr multi-tenant wedding photo sharin
   - [x] 11.1 Create face scan endpoint
     - Implement POST /scan with Event_Token authentication
     - Accept base64 encoded face image from camera
-    - Detect face and compute embedding using InsightFace
+    - Detect face and compute embedding using CompreFace
     - _Requirements: 6.1, 6.2_
   
   - [x] 11.2 Implement vector similarity search

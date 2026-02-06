@@ -44,7 +44,7 @@ graph TB
     subgraph "Processing Layer"
         RQWorker[RQ Worker]
         FaceIndexer[Face Indexer]
-        InsightFace[InsightFace Library]
+        CompreFace[CompreFace Library]
     end
     
     NextJS --> FastAPI
@@ -64,7 +64,7 @@ graph TB
     
     Redis --> RQWorker
     RQWorker --> FaceIndexer
-    FaceIndexer --> InsightFace
+    FaceIndexer --> CompreFace
     FaceIndexer --> Postgres
     FaceIndexer --> MinIO
 ```
@@ -81,7 +81,7 @@ graph TB
 7. Jobs queued in Redis for face indexing
 8. RQ worker processes each image:
    - Downloads from MinIO
-   - Detects faces using InsightFace
+   - Detects faces using CompreFace
    - Computes 512-dim embeddings
    - Stores embeddings in pgvector
    - Updates image status to 'indexed'
@@ -340,7 +340,7 @@ Response: {
 
 **Responsibilities:**
 - Process photos asynchronously via RQ workers
-- Detect faces using InsightFace (ArcFace model)
+- Detect faces using CompreFace (ArcFace model)
 - Compute 512-dimensional embeddings
 - Store embeddings in pgvector
 - Update image status
@@ -359,7 +359,7 @@ def index_photo(image_id: str):
         object_name=f"events/{image.event_id}/original/{image.id}.jpg"
     )
     
-    # 3. Detect faces using InsightFace
+    # 3. Detect faces using CompreFace
     img = cv2.imdecode(np.frombuffer(photo_bytes, np.uint8), cv2.IMREAD_COLOR)
     faces = face_detector.get(img)
     
@@ -389,7 +389,7 @@ def index_photo(image_id: str):
     db.commit()
 ```
 
-**InsightFace Configuration:**
+**CompreFace Configuration:**
 - Model: `buffalo_l` (ArcFace)
 - Embedding dimension: 512
 - Detection threshold: 0.5
@@ -695,7 +695,7 @@ photos/
 
 ### Property 10: Face Embedding Consistency
 
-*For any* valid face image, computing the embedding twice using the same InsightFace model SHALL produce embeddings with cosine similarity greater than 0.99.
+*For any* valid face image, computing the embedding twice using the same CompreFace model SHALL produce embeddings with cosine similarity greater than 0.99.
 
 **Validates: Requirements 4.2, 4.3**
 
@@ -776,7 +776,7 @@ All API errors follow a consistent structure:
 - `USER_NOT_FOUND`: User ID does not exist
 
 **Server Errors (500):**
-- `FACE_DETECTION_FAILED`: InsightFace processing error
+- `FACE_DETECTION_FAILED`: CompreFace processing error
 - `STORAGE_ERROR`: MinIO operation failed
 - `DATABASE_ERROR`: PostgreSQL operation failed
 

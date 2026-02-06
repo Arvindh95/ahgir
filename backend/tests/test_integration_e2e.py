@@ -325,24 +325,24 @@ class TestBackgroundProcessingFlow:
         assert image is not None
         assert image.status == "pending"
         
-        # Simulate worker processing
-        with patch('app.workers.face_indexer.storage_service') as mock_storage, \
-             patch('app.workers.face_indexer.face_detector') as mock_detector:
+        # Simulate worker processing with CompreFace
+        with patch('app.workers.face_indexer_compreface.storage_service') as mock_storage, \
+             patch('app.workers.face_indexer_compreface._run_async') as mock_async:
 
             # Mock storage to return image bytes
             mock_storage.get_photo.return_value = img_bytes.getvalue()
 
-            # Mock face detection result as tuple format
-            embedding = np.random.rand(512)
-            mock_detector.detect_faces.return_value = [
-                (embedding, [100, 100, 200, 200], 0.95)
+            # Mock CompreFace API calls: detect 1 face, add successfully
+            mock_async.side_effect = [
+                [{"box": {"x_min": 100, "y_min": 100, "x_max": 200, "y_max": 200}, "probability": 0.95}],
+                {"image_id": str(image_id), "subject": "test_subject"}
             ]
 
             # Import and run the indexing function
-            from app.workers.face_indexer import index_photo
+            from app.workers.face_indexer_compreface import index_photo_compreface
 
             # Run the job with db_session
-            index_photo(str(image_id), db_session=db_session)
+            index_photo_compreface(str(image_id), "test-api-key", db_session=db_session)
         
         # Step 3: Verify Status Update
         db_session.refresh(image)

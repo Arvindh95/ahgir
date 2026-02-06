@@ -1,7 +1,3 @@
-<<<<<<< HEAD
-# ahgir
-Face scanner that returns pictures that only guests are there
-=======
 # PicUr - Multi-Tenant Wedding Photo Sharing Platform
 
 PicUr is a wedding photo sharing platform that enables photographers to manage events where guests can discover their photos through live face recognition.
@@ -12,7 +8,7 @@ PicUr is a wedding photo sharing platform that enables photographers to manage e
 - Event-based photo organization
 - Live face recognition for guests
 - Secure photo storage with MinIO
-- Background face indexing with InsightFace
+- Background face indexing with CompreFace
 - Rate limiting and audit logging
 - Docker-based deployment
 
@@ -22,7 +18,7 @@ PicUr is a wedding photo sharing platform that enables photographers to manage e
 - **Frontend**: Next.js, React, TypeScript
 - **Storage**: MinIO (S3-compatible)
 - **Queue**: Redis + RQ
-- **Face Recognition**: InsightFace (ArcFace)
+- **Face Recognition**: CompreFace API
 - **Reverse Proxy**: Caddy
 
 ## Getting Started
@@ -57,6 +53,7 @@ PicUr is a wedding photo sharing platform that enables photographers to manage e
    - Backend API: http://localhost:8000
    - API Docs: http://localhost:8000/docs
    - MinIO Console: http://localhost:9001
+   - CompreFace Admin: http://localhost:8082
 
 ### Running Tests
 
@@ -109,4 +106,3 @@ picur/
 ## License
 
 MIT
->>>>>>> 45f8fcd (chore: Initialize project with configuration and test data)
