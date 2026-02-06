@@ -1,12 +1,15 @@
 from datetime import datetime, timedelta
 from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import text
+from sqlalchemy import text, func
 from pydantic import BaseModel
 import uuid
 import base64
 import logging
+import zipfile
+from io import BytesIO
 
 from app.auth import verify_password, create_event_token, get_event_from_token, EventTokenPayload
 from app.database import get_db
@@ -382,6 +385,250 @@ async def scan_face(
     logger.info("Using CompreFace for face recognition")
     return await _scan_with_compreface(
         image_bytes, event_id, session_id, event, db
+    )
+
+
+# ─── Bulk Download (ZIP) ─────────────────────────────────────────────────────
+
+class BulkDownloadRequest(BaseModel):
+    image_ids: List[str]
+
+
+@router.post("/download-zip")
+async def download_zip(
+    request: BulkDownloadRequest,
+    event_token: EventTokenPayload = Depends(get_event_from_token),
+    db: Session = Depends(get_db)
+):
+    """
+    Download multiple photos as a ZIP file.
+
+    - **image_ids**: List of image UUID strings to include
+
+    Returns a ZIP file containing the requested photos.
+    Rate limited to 10 downloads per hour per session.
+    """
+    event_id = uuid.UUID(event_token.event_id)
+    session_id = uuid.UUID(event_token.session_id)
+
+    # Enforce rate limit
+    rate_limiter.enforce_rate_limit(str(session_id), action="download")
+
+    # Verify event exists and allows downloads
+    event = db.query(Event).filter(Event.id == event_id).first()
+    if not event:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+    if not event.allow_downloads:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Downloads are not enabled for this event")
+
+    # Validate image_ids
+    if not request.image_ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No images specified")
+
+    max_images = settings.bulk_download_max_images
+    if len(request.image_ids) > max_images:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Maximum {max_images} images per download"
+        )
+
+    # Parse and validate UUIDs
+    image_uuids = []
+    for img_id in request.image_ids:
+        try:
+            image_uuids.append(uuid.UUID(img_id))
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid image ID: {img_id}")
+
+    # Verify all images belong to the event
+    images = db.query(Image).filter(Image.event_id == event_id, Image.id.in_(image_uuids)).all()
+    if not images:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No valid images found")
+
+    # Create ZIP in memory
+    zip_buffer = BytesIO()
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for image in images:
+            try:
+                photo_bytes = storage_service.get_photo(event_id, image.id, "original")
+                filename = image.filename or f"photo_{image.id}.jpg"
+                zf.writestr(filename, photo_bytes)
+            except Exception as e:
+                logger.error(f"Failed to add image {image.id} to ZIP: {e}")
+                continue
+
+    zip_buffer.seek(0)
+
+    # Audit log
+    log_action(
+        db=db,
+        event_id=event_id,
+        actor_type='guest',
+        actor_id=session_id,
+        action='bulk_download',
+        metadata={'image_count': len(images)}
+    )
+
+    safe_name = event.name.replace(' ', '_').replace('"', '')
+    return StreamingResponse(
+        zip_buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}_photos.zip"'}
+    )
+
+
+# ─── Gallery ─────────────────────────────────────────────────────────────────
+
+class GalleryPhoto(BaseModel):
+    image_id: str
+    thumbnail_url: str
+    original_url: str
+    download_url: Optional[str] = None
+    filename: str
+    uploaded_at: str
+
+
+class GalleryResponse(BaseModel):
+    photos: List[GalleryPhoto]
+    total: int
+    page: int
+    limit: int
+    event_name: str
+    allow_downloads: bool
+
+
+@router.get("/gallery", response_model=GalleryResponse)
+async def get_gallery(
+    page: int = Query(1, ge=1),
+    limit: int = Query(24, ge=1, le=50),
+    event_token: EventTokenPayload = Depends(get_event_from_token),
+    db: Session = Depends(get_db)
+):
+    """
+    Browse all indexed event photos with pagination.
+
+    - **page**: Page number (default 1)
+    - **limit**: Photos per page (default 24, max 50)
+
+    Returns a paginated list of all event photos.
+    """
+    event_id = uuid.UUID(event_token.event_id)
+    session_id = uuid.UUID(event_token.session_id)
+
+    # Verify event exists
+    event = db.query(Event).filter(Event.id == event_id).first()
+    if not event:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+
+    # Query total count
+    total = db.query(func.count(Image.id)).filter(
+        Image.event_id == event_id,
+        Image.status.in_(['indexed', 'no_faces'])
+    ).scalar()
+
+    # Query paginated photos
+    offset = (page - 1) * limit
+    images = db.query(Image).filter(
+        Image.event_id == event_id,
+        Image.status.in_(['indexed', 'no_faces'])
+    ).order_by(Image.uploaded_at.desc()).offset(offset).limit(limit).all()
+
+    # Generate URLs
+    photos = []
+    for image in images:
+        try:
+            thumbnail_url = storage_service.generate_presigned_url(
+                event_id=event_id, image_id=image.id, photo_type="thumb",
+                expiry_minutes=15, db=db, validate_event=True
+            )
+            original_url = storage_service.generate_presigned_url(
+                event_id=event_id, image_id=image.id, photo_type="original",
+                expiry_minutes=15, db=db, validate_event=True
+            )
+            download_url = original_url if event.allow_downloads else None
+
+            photos.append(GalleryPhoto(
+                image_id=str(image.id),
+                thumbnail_url=thumbnail_url,
+                original_url=original_url,
+                download_url=download_url,
+                filename=image.filename or f"photo_{image.id}.jpg",
+                uploaded_at=image.uploaded_at.isoformat() if image.uploaded_at else ""
+            ))
+        except Exception as e:
+            logger.error(f"Failed to generate URL for gallery image {image.id}: {e}")
+            continue
+
+    # Audit log (first page only)
+    if page == 1:
+        log_action(
+            db=db,
+            event_id=event_id,
+            actor_type='guest',
+            actor_id=session_id,
+            action='gallery_view',
+            metadata={'total_photos': total}
+        )
+
+    return GalleryResponse(
+        photos=photos,
+        total=total,
+        page=page,
+        limit=limit,
+        event_name=event.name,
+        allow_downloads=event.allow_downloads
+    )
+
+
+# ─── Share ────────────────────────────────────────────────────────────────────
+
+class ShareInfoResponse(BaseModel):
+    event_name: str
+    image_url: str
+    thumbnail_url: str
+    event_slug: str
+
+
+@router.get("/share/{event_id}/{image_id}", response_model=ShareInfoResponse)
+async def get_share_info(
+    event_id: str,
+    image_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Get photo share info for OG meta tags (public, no auth required).
+
+    Returns event name, photo URLs, and event slug for the share page.
+    """
+    try:
+        event_uuid = uuid.UUID(event_id)
+        image_uuid = uuid.UUID(image_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid ID format")
+
+    # Verify image and event
+    image = db.query(Image).filter(Image.id == image_uuid, Image.event_id == event_uuid).first()
+    if not image:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
+
+    event = db.query(Event).filter(Event.id == event_uuid).first()
+    if not event:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+
+    image_url = storage_service.generate_presigned_url(
+        event_id=event_uuid, image_id=image_uuid, photo_type="original",
+        expiry_minutes=60, db=db, validate_event=False
+    )
+    thumbnail_url = storage_service.generate_presigned_url(
+        event_id=event_uuid, image_id=image_uuid, photo_type="thumb",
+        expiry_minutes=60, db=db, validate_event=False
+    )
+
+    return ShareInfoResponse(
+        event_name=event.name,
+        image_url=image_url,
+        thumbnail_url=thumbnail_url,
+        event_slug=event.slug
     )
 
 

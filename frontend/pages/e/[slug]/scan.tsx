@@ -376,13 +376,22 @@ export default function FaceScanner() {
         {/* Header */}
         <div className="flex justify-between items-center mb-8 glass-card p-4 rounded-xl">
           <h1 className="text-xl font-bold truncate pr-4">{eventName}</h1>
-          <button 
-            onClick={handleLogout} 
-            className="p-2 text-gray-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors flex items-center gap-2"
-          >
-            <LogOut className="w-5 h-5" />
-            <span className="hidden sm:inline">Exit</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => router.push(`/e/${slug}/gallery`)}
+              className="p-2 text-gray-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors flex items-center gap-2"
+            >
+              <ImageIcon className="w-5 h-5" />
+              <span className="hidden sm:inline">Gallery</span>
+            </button>
+            <button
+              onClick={handleLogout}
+              className="p-2 text-gray-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors flex items-center gap-2"
+            >
+              <LogOut className="w-5 h-5" />
+              <span className="hidden sm:inline">Exit</span>
+            </button>
+          </div>
         </div>
 
         <div className="glass-card p-6 md:p-8 rounded-2xl">
