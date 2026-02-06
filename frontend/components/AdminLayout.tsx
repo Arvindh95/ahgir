@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
 import { authService } from '@/lib/auth'
-import { LogOut, Shield } from 'lucide-react'
+import { LogOut, Shield, Menu, X } from 'lucide-react'
 
 interface AdminLayoutProps {
   children: React.ReactNode
@@ -10,6 +10,7 @@ interface AdminLayoutProps {
 export default function AdminLayout({ children }: AdminLayoutProps) {
   const router = useRouter()
   const [isSuperadmin, setIsSuperadmin] = useState(false)
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
   useEffect(() => {
     authService.getMe().then(user => {
@@ -56,13 +57,47 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
             <div className="flex items-center gap-4">
               <button
                 onClick={handleLogout}
-                className="flex items-center gap-2 text-sm font-medium text-gray-400 hover:text-white transition-colors px-3 py-2 rounded-lg hover:bg-white/5"
+                className="hidden md:flex items-center gap-2 text-sm font-medium text-gray-400 hover:text-white transition-colors px-3 py-2 rounded-lg hover:bg-white/5"
+              >
+                <LogOut className="w-4 h-4" />
+                Logout
+              </button>
+              <button
+                onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+                className="md:hidden p-2 text-gray-400 hover:text-white"
+              >
+                {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+              </button>
+            </div>
+          </div>
+
+          {/* Mobile menu */}
+          {mobileMenuOpen && (
+            <div className="md:hidden border-t border-white/10 py-3 space-y-1">
+              <a
+                href="/admin/events"
+                className="block px-3 py-2 text-sm font-medium text-gray-300 hover:text-white hover:bg-white/5 rounded-lg"
+              >
+                Events
+              </a>
+              {isSuperadmin && (
+                <a
+                  href="/admin/superadmin"
+                  className="flex items-center gap-1 px-3 py-2 text-sm font-medium text-purple-400 hover:text-purple-300 hover:bg-white/5 rounded-lg"
+                >
+                  <Shield className="w-3.5 h-3.5" />
+                  Superadmin
+                </a>
+              )}
+              <button
+                onClick={handleLogout}
+                className="flex items-center gap-2 w-full px-3 py-2 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5 rounded-lg"
               >
                 <LogOut className="w-4 h-4" />
                 Logout
               </button>
             </div>
-          </div>
+          )}
         </div>
       </nav>
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
