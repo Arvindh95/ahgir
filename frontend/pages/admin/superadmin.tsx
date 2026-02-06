@@ -7,6 +7,7 @@ import api from '@/lib/api'
 import { authService } from '@/lib/auth'
 import { useToast } from '@/hooks/useToast'
 import SuperadminSkeleton from '@/components/skeletons/SuperadminSkeleton'
+import GlobalAnalytics from '@/components/GlobalAnalytics'
 import { Shield, Users, Image as ImageIcon, Database, Ban, ShieldCheck, ShieldOff } from 'lucide-react'
 
 interface UserItem {
@@ -184,6 +185,9 @@ export default function SuperadminPage() {
               </div>
             </div>
           )}
+
+          {/* Platform Analytics */}
+          <GlobalAnalytics />
 
           {/* User Management Table */}
           <div className="glass-card p-6 rounded-2xl">

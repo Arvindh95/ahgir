@@ -8,8 +8,11 @@ import ConfirmModal from '@/components/ConfirmModal'
 import { eventService, EventDetails } from '@/lib/events'
 import { useToast } from '@/hooks/useToast'
 import api from '@/lib/api'
+import { getErrorMessage } from '@/lib/errors'
 import { Loader2, ArrowLeft, Image as ImageIcon, Trash2, Calendar, Link as LinkIcon, Download, Clock, QrCode, Copy, Pencil, Save, MapPin, Upload } from 'lucide-react'
+import Image from 'next/image'
 import EventDetailSkeleton from '@/components/skeletons/EventDetailSkeleton'
+import Breadcrumbs from '@/components/Breadcrumbs'
 import { useRef } from 'react'
 
 export default function EventDetailsPage() {
@@ -49,7 +52,7 @@ export default function EventDetailsPage() {
       setCoverImageUrl(data.cover_image_url || null)
       fetchQrCode(eventId)
     } catch (err: any) {
-      setError(err.response?.data?.error?.message || 'Failed to load event')
+      setError(getErrorMessage(err, 'loading event details'))
     } finally {
       setIsLoading(false)
     }
@@ -183,16 +186,12 @@ export default function EventDetailsPage() {
     <ProtectedRoute>
       <AdminLayout>
         <div className="max-w-7xl mx-auto">
+          <Breadcrumbs crumbs={[
+            { label: 'Events', href: '/admin/events' },
+            { label: event.name },
+          ]} />
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
-            <div className="flex items-center gap-4">
-              <button
-                onClick={() => router.push('/admin/events')}
-                className="p-2 rounded-lg hover:bg-white/10 transition-colors"
-               >
-                <ArrowLeft className="w-5 h-5" />
-              </button>
-              <h1 className="text-3xl font-bold">{event.name}</h1>
-            </div>
+            <h1 className="text-3xl font-bold">{event.name}</h1>
 
             <div className="flex gap-3">
               <button
@@ -302,7 +301,9 @@ export default function EventDetailsPage() {
                       </label>
                     </div>
                     {coverImageUrl && (
-                      <img src={coverImageUrl} alt="Cover" className="w-full h-32 object-cover rounded-lg" />
+                      <div className="relative w-full h-32 rounded-lg overflow-hidden">
+                        <Image src={coverImageUrl} alt="Cover" fill className="object-cover" />
+                      </div>
                     )}
                     {isUploadingCover && <p className="text-xs text-blue-400 mt-1">Uploading...</p>}
                   </div>
@@ -349,7 +350,7 @@ export default function EventDetailsPage() {
               </h2>
               <div className="bg-white p-4 rounded-xl mb-4 flex items-center justify-center w-56 h-56">
                 {qrCodeUrl ? (
-                  <img src={qrCodeUrl} alt="Event QR Code" className="w-48 h-48 object-contain" />
+                  <Image src={qrCodeUrl} alt="Event QR Code" width={192} height={192} className="object-contain" />
                 ) : (
                   <Loader2 className="w-8 h-8 text-gray-400 animate-spin" />
                 )}

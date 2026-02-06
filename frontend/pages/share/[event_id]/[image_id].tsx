@@ -1,5 +1,6 @@
 import { useRouter } from 'next/router'
 import Head from 'next/head'
+import Image from 'next/image'
 import { Camera } from 'lucide-react'
 import { GetServerSideProps } from 'next'
 
@@ -72,11 +73,16 @@ export default function SharedPhoto({ shareInfo, error }: SharedPhotoProps) {
           <p className="text-gray-400 mb-8 text-center">Shared Photo</p>
 
           <div className="glass-card rounded-2xl overflow-hidden max-w-3xl w-full">
-            <img
-              src={shareInfo.image_url}
-              alt={`Photo from ${shareInfo.event_name}`}
-              className="w-full max-h-[70vh] object-contain"
-            />
+            <div className="relative w-full" style={{ maxHeight: '70vh', aspectRatio: '4/3' }}>
+              <Image
+                src={shareInfo.image_url}
+                alt={`Photo from ${shareInfo.event_name}`}
+                fill
+                priority
+                sizes="100vw"
+                className="object-contain"
+              />
+            </div>
           </div>
 
           <div className="mt-8">
