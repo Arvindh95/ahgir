@@ -3,6 +3,7 @@ import api from './api'
 export interface User {
   user_id: string
   email: string
+  is_superadmin?: boolean
 }
 
 export interface LoginResponse {

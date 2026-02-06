@@ -69,14 +69,9 @@ export default function PhotoUpload({ eventId, onUploadComplete }: PhotoUploadPr
     setUploadResult(null)
 
     try {
-      // Simulate progress (in real app, use axios onUploadProgress)
-      const progressInterval = setInterval(() => {
-        setUploadProgress((prev) => Math.min(prev + 10, 90))
-      }, 200)
-
-      const result = await photoService.uploadPhotos(eventId, selectedFiles)
-      
-      clearInterval(progressInterval)
+      const result = await photoService.uploadPhotos(eventId, selectedFiles, (pct) => {
+        setUploadProgress(pct)
+      })
       setUploadProgress(100)
       setUploadResult(result)
       setSelectedFiles([])
@@ -186,7 +181,7 @@ export default function PhotoUpload({ eventId, onUploadComplete }: PhotoUploadPr
         <div className="mt-6">
           <div className="flex justify-between text-sm mb-2">
             <span className="text-blue-400 font-medium flex items-center gap-2">
-               <Loader2 className="w-3 h-3 animate-spin" /> Uploading...
+               <Loader2 className="w-3 h-3 animate-spin" /> Uploading {selectedFiles.length} {selectedFiles.length === 1 ? 'file' : 'files'} ({formatFileSize(selectedFiles.reduce((sum, f) => sum + f.size, 0))})
             </span>
             <span className="text-gray-400">{uploadProgress}%</span>
           </div>

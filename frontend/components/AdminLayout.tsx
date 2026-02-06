@@ -1,6 +1,7 @@
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
 import { authService } from '@/lib/auth'
-import { LogOut, Menu } from 'lucide-react'
+import { LogOut, Shield } from 'lucide-react'
 
 interface AdminLayoutProps {
   children: React.ReactNode
@@ -8,6 +9,13 @@ interface AdminLayoutProps {
 
 export default function AdminLayout({ children }: AdminLayoutProps) {
   const router = useRouter()
+  const [isSuperadmin, setIsSuperadmin] = useState(false)
+
+  useEffect(() => {
+    authService.getMe().then(user => {
+      setIsSuperadmin(user.is_superadmin || false)
+    }).catch(() => {})
+  }, [])
 
   const handleLogout = () => {
     authService.logout()
@@ -20,8 +28,8 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center gap-8">
-              <h2 
-                className="text-xl font-bold cursor-pointer hover:opacity-80 transition-opacity" 
+              <h2
+                className="text-xl font-bold cursor-pointer hover:opacity-80 transition-opacity"
                 onClick={() => router.push('/admin/events')}
               >
                 PicUr Admin
@@ -33,9 +41,18 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
                 >
                   Events
                 </a>
+                {isSuperadmin && (
+                  <a
+                    href="/admin/superadmin"
+                    className="text-sm font-medium text-purple-400 hover:text-purple-300 transition-colors flex items-center gap-1"
+                  >
+                    <Shield className="w-3.5 h-3.5" />
+                    Superadmin
+                  </a>
+                )}
               </div>
             </div>
-            
+
             <div className="flex items-center gap-4">
               <button
                 onClick={handleLogout}

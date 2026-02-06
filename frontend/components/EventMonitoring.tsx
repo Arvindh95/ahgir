@@ -17,11 +17,23 @@ export default function EventMonitoring({ eventId }: EventMonitoringProps) {
   const [isReindexing, setIsReindexing] = useState(false)
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
+  const [lastUpdated, setLastUpdated] = useState<Date>(new Date())
   const logsPerPage = 20
 
   useEffect(() => {
     loadEvent()
   }, [eventId])
+
+  // Auto-poll when there are pending photos
+  useEffect(() => {
+    if (!event || event.status.pending === 0) return
+
+    const interval = setInterval(() => {
+      loadEvent()
+    }, 5000)
+
+    return () => clearInterval(interval)
+  }, [event?.status.pending, eventId])
 
   useEffect(() => {
     loadAuditLogs()
@@ -32,6 +44,7 @@ export default function EventMonitoring({ eventId }: EventMonitoringProps) {
       setIsLoadingEvent(true)
       const data = await eventService.getEvent(eventId)
       setEvent(data)
+      setLastUpdated(new Date())
     } catch (err: any) {
       setError(err.response?.data?.error?.message || 'Failed to load event')
     } finally {
@@ -161,6 +174,17 @@ export default function EventMonitoring({ eventId }: EventMonitoringProps) {
               style={{ width: `${event.status.indexing_percentage}%` }}
             />
           </div>
+          {event.status.pending > 0 && (
+            <div className="flex items-center justify-between mt-2">
+              <span className="text-sm text-orange-400 flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-orange-400 animate-pulse" />
+                Processing {event.status.pending} {event.status.pending === 1 ? 'photo' : 'photos'}...
+              </span>
+              <span className="text-xs text-gray-500">
+                Auto-refreshing every 5s
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Photo Counts Grid */}

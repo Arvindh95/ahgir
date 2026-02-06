@@ -1150,3 +1150,102 @@ async def delete_event(
         message="Event deleted successfully",
         event_id=str(event_uuid)
     )
+
+
+@router.get("/{event_id}/analytics")
+async def get_event_analytics(
+    event_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get analytics for an event based on audit log data.
+
+    Returns scan counts, unique guests, download counts, activity by day/hour.
+    """
+    try:
+        event_uuid = uuid.UUID(event_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid event ID format")
+
+    event = db.query(Event).filter(Event.id == event_uuid).first()
+    if not event:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+    if event.owner_user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
+
+    # Total scans
+    total_scans = db.query(func.count(AuditLog.id)).filter(
+        AuditLog.event_id == event_uuid, AuditLog.action == 'scan'
+    ).scalar() or 0
+
+    # Unique guests (distinct actor_id where actor_type='guest')
+    unique_guests = db.query(func.count(func.distinct(AuditLog.actor_id))).filter(
+        AuditLog.event_id == event_uuid, AuditLog.actor_type == 'guest'
+    ).scalar() or 0
+
+    # Total downloads
+    total_downloads = db.query(func.count(AuditLog.id)).filter(
+        AuditLog.event_id == event_uuid, AuditLog.action == 'bulk_download'
+    ).scalar() or 0
+
+    # Total gallery views
+    total_gallery_views = db.query(func.count(AuditLog.id)).filter(
+        AuditLog.event_id == event_uuid, AuditLog.action == 'gallery_view'
+    ).scalar() or 0
+
+    # Scans by day (last 30 days)
+    scans_by_day = db.query(
+        func.date_trunc('day', AuditLog.timestamp).label('date'),
+        func.count(AuditLog.id).label('count')
+    ).filter(
+        AuditLog.event_id == event_uuid,
+        AuditLog.action == 'scan'
+    ).group_by(
+        func.date_trunc('day', AuditLog.timestamp)
+    ).order_by(
+        func.date_trunc('day', AuditLog.timestamp)
+    ).limit(30).all()
+
+    # Peak hours
+    peak_hours = db.query(
+        func.extract('hour', AuditLog.timestamp).label('hour'),
+        func.count(AuditLog.id).label('count')
+    ).filter(
+        AuditLog.event_id == event_uuid,
+        AuditLog.actor_type == 'guest'
+    ).group_by(
+        func.extract('hour', AuditLog.timestamp)
+    ).order_by(
+        func.extract('hour', AuditLog.timestamp)
+    ).all()
+
+    # Recent activity (last 10)
+    recent = db.query(AuditLog).filter(
+        AuditLog.event_id == event_uuid
+    ).order_by(AuditLog.timestamp.desc()).limit(10).all()
+
+    return {
+        "total_scans": total_scans,
+        "unique_guests": unique_guests,
+        "total_downloads": total_downloads,
+        "total_gallery_views": total_gallery_views,
+        "scans_by_day": [
+            {"date": row.date.isoformat() if row.date else None, "count": row.count}
+            for row in scans_by_day
+        ],
+        "peak_hours": [
+            {"hour": int(row.hour), "count": row.count}
+            for row in peak_hours
+        ],
+        "recent_activity": [
+            {
+                "id": str(log.id),
+                "action": log.action,
+                "actor_type": log.actor_type,
+                "timestamp": log.timestamp.isoformat(),
+                "metadata": log.metadata_
+            }
+            for log in recent
+        ]
+    }

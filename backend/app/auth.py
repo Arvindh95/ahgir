@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 from typing import Optional
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 import bcrypt
@@ -48,6 +48,7 @@ class TokenResponse(BaseModel):
 class UserResponse(BaseModel):
     user_id: str
     email: str
+    is_superadmin: bool = False
     created_at: datetime
 
 class EventTokenPayload(BaseModel):
@@ -146,7 +147,13 @@ async def get_current_user(
     user = db.query(User).filter(User.id == uuid.UUID(user_id)).first()
     if user is None:
         raise UserNotFoundError()
-    
+
+    if user.is_disabled:
+        raise HTTPException(
+            status_code=403,
+            detail="Account has been disabled"
+        )
+
     return user
 
 # Dependency for validating event tokens
