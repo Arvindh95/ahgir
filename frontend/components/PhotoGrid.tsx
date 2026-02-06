@@ -17,7 +17,7 @@ interface PhotoGridProps {
   shareMenuPhoto: string | null
   showSimilarity?: boolean
   onSelect: (imageId: string) => void
-  onView: (photo: Photo) => void
+  onView: (photo: Photo, index: number) => void
   onShare: (imageId: string) => void
   onDownload: (photo: Photo) => void
   onShareMenuClose: () => void
@@ -38,11 +38,11 @@ export default function PhotoGrid({
 }: PhotoGridProps) {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-      {photos.map((photo) => (
+      {photos.map((photo, index) => (
         <div key={photo.image_id} className="glass-card rounded-2xl overflow-hidden group hover:bg-white/10 transition-colors">
           <div
             className="aspect-[4/3] relative overflow-hidden cursor-pointer"
-            onClick={() => onView(photo)}
+            onClick={() => onView(photo, index)}
           >
             <img
               src={photo.thumbnail_url}
@@ -80,7 +80,7 @@ export default function PhotoGrid({
 
           <div className="p-4 flex gap-3">
             <button
-              onClick={() => onView(photo)}
+              onClick={() => onView(photo, index)}
               className="flex-1 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-sm font-medium transition-colors border border-white/5 flex items-center justify-center"
               title="View"
             >

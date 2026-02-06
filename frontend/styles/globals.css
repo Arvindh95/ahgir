@@ -44,3 +44,18 @@ body {
 .glass-button:hover {
   background: rgba(255, 255, 255, 0.2);
 }
+
+@keyframes toast-slide-in {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.toast-slide-in {
+  animation: toast-slide-in 0.25s ease-out;
+}

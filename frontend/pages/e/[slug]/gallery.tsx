@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/router'
+import PhotoGridSkeleton from '@/components/skeletons/PhotoGridSkeleton'
 import { ArrowLeft, Image as ImageIcon, Loader2, ScanFace } from 'lucide-react'
 import PhotoGrid from '@/components/PhotoGrid'
 import PhotoModal from '@/components/PhotoModal'
@@ -29,7 +30,7 @@ export default function Gallery() {
   const [loadingMore, setLoadingMore] = useState(false)
   const [eventName, setEventName] = useState('')
   const [allowDownloads, setAllowDownloads] = useState(false)
-  const [selectedPhoto, setSelectedPhoto] = useState<GalleryPhoto | null>(null)
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null)
 
   const { selectedIds, toggleSelect, selectAll, handleDownload, handleBulkDownload, downloading } = usePhotoActions()
   const { shareMenuPhoto, setShareMenuPhoto, handleShare } = useShare(eventName)
@@ -84,8 +85,10 @@ export default function Gallery() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-black flex items-center justify-center">
-        <Loader2 className="w-8 h-8 text-white animate-spin" />
+      <div className="min-h-screen bg-black">
+        <div className="max-w-7xl mx-auto px-4 py-8">
+          <PhotoGridSkeleton count={12} />
+        </div>
       </div>
     )
   }
@@ -151,7 +154,7 @@ export default function Gallery() {
               eventName={eventName}
               shareMenuPhoto={shareMenuPhoto}
               onSelect={toggleSelect}
-              onView={(photo) => setSelectedPhoto(photo as GalleryPhoto)}
+              onView={(_photo, index) => setSelectedIndex(index)}
               onShare={handleShare}
               onDownload={handleDownload}
               onShareMenuClose={() => setShareMenuPhoto(null)}
@@ -178,12 +181,14 @@ export default function Gallery() {
       </div>
 
       {/* Modal */}
-      {selectedPhoto && (
+      {selectedIndex !== null && (
         <PhotoModal
-          photo={selectedPhoto}
-          onClose={() => setSelectedPhoto(null)}
-          onShare={() => handleShare(selectedPhoto.image_id)}
-          onDownload={() => handleDownload(selectedPhoto)}
+          photos={photos}
+          currentIndex={selectedIndex}
+          onClose={() => setSelectedIndex(null)}
+          onShare={handleShare}
+          onDownload={handleDownload}
+          onNavigate={setSelectedIndex}
           allowDownloads={allowDownloads}
         />
       )}

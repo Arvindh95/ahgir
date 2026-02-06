@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/router'
 import axios from 'axios'
 import { Camera, Upload, LogOut, Loader2, ScanFace, Image as ImageIcon } from 'lucide-react'
+import ScannerOnboarding from '@/components/ScannerOnboarding'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -333,10 +334,15 @@ export default function FaceScanner() {
         setError('Session expired. Please authenticate again.')
         localStorage.removeItem('event_token')
         router.push(`/e/${slug}`)
-      } else if (err.response?.data?.error?.message) {
-        setError(err.response.data.error.message)
       } else {
-        setError('Failed to scan face. Please try again.')
+        const msg = err.response?.data?.error?.message?.toLowerCase() || ''
+        if (msg.includes('no face') || msg.includes('face could not') || msg.includes('face not')) {
+          setError('No face detected. Try removing sunglasses, improving lighting, and facing the camera directly.')
+        } else if (msg) {
+          setError(err.response.data.error.message)
+        } else {
+          setError('Scan failed. Please try again.')
+        }
       }
       console.error('Scan error:', err)
     } finally {
@@ -368,6 +374,7 @@ export default function FaceScanner() {
 
   return (
     <div className="min-h-screen relative overflow-hidden bg-black text-white">
+      <ScannerOnboarding />
       {/* Background Ambience */}
       <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-br from-black via-[#0a0a0a] to-[#050505] z-0"></div>
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-blue-500/10 rounded-full blur-[120px] z-0"></div>
