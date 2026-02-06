@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
+import Image from 'next/image'
 import { authService } from '@/lib/auth'
 import { LogOut, Shield, Menu, X } from 'lucide-react'
 
@@ -33,7 +34,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
                 className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity"
                 onClick={() => router.push('/admin/events')}
               >
-                <img src="/favicon-96x96.png" alt="PicUr" className="w-8 h-8" />
+                <Image src="/favicon-96x96.png" alt="PicUr" width={32} height={32} />
                 <span className="text-xl font-bold">PicUr Admin</span>
               </div>
               <div className="hidden md:flex gap-6">

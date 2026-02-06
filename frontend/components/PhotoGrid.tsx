@@ -1,3 +1,4 @@
+import Image from 'next/image'
 import { Check, Download, Eye, Share2 } from 'lucide-react'
 import { ShareMenu } from './ShareMenu'
 
@@ -44,11 +45,12 @@ export default function PhotoGrid({
             className="aspect-[4/3] relative overflow-hidden cursor-pointer"
             onClick={() => onView(photo, index)}
           >
-            <img
+            <Image
               src={photo.thumbnail_url}
               alt="Event photo"
-              loading="lazy"
-              className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+              fill
+              sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 25vw"
+              className="object-cover transition-transform duration-500 group-hover:scale-105"
             />
 
             {/* Selection Checkbox */}

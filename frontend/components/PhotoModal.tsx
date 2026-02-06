@@ -1,4 +1,5 @@
 import { useEffect, useRef, useCallback } from 'react'
+import Image from 'next/image'
 import { Download, Share2, X, ChevronLeft, ChevronRight } from 'lucide-react'
 
 interface Photo {
@@ -111,11 +112,16 @@ export default function PhotoModal({
         className="relative max-w-6xl w-full max-h-screen flex flex-col items-center"
         onClick={(e) => e.stopPropagation()}
       >
-        <img
-          src={photo.original_url}
-          alt="Full size photo"
-          className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl"
-        />
+        <div className="relative w-full" style={{ maxHeight: '85vh', aspectRatio: '16/10' }}>
+          <Image
+            src={photo.original_url}
+            alt="Full size photo"
+            fill
+            priority
+            sizes="100vw"
+            className="object-contain rounded-lg shadow-2xl"
+          />
+        </div>
 
         <div className="mt-6 flex items-center gap-4 bg-black/50 backdrop-blur-xl px-6 py-4 rounded-2xl border border-white/10">
           {/* Photo counter */}

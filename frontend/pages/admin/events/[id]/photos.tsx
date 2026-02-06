@@ -7,7 +7,10 @@ import ConfirmModal from '@/components/ConfirmModal'
 import { photoService, Photo } from '@/lib/photos'
 import { useToast } from '@/hooks/useToast'
 import PhotoGridSkeleton from '@/components/skeletons/PhotoGridSkeleton'
-import { ArrowLeft, Trash2, Filter, Image as ImageIcon, CheckCircle, AlertTriangle, Clock, XCircle } from 'lucide-react'
+import Breadcrumbs from '@/components/Breadcrumbs'
+import { eventService } from '@/lib/events'
+import Image from 'next/image'
+import { Trash2, Filter, Image as ImageIcon, CheckCircle, AlertTriangle, Clock, XCircle } from 'lucide-react'
 
 export default function EventPhotosPage() {
   const router = useRouter()
@@ -20,10 +23,12 @@ export default function EventPhotosPage() {
   const [total, setTotal] = useState(0)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const [isDeleteLoading, setIsDeleteLoading] = useState(false)
+  const [eventName, setEventName] = useState('')
 
   useEffect(() => {
     if (id && typeof id === 'string') {
       loadPhotos(id)
+      eventService.getEvent(id).then(e => setEventName(e.name)).catch(() => {})
     }
   }, [id, statusFilter, page])
 
@@ -94,17 +99,12 @@ export default function EventPhotosPage() {
     <ProtectedRoute>
       <AdminLayout>
         <div className="max-w-7xl mx-auto">
-          <div className="flex justify-between items-center mb-8">
-            <div className="flex items-center gap-4">
-              <button
-                onClick={() => router.push(`/admin/events/${id}`)}
-                className="p-2 rounded-lg hover:bg-white/10 transition-colors"
-               >
-                <ArrowLeft className="w-5 h-5" />
-              </button>
-              <h1 className="text-3xl font-bold">Manage Photos</h1>
-            </div>
-          </div>
+          <Breadcrumbs crumbs={[
+            { label: 'Events', href: '/admin/events' },
+            { label: eventName || 'Event', href: `/admin/events/${id}` },
+            { label: 'Photos' },
+          ]} />
+          <h1 className="text-3xl font-bold mb-8">Manage Photos</h1>
 
           {id && typeof id === 'string' && (
             <PhotoUpload
@@ -158,10 +158,12 @@ export default function EventPhotosPage() {
                       className="bg-white/5 border border-white/10 rounded-xl overflow-hidden hover:border-white/20 transition-colors group"
                     >
                       <div className="aspect-square relative bg-black/40">
-                        <img
+                        <Image
                           src={photo.thumbnail_url}
                           alt={photo.filename}
-                          className="w-full h-full object-cover"
+                          fill
+                          sizes="(max-width: 768px) 50vw, (max-width: 1024px) 33vw, 20vw"
+                          className="object-cover"
                         />
                         <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                            <button

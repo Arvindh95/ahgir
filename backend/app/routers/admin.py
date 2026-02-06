@@ -9,7 +9,7 @@ import uuid
 
 from app.auth import get_current_user
 from app.database import get_db
-from app.models import User, Event, Image, Face
+from app.models import User, Event, Image, Face, AuditLog
 from app.storage import storage_service
 from app.queue import get_failed_jobs, retry_failed_job
 
@@ -144,6 +144,71 @@ async def get_platform_stats(
         total_faces=total_faces,
         total_storage_bytes=total_storage_bytes
     )
+
+
+@router.get("/global-analytics")
+async def get_global_analytics(
+    current_user: User = Depends(get_superadmin_user),
+    db: Session = Depends(get_db)
+):
+    """Get platform-wide analytics from audit logs."""
+    total_scans = db.query(func.count(AuditLog.id)).filter(
+        AuditLog.action == 'scan'
+    ).scalar() or 0
+
+    unique_guests = db.query(func.count(func.distinct(AuditLog.actor_id))).filter(
+        AuditLog.actor_type == 'guest'
+    ).scalar() or 0
+
+    total_downloads = db.query(func.count(AuditLog.id)).filter(
+        AuditLog.action == 'bulk_download'
+    ).scalar() or 0
+
+    total_gallery_views = db.query(func.count(AuditLog.id)).filter(
+        AuditLog.action == 'gallery_view'
+    ).scalar() or 0
+
+    # Top events by scan count
+    top_events_raw = db.query(
+        Event.name,
+        func.count(AuditLog.id).label('scan_count'),
+        func.count(func.distinct(AuditLog.actor_id)).label('guest_count')
+    ).join(AuditLog, AuditLog.event_id == Event.id).filter(
+        AuditLog.action == 'scan'
+    ).group_by(Event.name).order_by(
+        func.count(AuditLog.id).desc()
+    ).limit(5).all()
+
+    top_events = [
+        {"name": row[0], "scans": row[1], "guests": row[2]}
+        for row in top_events_raw
+    ]
+
+    # Scans by day (last 30 days)
+    scans_by_day_raw = db.query(
+        func.date_trunc('day', AuditLog.timestamp).label('date'),
+        func.count(AuditLog.id).label('count')
+    ).filter(
+        AuditLog.action == 'scan'
+    ).group_by(
+        func.date_trunc('day', AuditLog.timestamp)
+    ).order_by(
+        func.date_trunc('day', AuditLog.timestamp)
+    ).limit(30).all()
+
+    scans_by_day = [
+        {"date": row[0].isoformat() if row[0] else None, "count": row[1]}
+        for row in scans_by_day_raw
+    ]
+
+    return {
+        "total_scans": total_scans,
+        "unique_guests": unique_guests,
+        "total_downloads": total_downloads,
+        "total_gallery_views": total_gallery_views,
+        "top_events": top_events,
+        "scans_by_day": scans_by_day,
+    }
 
 
 @router.delete("/events/{event_id}")

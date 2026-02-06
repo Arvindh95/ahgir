@@ -53,6 +53,7 @@ export default function FaceScanner() {
   const [modelsLoaded, setModelsLoaded] = useState(false)
   const [loadingModels, setLoadingModels] = useState(true)
   const [fileSelected, setFileSelected] = useState(false)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Load face-api.js models
@@ -205,8 +206,15 @@ export default function FaceScanner() {
 
       setError('')
     } catch (err: any) {
-      setError('Failed to access camera. Please grant camera permissions.')
       console.error('Camera error:', err)
+      if (err.name === 'NotAllowedError') {
+        setError('Camera access was denied. Please allow camera access in your browser settings (look for the camera icon in the address bar), then reload the page.')
+      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+        setError('No camera found on this device. You can use the Upload option instead.')
+      } else {
+        setError('Failed to access camera. Try using the Upload option instead.')
+      }
+      setUseUpload(true)
     }
   }
 
@@ -479,25 +487,41 @@ export default function FaceScanner() {
                   if (e.target.files?.[0]) {
                     setError('')
                     setFileSelected(true)
+                    if (previewUrl) URL.revokeObjectURL(previewUrl)
+                    setPreviewUrl(URL.createObjectURL(e.target.files[0]))
                   } else {
                     setFileSelected(false)
+                    if (previewUrl) URL.revokeObjectURL(previewUrl)
+                    setPreviewUrl(null)
                   }
                 }}
                 className="hidden"
                 id="file-upload"
               />
-              <label htmlFor="file-upload" className="cursor-pointer flex flex-col items-center gap-4">
-                 <div className="w-20 h-20 rounded-full bg-white/5 flex items-center justify-center">
-                    <ImageIcon className="w-10 h-10 text-gray-400" />
-                 </div>
-                 <div>
-                    <p className="text-xl font-semibold mb-2 text-white">Select a photo</p>
-                    <p className="text-gray-400 text-sm">{fileInputRef.current?.files?.[0]?.name || "JPG or PNG with your face visible"}</p>
-                 </div>
-                 <div className="bg-white/10 text-white px-6 py-2 rounded-lg font-medium hover:bg-white/20 transition-colors">
-                    Browse Files
-                 </div>
-              </label>
+              {previewUrl ? (
+                <div className="flex flex-col items-center gap-4">
+                  <div className="relative rounded-xl overflow-hidden aspect-[4/3] max-w-sm w-full mx-auto">
+                    <img src={previewUrl} alt="Selected photo" className="w-full h-full object-cover" />
+                  </div>
+                  <p className="text-gray-400 text-sm">{fileInputRef.current?.files?.[0]?.name}</p>
+                  <label htmlFor="file-upload" className="cursor-pointer bg-white/10 text-white px-6 py-2 rounded-lg font-medium hover:bg-white/20 transition-colors">
+                    Change Photo
+                  </label>
+                </div>
+              ) : (
+                <label htmlFor="file-upload" className="cursor-pointer flex flex-col items-center gap-4">
+                   <div className="w-20 h-20 rounded-full bg-white/5 flex items-center justify-center">
+                      <ImageIcon className="w-10 h-10 text-gray-400" />
+                   </div>
+                   <div>
+                      <p className="text-xl font-semibold mb-2 text-white">Select a photo</p>
+                      <p className="text-gray-400 text-sm">JPG or PNG with your face visible</p>
+                   </div>
+                   <div className="bg-white/10 text-white px-6 py-2 rounded-lg font-medium hover:bg-white/20 transition-colors">
+                      Browse Files
+                   </div>
+                </label>
+              )}
             </div>
           )}
 
