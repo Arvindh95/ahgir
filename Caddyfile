@@ -21,7 +21,9 @@ ahgir.com {
     # MinIO storage - proxy to MinIO for photo access
     handle /storage/* {
         uri strip_prefix /storage
-        reverse_proxy minio:9000
+        reverse_proxy minio:9000 {
+            header_up Host minio:9000
+        }
     }
 
     # Health check endpoint
