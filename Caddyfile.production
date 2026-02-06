@@ -6,7 +6,7 @@
     # Automatic HTTPS with Let's Encrypt
     # Caddy will automatically obtain and renew SSL certificates
     # Ensure ports 80 and 443 are accessible from the internet
-    
+
     # Security headers
     header {
         # Enable HSTS (HTTP Strict Transport Security)
@@ -19,32 +19,26 @@
         X-XSS-Protection "1; mode=block"
         # Referrer policy
         Referrer-Policy "strict-origin-when-cross-origin"
-        # Content Security Policy (adjust as needed)
-        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self';"
+        # Content Security Policy
+        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://{$DOMAIN:picur.example.com}; font-src 'self' data:; connect-src 'self' https://cdn.jsdelivr.net; worker-src 'self' blob:;"
         # Remove server header for security
         -Server
     }
-    
+
     # Enable compression for better performance
     encode gzip zstd
-    
-    # Frontend - serve Next.js app
-    handle /* {
-        reverse_proxy frontend:3000 {
-            # Health check for frontend
-            health_uri /
-            health_interval 30s
-            health_timeout 5s
-            # Load balancing (if multiple frontend instances)
-            lb_policy round_robin
-            # Timeouts
+
+    # MinIO storage - proxy to MinIO with host header override
+    handle_path /storage/* {
+        reverse_proxy minio:9000 {
+            header_up Host minio:9000
             transport http {
                 dial_timeout 5s
-                response_header_timeout 30s
+                response_header_timeout 60s
             }
         }
     }
-    
+
     # Backend API - strip /api prefix and forward to FastAPI
     handle /api/* {
         uri strip_prefix /api
@@ -62,12 +56,29 @@
             }
         }
     }
-    
+
     # Health check endpoint (direct access)
     handle /health {
         reverse_proxy backend:8000
     }
-    
+
+    # Frontend - serve Next.js app (catch-all, must be last)
+    handle {
+        reverse_proxy frontend:3000 {
+            # Health check for frontend
+            health_uri /
+            health_interval 30s
+            health_timeout 5s
+            # Load balancing (if multiple frontend instances)
+            lb_policy round_robin
+            # Timeouts
+            transport http {
+                dial_timeout 5s
+                response_header_timeout 30s
+            }
+        }
+    }
+
     # Logging
     log {
         output file /var/log/caddy/access.log {
@@ -79,8 +90,3 @@
         level INFO
     }
 }
-
-# Redirect www to non-www (optional)
-# www.{$DOMAIN:picur.example.com} {
-#     redir https://{$DOMAIN:picur.example.com}{uri} permanent
-# }

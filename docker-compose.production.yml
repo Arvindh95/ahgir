@@ -279,6 +279,23 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # Add CompreFace services to picur-network so backend can reach them
+  compreface-postgres-db:
+    networks:
+      - picur-network
+
+  compreface-admin:
+    networks:
+      - picur-network
+
+  compreface-api:
+    networks:
+      - picur-network
+
+  compreface-core:
+    networks:
+      - picur-network
+
 networks:
   picur-network:
     driver: bridge
