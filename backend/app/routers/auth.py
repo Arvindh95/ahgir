@@ -13,7 +13,7 @@ from app.database import get_db
 from app.models import User
 from app.config import settings
 from app.exceptions import DuplicateEmailError, InvalidCredentialsError, EmailNotVerifiedError, InvalidTokenError
-from app.email import send_verification_email
+from app.queue import enqueue_email
 from app.rate_limiter import auth_rate_limiter
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
@@ -60,14 +60,14 @@ async def register(user_data: UserRegister, request: Request, db: Session = Depe
         db.rollback()
         raise DuplicateEmailError()
 
-    # Send verification email
+    # Queue verification email in background
     token = create_verification_token(new_user.id)
     verify_url = f"{settings.frontend_url}/admin/verify?token={token}"
     try:
-        send_verification_email(new_user.email, verify_url)
+        enqueue_email(new_user.email, verify_url)
     except Exception as e:
         # Log but don't fail registration
-        print(f"Failed to send verification email: {e}")
+        print(f"Failed to enqueue verification email: {e}")
 
     return UserResponse(
         user_id=str(new_user.id),
@@ -163,9 +163,9 @@ async def resend_verification(request: ResendVerifyRequest, db: Session = Depend
     token = create_verification_token(user.id)
     verify_url = f"{settings.frontend_url}/admin/verify?token={token}"
     try:
-        send_verification_email(user.email, verify_url)
+        enqueue_email(user.email, verify_url)
     except Exception as e:
-        print(f"Failed to send verification email: {e}")
+        print(f"Failed to enqueue verification email: {e}")
 
     return MessageResponse(message="If the email is registered, a verification link has been sent")
 

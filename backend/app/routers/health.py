@@ -9,6 +9,7 @@ from app.database import engine
 from app.storage import storage_service
 from app.rate_limiter import redis_client
 from app.config import settings
+from app.compreface_client import CompreFaceClient
 
 router = APIRouter(tags=["health"])
 
@@ -31,7 +32,8 @@ async def health_check():
         "services": {
             "database": {"status": "unknown"},
             "minio": {"status": "unknown"},
-            "redis": {"status": "unknown"}
+            "redis": {"status": "unknown"},
+            "compreface": {"status": "unknown"}
         }
     }
     
@@ -74,6 +76,18 @@ async def health_check():
         health_status["services"]["redis"]["error"] = str(e)
         all_healthy = False
     
+    # Check CompreFace connectivity
+    try:
+        client = CompreFaceClient()
+        is_healthy = await client.health_check()
+        health_status["services"]["compreface"]["status"] = "healthy" if is_healthy else "unhealthy"
+        if not is_healthy:
+            all_healthy = False
+    except Exception as e:
+        health_status["services"]["compreface"]["status"] = "unhealthy"
+        health_status["services"]["compreface"]["error"] = str(e)
+        all_healthy = False
+
     # Set overall status
     if not all_healthy:
         health_status["status"] = "unhealthy"

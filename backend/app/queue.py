@@ -1,21 +1,24 @@
 """RQ queue configuration and job management."""
 
+import logging
 import redis
-from rq import Queue
+from rq import Queue, Retry
 from app.config import settings
 
 # Import worker functions at module level so RQ can serialize them properly
 from app.workers.face_indexer_compreface import index_photo_compreface
 from app.workers.retention_policy import check_and_delete_expired_events
+from app.email import send_verification_email
+
+logger = logging.getLogger(__name__)
 
 # Initialize Redis connection
 redis_conn = redis.from_url(settings.redis_url)
 
-# Create RQ queue for face indexing jobs
+# Create RQ queues
 face_indexing_queue = Queue('face_indexing', connection=redis_conn)
-
-# Create RQ queue for retention policy jobs
 retention_queue = Queue('retention', connection=redis_conn)
+default_queue = Queue('default', connection=redis_conn)
 
 
 def enqueue_face_indexing(image_id: str) -> str:
@@ -34,9 +37,66 @@ def enqueue_face_indexing(image_id: str) -> str:
         settings.compreface_api_key,
         job_timeout='10m',
         failure_ttl='1d',
-        result_ttl='1h'
+        result_ttl='1h',
+        retry=Retry(max=3, interval=[30, 120, 300])
     )
 
+    return job.id
+
+
+def enqueue_email(to_email: str, verify_url: str) -> str:
+    """
+    Enqueue a verification email to be sent in the background.
+
+    Args:
+        to_email: Recipient email address
+        verify_url: Verification URL to include in the email
+
+    Returns:
+        Job ID string
+    """
+    job = default_queue.enqueue(
+        send_verification_email,
+        to_email,
+        verify_url,
+        job_timeout='2m',
+        failure_ttl='1d',
+        result_ttl='1h'
+    )
+    logger.info(f"Enqueued verification email job {job.id} for {to_email}")
+    return job.id
+
+
+def get_failed_jobs() -> list:
+    """Get failed jobs from all queue registries."""
+    from rq.job import Job
+    from rq.registry import FailedJobRegistry
+
+    results = []
+    for queue in [face_indexing_queue, retention_queue, default_queue]:
+        registry = FailedJobRegistry(queue=queue)
+        for job_id in registry.get_job_ids():
+            try:
+                job = Job.fetch(job_id, connection=redis_conn)
+                results.append({
+                    "id": job.id,
+                    "queue": queue.name,
+                    "func_name": job.func_name if job.func_name else "unknown",
+                    "enqueued_at": job.enqueued_at.isoformat() if job.enqueued_at else None,
+                    "ended_at": job.ended_at.isoformat() if job.ended_at else None,
+                    "error": job.exc_info.strip() if job.exc_info else None,
+                })
+            except Exception:
+                results.append({"id": job_id, "queue": queue.name, "error": "Could not fetch job details"})
+    return results
+
+
+def retry_failed_job(job_id: str) -> str:
+    """Requeue a failed job."""
+    from rq.job import Job
+
+    job = Job.fetch(job_id, connection=redis_conn)
+    job.requeue()
     return job.id
 
 
