@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     # Rate Limiting
     scan_rate_limit: int = 30
     scan_rate_window_hours: int = 1
+    bulk_download_max_images: int = 100
     
     class Config:
         env_file = ".env"
