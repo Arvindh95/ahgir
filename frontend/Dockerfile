@@ -11,6 +11,10 @@ RUN npm install
 # Copy application code
 COPY . .
 
+# Build for production (used when command is 'npm start')
+ARG BUILD_ENV=development
+RUN if [ "$BUILD_ENV" = "production" ]; then npm run build; fi
+
 # Expose port
 EXPOSE 3000
 
