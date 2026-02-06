@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text, func
@@ -15,7 +15,7 @@ from app.auth import verify_password, create_event_token, get_event_from_token, 
 from app.database import get_db
 from app.models import Event, GuestSession, Face, Image
 from app.storage import storage_service
-from app.rate_limiter import rate_limiter
+from app.rate_limiter import rate_limiter, auth_rate_limiter, share_rate_limiter
 from app.audit import log_action
 from app.config import settings
 import httpx
@@ -112,16 +112,20 @@ async def get_event_by_slug(slug: str, db: Session = Depends(get_db)):
 async def authenticate_guest(
     slug: str,
     passcode_data: PasscodeRequest,
+    request: Request,
     db: Session = Depends(get_db)
 ):
     """
     Authenticate a guest for an event
-    
+
     - **slug**: Unique event slug
     - **passcode**: Event passcode (required if event has passcode)
-    
+
     Returns an Event_Token scoped to the event
     """
+    client_ip = request.client.host if request.client else "unknown"
+    auth_rate_limiter.enforce_rate_limit(client_ip, action="guest_auth")
+
     # Find event by slug
     event = db.query(Event).filter(Event.slug == slug).first()
     
@@ -445,14 +449,24 @@ async def download_zip(
     if not images:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No valid images found")
 
-    # Create ZIP in memory
+    # Create ZIP in memory with byte limit
     zip_buffer = BytesIO()
+    total_bytes = 0
+    max_bytes = settings.bulk_download_max_bytes
     with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
         for image in images:
             try:
                 photo_bytes = storage_service.get_photo(event_id, image.id, "original")
+                total_bytes += len(photo_bytes)
+                if total_bytes > max_bytes:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail=f"Total download size exceeds {max_bytes // (1024 * 1024)} MB limit. Please select fewer images."
+                    )
                 filename = image.filename or f"photo_{image.id}.jpg"
                 zf.writestr(filename, photo_bytes)
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"Failed to add image {image.id} to ZIP: {e}")
                 continue
@@ -593,6 +607,7 @@ class ShareInfoResponse(BaseModel):
 async def get_share_info(
     event_id: str,
     image_id: str,
+    request: Request,
     db: Session = Depends(get_db)
 ):
     """
@@ -600,6 +615,9 @@ async def get_share_info(
 
     Returns event name, photo URLs, and event slug for the share page.
     """
+    client_ip = request.client.host if request.client else "unknown"
+    share_rate_limiter.enforce_rate_limit(client_ip, action="share")
+
     try:
         event_uuid = uuid.UUID(event_id)
         image_uuid = uuid.UUID(image_id)

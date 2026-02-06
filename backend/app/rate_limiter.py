@@ -161,5 +161,7 @@ class RateLimiter:
         self.redis.delete(key)
 
 
-# Global rate limiter instance
+# Global rate limiter instances
 rate_limiter = RateLimiter(redis_client)
+auth_rate_limiter = RateLimiter(redis_client, limit=settings.auth_rate_limit, window_hours=settings.auth_rate_window_hours)
+share_rate_limiter = RateLimiter(redis_client, limit=settings.share_rate_limit, window_hours=settings.share_rate_window_hours)

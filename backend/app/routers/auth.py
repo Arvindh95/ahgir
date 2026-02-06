@@ -1,5 +1,5 @@
 from datetime import timedelta
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -14,6 +14,7 @@ from app.models import User
 from app.config import settings
 from app.exceptions import DuplicateEmailError, InvalidCredentialsError, EmailNotVerifiedError, InvalidTokenError
 from app.email import send_verification_email
+from app.rate_limiter import auth_rate_limiter
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
@@ -31,7 +32,7 @@ class MessageResponse(BaseModel):
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-async def register(user_data: UserRegister, db: Session = Depends(get_db)):
+async def register(user_data: UserRegister, request: Request, db: Session = Depends(get_db)):
     """
     Register a new Admin account
 
@@ -40,6 +41,9 @@ async def register(user_data: UserRegister, db: Session = Depends(get_db)):
 
     Sends a verification email. User must verify before logging in.
     """
+    client_ip = request.client.host if request.client else "unknown"
+    auth_rate_limiter.enforce_rate_limit(client_ip, action="register")
+
     password_hash = hash_password(user_data.password)
 
     new_user = User(
@@ -73,7 +77,7 @@ async def register(user_data: UserRegister, db: Session = Depends(get_db)):
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(credentials: UserLogin, db: Session = Depends(get_db)):
+async def login(credentials: UserLogin, request: Request, db: Session = Depends(get_db)):
     """
     Login with email and password
 
@@ -82,6 +86,9 @@ async def login(credentials: UserLogin, db: Session = Depends(get_db)):
 
     Returns a JWT access token. Requires verified email.
     """
+    client_ip = request.client.host if request.client else "unknown"
+    auth_rate_limiter.enforce_rate_limit(client_ip, action="login")
+
     user = db.query(User).filter(User.email == credentials.email).first()
 
     if not user or not verify_password(credentials.password, user.password_hash):

@@ -39,10 +39,18 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from_email: str = "noreply@ahgir.com"
 
+    # CORS
+    cors_origins: str = "http://localhost:3000"  # Comma-separated; set to "https://ahgir.com" in production
+
     # Rate Limiting
     scan_rate_limit: int = 30
     scan_rate_window_hours: int = 1
+    auth_rate_limit: int = 10
+    auth_rate_window_hours: int = 1
+    share_rate_limit: int = 60
+    share_rate_window_hours: int = 1
     bulk_download_max_images: int = 100
+    bulk_download_max_bytes: int = 500 * 1024 * 1024  # 500 MB
     
     class Config:
         env_file = ".env"

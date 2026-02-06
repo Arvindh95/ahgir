@@ -73,6 +73,7 @@ services:
       SMTP_USERNAME: ${SMTP_USERNAME}
       SMTP_PASSWORD: ${SMTP_PASSWORD}
       SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL}
+      CORS_ORIGINS: "http://localhost:3000"
     ports:
       - "8000:8000"
     volumes:
