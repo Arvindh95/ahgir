@@ -215,12 +215,12 @@ services:
       dockerfile: Dockerfile
       args:
         - BUILD_ENV=production
-        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-/api}
     container_name: picur-frontend
     restart: unless-stopped
     volumes: []
     environment:
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api}
       SERVER_API_URL: http://backend:8000
       NODE_ENV: production
     ports:
