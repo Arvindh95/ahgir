@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/router'
-import { ArrowLeft, Image as ImageIcon, Loader2 } from 'lucide-react'
+import PhotoGridSkeleton from '@/components/skeletons/PhotoGridSkeleton'
+import { ArrowLeft, Image as ImageIcon } from 'lucide-react'
 import PhotoGrid from '@/components/PhotoGrid'
 import PhotoModal from '@/components/PhotoModal'
 import SelectionToolbar from '@/components/SelectionToolbar'
@@ -29,7 +30,7 @@ export default function ScanResults() {
   const [scanResult, setScanResult] = useState<ScanResult | null>(null)
   const [eventName, setEventName] = useState('')
   const [allowDownloads, setAllowDownloads] = useState(false)
-  const [selectedPhoto, setSelectedPhoto] = useState<MatchedPhoto | null>(null)
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null)
 
   const { selectedIds, toggleSelect, selectAll, handleDownload, handleBulkDownload, downloading } = usePhotoActions()
   const { shareMenuPhoto, setShareMenuPhoto, handleShare } = useShare(eventName)
@@ -70,8 +71,10 @@ export default function ScanResults() {
 
   if (!scanResult) {
     return (
-      <div className="min-h-screen bg-black flex items-center justify-center">
-        <Loader2 className="w-8 h-8 text-white animate-spin" />
+      <div className="min-h-screen bg-black">
+        <div className="max-w-7xl mx-auto px-4 py-8">
+          <PhotoGridSkeleton count={8} />
+        </div>
       </div>
     )
   }
@@ -107,9 +110,15 @@ export default function ScanResults() {
                <ImageIcon className="w-12 h-12 text-gray-500" />
             </div>
             <h2 className="text-2xl font-bold mb-4">No Photos Found</h2>
-            <p className="text-gray-400 mb-8 max-w-md mx-auto">
-              We couldn&apos;t find any photos matching your face. It&apos;s possible your photos haven&apos;t been uploaded yet or the match confidence was too low.
+            <p className="text-gray-400 mb-4 max-w-md mx-auto">
+              Your face was recognized but no matching photos were found yet. This could mean your photos haven&apos;t been uploaded or the match confidence was too low.
             </p>
+            <ul className="text-gray-500 text-sm mb-8 max-w-sm mx-auto text-left space-y-2">
+              <li>• Remove sunglasses or hats and try again</li>
+              <li>• Ensure good, even lighting on your face</li>
+              <li>• Face the camera directly</li>
+              <li>• Check back later — more photos may be uploaded soon</li>
+            </ul>
             <button
                onClick={handleBackToScanner}
                className="bg-blue-600 text-white px-8 py-3 rounded-xl font-bold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/20"
@@ -145,7 +154,7 @@ export default function ScanResults() {
               shareMenuPhoto={shareMenuPhoto}
               showSimilarity
               onSelect={toggleSelect}
-              onView={(photo) => setSelectedPhoto(photo as MatchedPhoto)}
+              onView={(_photo, index) => setSelectedIndex(index)}
               onShare={handleShare}
               onDownload={handleDownload}
               onShareMenuClose={() => setShareMenuPhoto(null)}
@@ -155,12 +164,14 @@ export default function ScanResults() {
       </div>
 
       {/* Modal */}
-      {selectedPhoto && (
+      {selectedIndex !== null && (
         <PhotoModal
-          photo={selectedPhoto}
-          onClose={() => setSelectedPhoto(null)}
-          onShare={() => handleShare(selectedPhoto.image_id)}
-          onDownload={() => handleDownload(selectedPhoto)}
+          photos={scanResult.matches}
+          currentIndex={selectedIndex}
+          onClose={() => setSelectedIndex(null)}
+          onShare={handleShare}
+          onDownload={handleDownload}
+          onNavigate={setSelectedIndex}
           allowDownloads={allowDownloads}
         />
       )}

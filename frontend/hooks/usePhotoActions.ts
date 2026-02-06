@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useToast } from '@/hooks/useToast'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -11,6 +12,7 @@ interface DownloadablePhoto {
 export function usePhotoActions() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [downloading, setDownloading] = useState(false)
+  const { toast } = useToast()
 
   const toggleSelect = (imageId: string) => {
     setSelectedIds(prev => {
@@ -43,7 +45,7 @@ export function usePhotoActions() {
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
     } catch {
-      alert('Failed to download photo')
+      toast('Failed to download photo', 'error')
     }
   }
 
@@ -71,7 +73,7 @@ export function usePhotoActions() {
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
     } catch {
-      alert('Failed to download photos')
+      toast('Failed to download photos', 'error')
     } finally {
       setDownloading(false)
     }

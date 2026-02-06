@@ -4,19 +4,23 @@ import ProtectedRoute from '@/components/ProtectedRoute'
 import AdminLayout from '@/components/AdminLayout'
 import EventMonitoring from '@/components/EventMonitoring'
 import EventAnalytics from '@/components/EventAnalytics'
+import ConfirmModal from '@/components/ConfirmModal'
 import { eventService, EventDetails } from '@/lib/events'
+import { useToast } from '@/hooks/useToast'
 import api from '@/lib/api'
-import { Loader2, ArrowLeft, Image as ImageIcon, Trash2, Calendar, Link as LinkIcon, Download, Clock, QrCode, Copy, Check, Pencil, Save, MapPin, Upload } from 'lucide-react'
+import { Loader2, ArrowLeft, Image as ImageIcon, Trash2, Calendar, Link as LinkIcon, Download, Clock, QrCode, Copy, Pencil, Save, MapPin, Upload } from 'lucide-react'
+import EventDetailSkeleton from '@/components/skeletons/EventDetailSkeleton'
 import { useRef } from 'react'
 
 export default function EventDetailsPage() {
   const router = useRouter()
   const { id } = router.query
+  const { toast } = useToast()
   const [event, setEvent] = useState<EventDetails | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState('')
   const [isDeleting, setIsDeleting] = useState(false)
-  const [copied, setCopied] = useState(false)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [qrCodeUrl, setQrCodeUrl] = useState<string | null>(null)
   const [editingLink, setEditingLink] = useState(false)
   const [guestLinkValue, setGuestLinkValue] = useState('')
@@ -65,7 +69,7 @@ export default function EventDetailsPage() {
     if (!event) return
     const match = guestLinkValue.match(/\/e\/([^/]+)$/)
     if (!match) {
-      setError('Invalid guest link format. Should be like https://domain/e/your-slug')
+      toast('Invalid guest link format. Should be like https://domain/e/your-slug', 'error')
       return
     }
     const newSlug = match[1]
@@ -79,25 +83,25 @@ export default function EventDetailsPage() {
       setEvent(prev => prev ? { ...prev, slug: newSlug, guest_link: guestLinkValue } : prev)
       setEditingLink(false)
       fetchQrCode(event.event_id)
+      toast('Guest link updated', 'success')
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to update guest link')
+      toast(err.response?.data?.detail || 'Failed to update guest link', 'error')
     } finally {
       setIsSavingLink(false)
     }
   }
 
   const handleDelete = async () => {
-    if (!event || !confirm('Are you sure you want to delete this event? This action cannot be undone.')) {
-      return
-    }
-
+    if (!event) return
     try {
       setIsDeleting(true)
       await eventService.deleteEvent(event.event_id)
+      toast('Event deleted', 'success')
       router.push('/admin/events')
     } catch (err: any) {
-      setError(err.response?.data?.error?.message || 'Failed to delete event')
+      toast(err.response?.data?.error?.message || 'Failed to delete event', 'error')
       setIsDeleting(false)
+      setShowDeleteConfirm(false)
     }
   }
 
@@ -113,8 +117,7 @@ export default function EventDetailsPage() {
     if (event) {
       try {
         await navigator.clipboard.writeText(event.guest_link)
-        setCopied(true)
-        setTimeout(() => setCopied(false), 2000)
+        toast('Link copied!', 'success')
       } catch (err) {
         console.error('Failed to copy:', err)
       }
@@ -127,8 +130,9 @@ export default function EventDetailsPage() {
       setIsSavingDetails(true)
       await api.patch(`/events/${event.event_id}`, { location, description })
       setEvent(prev => prev ? { ...prev, location, description } : prev)
+      toast('Details saved', 'success')
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to save')
+      toast(err.response?.data?.detail || 'Failed to save details', 'error')
     } finally {
       setIsSavingDetails(false)
     }
@@ -145,8 +149,9 @@ export default function EventDetailsPage() {
         headers: { 'Content-Type': 'multipart/form-data' }
       })
       setCoverImageUrl(response.data.cover_image_url)
+      toast('Cover image uploaded', 'success')
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to upload cover image')
+      toast(err.response?.data?.detail || 'Failed to upload cover image', 'error')
     } finally {
       setIsUploadingCover(false)
     }
@@ -156,9 +161,7 @@ export default function EventDetailsPage() {
     return (
       <ProtectedRoute>
         <AdminLayout>
-          <div className="flex items-center justify-center h-64">
-            <Loader2 className="w-8 h-8 text-white animate-spin" />
-          </div>
+          <EventDetailSkeleton />
         </AdminLayout>
       </ProtectedRoute>
     )
@@ -182,7 +185,7 @@ export default function EventDetailsPage() {
         <div className="max-w-7xl mx-auto">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
             <div className="flex items-center gap-4">
-              <button 
+              <button
                 onClick={() => router.push('/admin/events')}
                 className="p-2 rounded-lg hover:bg-white/10 transition-colors"
                >
@@ -190,7 +193,7 @@ export default function EventDetailsPage() {
               </button>
               <h1 className="text-3xl font-bold">{event.name}</h1>
             </div>
-            
+
             <div className="flex gap-3">
               <button
                 onClick={() => router.push(`/admin/events/${event.event_id}/photos`)}
@@ -200,7 +203,7 @@ export default function EventDetailsPage() {
                 Manage Photos
               </button>
               <button
-                onClick={handleDelete}
+                onClick={() => setShowDeleteConfirm(true)}
                 disabled={isDeleting}
                 className="flex items-center gap-2 bg-red-500/10 text-red-500 border border-red-500/20 px-4 py-2 rounded-lg font-semibold hover:bg-red-500/20 transition-colors disabled:opacity-50"
               >
@@ -258,7 +261,7 @@ export default function EventDetailsPage() {
                             onClick={handleCopyLink}
                             className="flex items-center gap-1 px-2 py-1 text-xs bg-white/10 hover:bg-white/20 rounded transition-colors"
                           >
-                            {copied ? <><Check className="w-3 h-3" /> Copied</> : <><Copy className="w-3 h-3" /> Copy</>}
+                            <Copy className="w-3 h-3" /> Copy
                           </button>
                         </>
                       )}
@@ -365,6 +368,17 @@ export default function EventDetailsPage() {
             <EventAnalytics eventId={event.event_id} />
           </div>
         </div>
+
+        <ConfirmModal
+          open={showDeleteConfirm}
+          title="Delete Event"
+          message={`Are you sure you want to delete "${event.name}"? All photos and data will be permanently removed. This action cannot be undone.`}
+          confirmLabel="Delete Event"
+          variant="danger"
+          loading={isDeleting}
+          onConfirm={handleDelete}
+          onCancel={() => setShowDeleteConfirm(false)}
+        />
       </AdminLayout>
     </ProtectedRoute>
   )

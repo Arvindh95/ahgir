@@ -1,5 +1,6 @@
 import { useRef, useEffect, useState } from 'react'
 import { Link, Share2 } from 'lucide-react'
+import { useToast } from '@/hooks/useToast'
 
 interface ShareMenuProps {
   imageId: string
@@ -9,7 +10,7 @@ interface ShareMenuProps {
 
 export function ShareMenu({ imageId, eventName, onClose }: ShareMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null)
-  const [copied, setCopied] = useState(false)
+  const { toast } = useToast()
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -28,8 +29,8 @@ export function ShareMenu({ imageId, eventName, onClose }: ShareMenuProps) {
 
   const copyLink = async () => {
     await navigator.clipboard.writeText(getShareUrl())
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    toast('Link copied!', 'success')
+    onClose()
   }
 
   const shareToWhatsApp = () => {
@@ -53,7 +54,7 @@ export function ShareMenu({ imageId, eventName, onClose }: ShareMenuProps) {
   return (
     <div ref={menuRef} className="absolute bottom-full mb-2 right-0 glass-card rounded-xl p-2 min-w-[180px] z-30 border border-white/10 shadow-xl">
       <button onClick={copyLink} className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/10 transition-colors text-sm">
-        <Link className="w-4 h-4" /> {copied ? 'Copied!' : 'Copy Link'}
+        <Link className="w-4 h-4" /> Copy Link
       </button>
       <button onClick={shareToWhatsApp} className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/10 transition-colors text-sm">
         <span className="w-4 h-4 text-center">W</span> WhatsApp

@@ -3,7 +3,8 @@ import { useRouter } from 'next/router'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import AdminLayout from '@/components/AdminLayout'
 import { eventService, Event } from '@/lib/events'
-import { Plus, Calendar, Image as ImageIcon, Users, ScanFace, ArrowRight, Loader2 } from 'lucide-react'
+import { Plus, Calendar, Image as ImageIcon, Users, ScanFace, ArrowRight } from 'lucide-react'
+import EventCardSkeletonGrid from '@/components/skeletons/EventCardSkeleton'
 
 export default function EventsPage() {
   const router = useRouter()
@@ -57,9 +58,7 @@ export default function EventsPage() {
           )}
 
           {isLoading ? (
-            <div className="flex items-center justify-center h-64">
-               <Loader2 className="w-8 h-8 text-white animate-spin" />
-            </div>
+            <EventCardSkeletonGrid />
           ) : events.length === 0 ? (
             <div className="glass-card p-12 text-center rounded-2xl">
               <p className="text-xl text-gray-300 mb-2">No events yet</p>

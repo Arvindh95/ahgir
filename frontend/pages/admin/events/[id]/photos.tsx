@@ -3,18 +3,23 @@ import { useRouter } from 'next/router'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import AdminLayout from '@/components/AdminLayout'
 import PhotoUpload from '@/components/PhotoUpload'
+import ConfirmModal from '@/components/ConfirmModal'
 import { photoService, Photo } from '@/lib/photos'
-import { ArrowLeft, Trash2, Filter, Loader2, Image as ImageIcon, CheckCircle, AlertTriangle, Clock, XCircle } from 'lucide-react'
+import { useToast } from '@/hooks/useToast'
+import PhotoGridSkeleton from '@/components/skeletons/PhotoGridSkeleton'
+import { ArrowLeft, Trash2, Filter, Image as ImageIcon, CheckCircle, AlertTriangle, Clock, XCircle } from 'lucide-react'
 
 export default function EventPhotosPage() {
   const router = useRouter()
   const { id } = router.query
+  const { toast } = useToast()
   const [photos, setPhotos] = useState<Photo[]>([])
   const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('')
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+  const [isDeleteLoading, setIsDeleteLoading] = useState(false)
 
   useEffect(() => {
     if (id && typeof id === 'string') {
@@ -29,22 +34,24 @@ export default function EventPhotosPage() {
       setPhotos(data.photos)
       setTotal(data.total)
     } catch (err: any) {
-      setError(err.response?.data?.error?.message || 'Failed to load photos')
+      toast(err.response?.data?.error?.message || 'Failed to load photos', 'error')
     } finally {
       setIsLoading(false)
     }
   }
 
-  const handleDelete = async (imageId: string) => {
-    if (!id || typeof id !== 'string' || !confirm('Delete this photo?')) {
-      return
-    }
-
+  const handleDelete = async () => {
+    if (!id || typeof id !== 'string' || !deleteTarget) return
     try {
-      await photoService.deletePhoto(id, imageId)
+      setIsDeleteLoading(true)
+      await photoService.deletePhoto(id, deleteTarget)
+      toast('Photo deleted', 'success')
+      setDeleteTarget(null)
       loadPhotos(id)
     } catch (err: any) {
-      setError(err.response?.data?.error?.message || 'Failed to delete photo')
+      toast(err.response?.data?.error?.message || 'Failed to delete photo', 'error')
+    } finally {
+      setIsDeleteLoading(false)
     }
   }
 
@@ -89,7 +96,7 @@ export default function EventPhotosPage() {
         <div className="max-w-7xl mx-auto">
           <div className="flex justify-between items-center mb-8">
             <div className="flex items-center gap-4">
-              <button 
+              <button
                 onClick={() => router.push(`/admin/events/${id}`)}
                 className="p-2 rounded-lg hover:bg-white/10 transition-colors"
                >
@@ -132,16 +139,8 @@ export default function EventPhotosPage() {
               </div>
             </div>
 
-            {error && (
-              <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 text-red-500 rounded-xl">
-                {error}
-              </div>
-            )}
-
             {isLoading ? (
-               <div className="flex justify-center p-12">
-                  <Loader2 className="w-8 h-8 animate-spin text-white" />
-               </div>
+               <PhotoGridSkeleton count={10} columns="grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5" />
             ) : photos.length === 0 ? (
               <div className="text-center py-12 bg-white/5 rounded-xl border border-white/5 border-dashed">
                 <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -166,7 +165,7 @@ export default function EventPhotosPage() {
                         />
                         <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                            <button
-                             onClick={() => handleDelete(photo.image_id)}
+                             onClick={() => setDeleteTarget(photo.image_id)}
                              className="bg-red-500 hover:bg-red-600 text-white p-2 rounded-lg transition-colors"
                              title="Delete photo"
                            >
@@ -216,6 +215,17 @@ export default function EventPhotosPage() {
             )}
           </div>
         </div>
+
+        <ConfirmModal
+          open={!!deleteTarget}
+          title="Delete Photo"
+          message="Are you sure you want to delete this photo? This action cannot be undone."
+          confirmLabel="Delete Photo"
+          variant="danger"
+          loading={isDeleteLoading}
+          onConfirm={handleDelete}
+          onCancel={() => setDeleteTarget(null)}
+        />
       </AdminLayout>
     </ProtectedRoute>
   )

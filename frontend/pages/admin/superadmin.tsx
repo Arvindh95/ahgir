@@ -2,9 +2,12 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/router'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import AdminLayout from '@/components/AdminLayout'
+import ConfirmModal from '@/components/ConfirmModal'
 import api from '@/lib/api'
 import { authService } from '@/lib/auth'
-import { Shield, Users, Image as ImageIcon, Database, Loader2, Ban, ShieldCheck, ShieldOff } from 'lucide-react'
+import { useToast } from '@/hooks/useToast'
+import SuperadminSkeleton from '@/components/skeletons/SuperadminSkeleton'
+import { Shield, Users, Image as ImageIcon, Database, Ban, ShieldCheck, ShieldOff } from 'lucide-react'
 
 interface UserItem {
   user_id: string
@@ -24,13 +27,21 @@ interface PlatformStats {
   total_storage_bytes: number
 }
 
+interface ConfirmAction {
+  type: 'superadmin' | 'disabled'
+  userId: string
+  email: string
+  currentValue: boolean
+}
+
 export default function SuperadminPage() {
   const router = useRouter()
+  const { toast } = useToast()
   const [users, setUsers] = useState<UserItem[]>([])
   const [stats, setStats] = useState<PlatformStats | null>(null)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
   const [updating, setUpdating] = useState<string | null>(null)
+  const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null)
 
   useEffect(() => {
     checkAccess()
@@ -61,31 +72,29 @@ export default function SuperadminPage() {
     setStats(response.data)
   }
 
-  const toggleSuperadmin = async (userId: string, currentValue: boolean) => {
+  const handleConfirm = async () => {
+    if (!confirmAction) return
+    const { type, userId, currentValue } = confirmAction
     setUpdating(userId)
     try {
-      await api.patch(`/admin/users/${userId}`, { is_superadmin: !currentValue })
-      setUsers(prev => prev.map(u =>
-        u.user_id === userId ? { ...u, is_superadmin: !currentValue } : u
-      ))
+      if (type === 'superadmin') {
+        await api.patch(`/admin/users/${userId}`, { is_superadmin: !currentValue })
+        setUsers(prev => prev.map(u =>
+          u.user_id === userId ? { ...u, is_superadmin: !currentValue } : u
+        ))
+        toast(currentValue ? 'Superadmin revoked' : 'Superadmin granted', 'success')
+      } else {
+        await api.patch(`/admin/users/${userId}`, { is_disabled: !currentValue })
+        setUsers(prev => prev.map(u =>
+          u.user_id === userId ? { ...u, is_disabled: !currentValue } : u
+        ))
+        toast(currentValue ? 'Account enabled' : 'Account disabled', 'success')
+      }
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to update user')
+      toast(err.response?.data?.detail || 'Failed to update user', 'error')
     } finally {
       setUpdating(null)
-    }
-  }
-
-  const toggleDisabled = async (userId: string, currentValue: boolean) => {
-    setUpdating(userId)
-    try {
-      await api.patch(`/admin/users/${userId}`, { is_disabled: !currentValue })
-      setUsers(prev => prev.map(u =>
-        u.user_id === userId ? { ...u, is_disabled: !currentValue } : u
-      ))
-    } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to update user')
-    } finally {
-      setUpdating(null)
+      setConfirmAction(null)
     }
   }
 
@@ -102,17 +111,38 @@ export default function SuperadminPage() {
     })
   }
 
+  const getConfirmModalProps = () => {
+    if (!confirmAction) return { title: '', message: '', variant: 'danger' as const }
+    const { type, email, currentValue } = confirmAction
+    if (type === 'superadmin') {
+      return {
+        title: currentValue ? 'Revoke Superadmin' : 'Grant Superadmin',
+        message: currentValue
+          ? `Revoke superadmin privileges from ${email}? They will lose access to the admin panel.`
+          : `Grant superadmin privileges to ${email}? They will be able to manage all users and events.`,
+        variant: 'warning' as const,
+      }
+    }
+    return {
+      title: currentValue ? 'Enable Account' : 'Disable Account',
+      message: currentValue
+        ? `Enable the account for ${email}? They will be able to log in again.`
+        : `Disable the account for ${email}? They won't be able to log in.`,
+      variant: 'danger' as const,
+    }
+  }
+
   if (loading) {
     return (
       <ProtectedRoute>
         <AdminLayout>
-          <div className="flex items-center justify-center h-64">
-            <Loader2 className="w-8 h-8 text-white animate-spin" />
-          </div>
+          <SuperadminSkeleton />
         </AdminLayout>
       </ProtectedRoute>
     )
   }
+
+  const modalProps = getConfirmModalProps()
 
   return (
     <ProtectedRoute>
@@ -122,13 +152,6 @@ export default function SuperadminPage() {
             <Shield className="w-8 h-8 text-purple-400" />
             Superadmin Panel
           </h1>
-
-          {error && (
-            <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl">
-              {error}
-              <button onClick={() => setError('')} className="ml-4 text-sm underline">Dismiss</button>
-            </div>
-          )}
 
           {/* Platform Stats */}
           {stats && (
@@ -211,7 +234,7 @@ export default function SuperadminPage() {
                       <td className="py-3 pr-2">
                         <div className="flex items-center justify-end gap-2">
                           <button
-                            onClick={() => toggleSuperadmin(user.user_id, user.is_superadmin)}
+                            onClick={() => setConfirmAction({ type: 'superadmin', userId: user.user_id, email: user.email, currentValue: user.is_superadmin })}
                             disabled={updating === user.user_id}
                             className={`p-1.5 rounded-lg transition-colors ${
                               user.is_superadmin
@@ -223,7 +246,7 @@ export default function SuperadminPage() {
                             {user.is_superadmin ? <ShieldCheck className="w-4 h-4" /> : <ShieldOff className="w-4 h-4" />}
                           </button>
                           <button
-                            onClick={() => toggleDisabled(user.user_id, user.is_disabled)}
+                            onClick={() => setConfirmAction({ type: 'disabled', userId: user.user_id, email: user.email, currentValue: user.is_disabled })}
                             disabled={updating === user.user_id}
                             className={`p-1.5 rounded-lg transition-colors ${
                               user.is_disabled
@@ -243,6 +266,17 @@ export default function SuperadminPage() {
             </div>
           </div>
         </div>
+
+        <ConfirmModal
+          open={!!confirmAction}
+          title={modalProps.title}
+          message={modalProps.message}
+          confirmLabel={modalProps.title}
+          variant={modalProps.variant}
+          loading={!!updating}
+          onConfirm={handleConfirm}
+          onCancel={() => setConfirmAction(null)}
+        />
       </AdminLayout>
     </ProtectedRoute>
   )
