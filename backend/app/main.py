@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers import auth, events, guest, health
 from app.error_handler import register_error_handlers
+from app.config import settings
 
 app = FastAPI(title="PicUr API", version="1.0.0")
 
@@ -9,9 +10,10 @@ app = FastAPI(title="PicUr API", version="1.0.0")
 register_error_handlers(app)
 
 # CORS configuration
+origins = [o.strip() for o in settings.cors_origins.split(",")]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
