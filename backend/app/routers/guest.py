@@ -9,6 +9,8 @@ import uuid
 import base64
 import logging
 import zipfile
+import queue
+import threading
 from io import BytesIO
 
 from app.auth import verify_password, create_event_token, get_event_from_token, EventTokenPayload
@@ -277,28 +279,17 @@ async def _scan_with_compreface(
 
     scan_id = str(uuid.uuid4())
 
-    # Generate presigned URLs for matched photos
+    # Generate URLs for matched photos (ownership verified by event_id matching above)
     face_matches = []
     for match in matches:
         image_uuid = uuid.UUID(match["image_id"])
 
         try:
-            thumbnail_url = storage_service.generate_presigned_url(
-                event_id=event_id,
-                image_id=image_uuid,
-                photo_type="thumb",
-                expiry_minutes=15,
-                db=db,
-                validate_event=True
+            thumbnail_url = storage_service.generate_url(
+                event_id=event_id, image_id=image_uuid, photo_type="thumb"
             )
-
-            original_url = storage_service.generate_presigned_url(
-                event_id=event_id,
-                image_id=image_uuid,
-                photo_type="original",
-                expiry_minutes=15,
-                db=db,
-                validate_event=True
+            original_url = storage_service.generate_url(
+                event_id=event_id, image_id=image_uuid, photo_type="original"
             )
 
             download_url = None
@@ -449,29 +440,14 @@ async def download_zip(
     if not images:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No valid images found")
 
-    # Create ZIP in memory with byte limit
-    zip_buffer = BytesIO()
-    total_bytes = 0
+    # Pre-validate total size from DB to reject before streaming
     max_bytes = settings.bulk_download_max_bytes
-    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
-        for image in images:
-            try:
-                photo_bytes = storage_service.get_photo(event_id, image.id, "original")
-                total_bytes += len(photo_bytes)
-                if total_bytes > max_bytes:
-                    raise HTTPException(
-                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                        detail=f"Total download size exceeds {max_bytes // (1024 * 1024)} MB limit. Please select fewer images."
-                    )
-                filename = image.filename or f"photo_{image.id}.jpg"
-                zf.writestr(filename, photo_bytes)
-            except HTTPException:
-                raise
-            except Exception as e:
-                logger.error(f"Failed to add image {image.id} to ZIP: {e}")
-                continue
-
-    zip_buffer.seek(0)
+    total_size = sum(img.size_bytes or 0 for img in images)
+    if total_size > max_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Total download size exceeds {max_bytes // (1024 * 1024)} MB limit. Please select fewer images."
+        )
 
     # Audit log
     log_action(
@@ -483,9 +459,49 @@ async def download_zip(
         metadata={'image_count': len(images)}
     )
 
+    # Stream ZIP without buffering everything in memory
+    def generate_zip():
+        data_queue = queue.Queue(maxsize=32)
+
+        class QueueWriter:
+            def write(self, data):
+                data_queue.put(data)
+                return len(data)
+            def flush(self):
+                pass
+            def close(self):
+                data_queue.put(None)
+
+        writer = QueueWriter()
+
+        def zip_worker():
+            try:
+                with zipfile.ZipFile(writer, 'w', zipfile.ZIP_STORED) as zf:
+                    for image in images:
+                        try:
+                            photo_bytes = storage_service.get_photo(event_id, image.id, "original")
+                            filename = image.filename or f"photo_{image.id}.jpg"
+                            zf.writestr(filename, photo_bytes)
+                        except Exception as e:
+                            logger.error(f"Failed to add image {image.id} to ZIP: {e}")
+                            continue
+            finally:
+                writer.close()
+
+        thread = threading.Thread(target=zip_worker, daemon=True)
+        thread.start()
+
+        while True:
+            chunk = data_queue.get()
+            if chunk is None:
+                break
+            yield chunk
+
+        thread.join(timeout=5)
+
     safe_name = event.name.replace(' ', '_').replace('"', '')
     return StreamingResponse(
-        zip_buffer,
+        generate_zip(),
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{safe_name}_photos.zip"'}
     )
@@ -547,17 +563,15 @@ async def get_gallery(
         Image.status.in_(['indexed', 'no_faces'])
     ).order_by(Image.uploaded_at.desc()).offset(offset).limit(limit).all()
 
-    # Generate URLs
+    # Generate URLs (ownership verified by event_id filter in query above)
     photos = []
     for image in images:
         try:
-            thumbnail_url = storage_service.generate_presigned_url(
-                event_id=event_id, image_id=image.id, photo_type="thumb",
-                expiry_minutes=15, db=db, validate_event=True
+            thumbnail_url = storage_service.generate_url(
+                event_id=event_id, image_id=image.id, photo_type="thumb"
             )
-            original_url = storage_service.generate_presigned_url(
-                event_id=event_id, image_id=image.id, photo_type="original",
-                expiry_minutes=15, db=db, validate_event=True
+            original_url = storage_service.generate_url(
+                event_id=event_id, image_id=image.id, photo_type="original"
             )
             download_url = original_url if event.allow_downloads else None
 
@@ -633,13 +647,11 @@ async def get_share_info(
     if not event:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
 
-    image_url = storage_service.generate_presigned_url(
-        event_id=event_uuid, image_id=image_uuid, photo_type="original",
-        expiry_minutes=60, db=db, validate_event=False
+    image_url = storage_service.generate_url(
+        event_id=event_uuid, image_id=image_uuid, photo_type="original"
     )
-    thumbnail_url = storage_service.generate_presigned_url(
-        event_id=event_uuid, image_id=image_uuid, photo_type="thumb",
-        expiry_minutes=60, db=db, validate_event=False
+    thumbnail_url = storage_service.generate_url(
+        event_id=event_uuid, image_id=image_uuid, photo_type="thumb"
     )
 
     return ShareInfoResponse(

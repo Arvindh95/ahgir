@@ -14,6 +14,7 @@ from app.database import SessionLocal
 from app.models import Image, Face
 from app.storage import storage_service
 from app.config import settings
+from app.utils.thumbnail import generate_thumbnail
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +173,24 @@ def index_photo_compreface(image_id: str, api_key: str, db_session: Optional[Ses
                 'face_count': 0,
                 'error': f'Failed to download photo: {str(e)}'
             }
+
+        # Generate thumbnail if missing
+        try:
+            storage_service.get_photo(
+                event_id=image.event_id, image_id=image.id, photo_type='thumb'
+            )
+        except FileNotFoundError:
+            try:
+                thumb_bytes = generate_thumbnail(photo_bytes)
+                storage_service.upload_photo(
+                    event_id=image.event_id, image_id=image.id,
+                    photo_data=thumb_bytes, photo_type='thumb'
+                )
+                logger.info(f"Generated missing thumbnail for image {image_id}")
+            except Exception as e:
+                logger.warning(f"Failed to generate thumbnail for {image_id}: {e}")
+        except Exception:
+            pass  # Thumbnail exists or other error, continue
 
         # Step 1: Detect all faces using Detection service
         logger.info(f"Detecting faces in image {image_id} using CompreFace Detection")

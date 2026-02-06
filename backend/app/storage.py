@@ -156,6 +156,21 @@ class StorageService:
                     # Ignore errors if file doesn't exist
                     pass
     
+    def generate_url(
+        self,
+        event_id: uuid.UUID,
+        image_id: uuid.UUID,
+        photo_type: str = "original"
+    ) -> str:
+        """
+        Generate direct URL without DB validation.
+
+        Use when the caller has already verified image ownership.
+        """
+        object_path = f"events/{event_id}/{photo_type}/{image_id}.jpg"
+        protocol = "https" if settings.minio_external_secure else "http"
+        return f"{protocol}://{settings.minio_external_endpoint}/{self.bucket}/{object_path}"
+
     def generate_presigned_url(
         self,
         event_id: uuid.UUID,
