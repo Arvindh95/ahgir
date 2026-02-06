@@ -114,6 +114,7 @@ services:
         - BUILD_ENV=production
     container_name: picur-backend
     restart: unless-stopped
+    volumes: []
     environment:
       # Database
       DATABASE_URL: postgresql://${POSTGRES_USER:-picur}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-picur}
@@ -170,6 +171,7 @@ services:
       args:
         - BUILD_ENV=production
     restart: unless-stopped
+    volumes: []
     environment:
       # Database
       DATABASE_URL: postgresql://${POSTGRES_USER:-picur}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-picur}
@@ -216,6 +218,7 @@ services:
         - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     container_name: picur-frontend
     restart: unless-stopped
+    volumes: []
     environment:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
       SERVER_API_URL: http://backend:8000
