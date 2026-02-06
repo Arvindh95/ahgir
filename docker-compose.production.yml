@@ -169,7 +169,6 @@ services:
       dockerfile: Dockerfile
       args:
         - BUILD_ENV=production
-    container_name: picur-worker
     restart: unless-stopped
     environment:
       # Database
