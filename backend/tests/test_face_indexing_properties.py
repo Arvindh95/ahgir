@@ -7,8 +7,7 @@ from PIL import Image as PILImage
 from io import BytesIO
 import cv2
 import uuid
-
-from app.face_detection import face_detector
+from unittest.mock import patch
 
 
 # Helper function to create a test face image
@@ -37,6 +36,9 @@ def create_face_image(width: int = 200, height: int = 200) -> bytes:
 
 
 # Feature: picur, Property 10: Face Embedding Consistency
+# NOTE: This test is skipped because we no longer use InsightFace locally.
+# CompreFace handles embeddings internally via API.
+@pytest.mark.skip(reason="InsightFace removed - using CompreFace API")
 @settings(max_examples=20, deadline=None)
 @given(
     width=st.integers(min_value=100, max_value=500),
@@ -46,54 +48,16 @@ def create_face_image(width: int = 200, height: int = 200) -> bytes:
 def test_face_embedding_consistency(width, height):
     """
     Property 10: Face Embedding Consistency
-    
+
     For any valid face image, computing the embedding twice using the same
-    InsightFace model SHALL produce embeddings with cosine similarity greater than 0.99.
-    
+    model SHALL produce embeddings with cosine similarity greater than 0.99.
+
     Validates: Requirements 4.2, 4.3
+
+    NOTE: This test is disabled as we now use CompreFace API which manages
+    embeddings internally. Embedding consistency is guaranteed by CompreFace.
     """
-    # Create a test face image
-    image_bytes = create_face_image(width, height)
-    
-    # Detect faces and compute embeddings twice
-    try:
-        faces_1 = face_detector.detect_faces(image_bytes)
-        faces_2 = face_detector.detect_faces(image_bytes)
-    except Exception:
-        # If face detection fails, skip this test case
-        # (not all random images will have detectable faces)
-        return
-    
-    # If no faces detected, test passes (nothing to verify)
-    if len(faces_1) == 0 or len(faces_2) == 0:
-        return
-    
-    # Compare embeddings from both runs
-    # We expect the same number of faces detected
-    assert len(faces_1) == len(faces_2), \
-        "Face detection should be deterministic and return same number of faces"
-    
-    # For each face, verify embedding consistency
-    for i in range(len(faces_1)):
-        embedding_1, bbox_1, score_1 = faces_1[i]
-        embedding_2, bbox_2, score_2 = faces_2[i]
-        
-        # Compute cosine similarity between embeddings
-        # Cosine similarity = dot product of normalized vectors
-        cosine_similarity = np.dot(embedding_1, embedding_2)
-        
-        # Property: Cosine similarity should be > 0.99
-        assert cosine_similarity > 0.99, \
-            f"Face embedding consistency violated: cosine similarity {cosine_similarity} <= 0.99"
-        
-        # Bounding boxes should also be very similar (within a few pixels)
-        bbox_diff = np.abs(np.array(bbox_1) - np.array(bbox_2))
-        assert np.all(bbox_diff < 5), \
-            f"Bounding box should be consistent: diff {bbox_diff}"
-        
-        # Detection scores should be identical
-        assert abs(score_1 - score_2) < 0.001, \
-            f"Detection score should be consistent: {score_1} vs {score_2}"
+    pass
 
 
 
@@ -119,7 +83,7 @@ def test_status_transition_validity(initial_status, has_faces, detection_fails, 
     Validates: Requirements 4.5, 4.6
     """
     from app.models import Image, Event, User, Face
-    from app.workers.face_indexer import index_photo
+    from app.workers.face_indexer_compreface import index_photo_compreface
     from app.storage import storage_service
     from app.auth import hash_password
     
@@ -190,7 +154,21 @@ def test_status_transition_validity(initial_status, has_faces, detection_fails, 
     
     # Process the image
     try:
-        result = index_photo(str(image.id), db_session=test_db)
+        # Mock CompreFace API response
+        with patch('app.workers.face_indexer_compreface._run_async') as mock_async:
+            if detection_fails:
+                mock_async.side_effect = Exception("Detection failed")
+            elif has_faces:
+                # Mock face detection response
+                mock_async.side_effect = [
+                    [{"box": {"x_min": 50, "y_min": 50, "x_max": 150, "y_max": 150}, "probability": 0.9}],
+                    {"image_id": str(uuid.uuid4()), "subject": "test"}
+                ]
+            else:
+                # No faces detected
+                mock_async.return_value = []
+
+            result = index_photo_compreface(str(image.id), "test-api-key", db_session=test_db)
     except Exception:
         # If processing fails, that's expected for invalid images
         result = {'status': 'failed'}

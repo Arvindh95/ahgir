@@ -11,7 +11,6 @@ import logging
 from app.auth import verify_password, create_event_token, get_event_from_token, EventTokenPayload
 from app.database import get_db
 from app.models import Event, GuestSession, Face, Image
-from app.face_detection import face_detector
 from app.storage import storage_service
 from app.rate_limiter import rate_limiter
 from app.audit import log_action
@@ -342,7 +341,7 @@ async def scan_face(
     """
     Scan a guest's face and find matching photos from the event.
 
-    Uses CompreFace for recognition when available, falls back to InsightFace.
+    Uses CompreFace for face recognition.
 
     - **image**: Base64 encoded face image from camera
 
@@ -379,181 +378,10 @@ async def scan_face(
             detail="Invalid base64 image data"
         )
 
-    # Try CompreFace first if configured
-    if settings.compreface_api_key:
-        logger.info("Using CompreFace for face recognition")
-        return await _scan_with_compreface(
-            image_bytes, event_id, session_id, event, db
-        )
-
-    # Fall back to InsightFace
-    logger.info("Using InsightFace for face recognition (CompreFace not configured)")
-    
-    # Detect face and compute embedding
-    try:
-        # Use 'small' config for selfies - very lenient detection
-        faces = face_detector.detect_faces(image_bytes, config_name='small')
-        logger.info(f"First detection attempt: {len(faces)} faces found")
-
-        if len(faces) == 0:
-            # Try again with extremely low threshold for difficult webcam images
-            faces = face_detector.detect_faces(
-                image_bytes,
-                min_face_size=15,
-                det_threshold=0.05  # Very low threshold
-            )
-            logger.info(f"Second detection attempt (low threshold): {len(faces)} faces found")
-
-        if len(faces) == 0:
-            # No face detected in the scan image
-            logger.warning("No face detected in selfie after multiple attempts")
-            return FaceScanResponse(
-                matches=[],
-                scan_id=str(uuid.uuid4()),
-                total_matches=0
-            )
-        
-        # Use the first detected face
-        query_embedding, _, _ = faces[0]
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Face detection failed: {str(e)}"
-        )
-    
-    # Perform vector similarity search using pgvector
-    # Very low threshold to see all potential matches
-    similarity_threshold = 0.2
-
-    # Convert embedding to list for SQL query
-    embedding_list = query_embedding.tolist()
-
-    logger.info(f"Searching for faces in event {event_id} with threshold {similarity_threshold}")
-    logger.info(f"Query embedding length: {len(embedding_list)}")
-
-    # Debug: Show top similarities without threshold filter
-    debug_query = text("""
-        SELECT
-            f.id as face_id,
-            1 - (f.embedding <=> CAST(:query_embedding AS vector)) as similarity
-        FROM faces f
-        JOIN images i ON f.image_id = i.id
-        WHERE i.event_id = :event_id
-            AND i.status = 'indexed'
-        ORDER BY similarity DESC
-        LIMIT 5
-    """)
-    debug_result = db.execute(
-        debug_query,
-        {
-            "query_embedding": str(embedding_list),
-            "event_id": str(event_id)
-        }
-    )
-    for row in debug_result:
-        logger.info(f"DEBUG - Face {row.face_id}: similarity = {row.similarity:.4f}")
-
-    # Query faces table using pgvector cosine similarity
-    # The <=> operator computes cosine distance, so 1 - distance = similarity
-    # Use CAST() instead of :: to avoid SQLAlchemy parameter parsing issues
-    query = text("""
-        SELECT
-            f.id as face_id,
-            f.image_id,
-            f.bbox,
-            1 - (f.embedding <=> CAST(:query_embedding AS vector)) as similarity
-        FROM faces f
-        JOIN images i ON f.image_id = i.id
-        WHERE i.event_id = :event_id
-            AND i.status = 'indexed'
-            AND 1 - (f.embedding <=> CAST(:query_embedding AS vector)) > :threshold
-        ORDER BY similarity DESC
-        LIMIT 50
-    """)
-
-    result = db.execute(
-        query,
-        {
-            "query_embedding": str(embedding_list),
-            "event_id": str(event_id),
-            "threshold": similarity_threshold
-        }
-    )
-
-    # Process results (presigned URLs will be added in next subtask)
-    matches = []
-    for row in result:
-        matches.append({
-            "image_id": str(row.image_id),
-            "similarity": float(row.similarity),
-            "face_bbox": row.bbox
-        })
-
-    logger.info(f"Found {len(matches)} matches above threshold {similarity_threshold}")
-    
-    scan_id = str(uuid.uuid4())
-    
-    # Generate presigned URLs for matched photos
-    face_matches = []
-    for match in matches:
-        image_id = uuid.UUID(match["image_id"])
-        
-        # Generate presigned URLs with 15 minute expiry
-        try:
-            thumbnail_url = storage_service.generate_presigned_url(
-                event_id=event_id,
-                image_id=image_id,
-                photo_type="thumb",
-                expiry_minutes=15,
-                db=db,
-                validate_event=True
-            )
-            
-            original_url = storage_service.generate_presigned_url(
-                event_id=event_id,
-                image_id=image_id,
-                photo_type="original",
-                expiry_minutes=15,
-                db=db,
-                validate_event=True
-            )
-            
-            # Add download URL only if allow_downloads is enabled
-            download_url = None
-            if event.allow_downloads:
-                download_url = original_url  # Same as original URL
-            
-            face_matches.append(FaceMatch(
-                image_id=match["image_id"],
-                similarity=match["similarity"],
-                thumbnail_url=thumbnail_url,
-                original_url=original_url,
-                download_url=download_url,
-                face_bbox=match["face_bbox"]
-            ))
-            
-        except Exception as e:
-            # Skip this match if URL generation fails
-            continue
-    
-    # Log face scan
-    log_action(
-        db=db,
-        event_id=event_id,
-        actor_type='guest',
-        actor_id=session_id,
-        action='scan',
-        metadata={
-            'match_count': len(face_matches),
-            'similarity_avg': sum(m.similarity for m in face_matches) / len(face_matches) if face_matches else 0
-        }
-    )
-    
-    return FaceScanResponse(
-        matches=face_matches,
-        scan_id=scan_id,
-        total_matches=len(face_matches)
+    # Use CompreFace for face recognition
+    logger.info("Using CompreFace for face recognition")
+    return await _scan_with_compreface(
+        image_bytes, event_id, session_id, event, db
     )
 
 

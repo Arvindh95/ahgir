@@ -14,10 +14,6 @@ minio==7.2.3
 redis==5.0.1
 rq==1.16.1
 pillow==10.2.0
-insightface==0.7.3
-onnxruntime==1.15.0
-opencv-python==4.9.0.80
-numpy==1.26.3
 pytest==7.4.4
 pytest-asyncio==0.23.3
 hypothesis==6.98.3

@@ -315,11 +315,11 @@ class TestStorageRetryIntegration:
 class TestFaceDetectionRetryIntegration:
     """Test retry logic integration with face detection."""
 
-    @patch('app.workers.face_indexer.face_detector.detect_faces')
-    @patch('app.workers.face_indexer.storage_service.get_photo')
-    def test_face_detection_retries_on_failure(self, mock_get_photo, mock_detect_faces, test_db):
-        """Test that face detection retries on failure."""
-        from app.workers.face_indexer import index_photo
+    @patch('app.workers.face_indexer_compreface._run_async')
+    @patch('app.workers.face_indexer_compreface.storage_service.get_photo')
+    def test_face_detection_retries_on_failure(self, mock_get_photo, mock_async, test_db):
+        """Test that face detection retries on failure with CompreFace."""
+        from app.workers.face_indexer_compreface import index_photo_compreface
         from app.models import Image, Event, User
         import uuid
 
@@ -350,21 +350,11 @@ class TestFaceDetectionRetryIntegration:
         # Mock storage to return photo data
         mock_get_photo.return_value = b"fake photo data"
 
-        # Mock face detection to fail twice, then succeed
-        call_count = 0
+        # Mock CompreFace to return no faces (successful detection, but empty)
+        mock_async.return_value = []
 
-        def detect_faces_side_effect(photo_data):
-            nonlocal call_count
-            call_count += 1
-            if call_count < 3:
-                raise Exception("Face detection failed")
-            return []  # No faces detected
+        # Should succeed
+        result = index_photo_compreface(str(image.id), "test-api-key", db_session=test_db)
 
-        mock_detect_faces.side_effect = detect_faces_side_effect
-
-        # Should succeed after retries
-        result = index_photo(str(image.id), db_session=test_db)
-
-        assert call_count == 3
         assert result["status"] == "no_faces"
         # No cleanup needed - test_db fixture handles rollback

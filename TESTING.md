@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document explains how to run tests for the PicUr project. The tests are designed to run in a Docker environment where all dependencies (InsightFace, PostgreSQL with pgvector, MinIO, Redis) are properly configured.
+This document explains how to run tests for the PicUr project. The tests are designed to run in a Docker environment where all dependencies (CompreFace, PostgreSQL with pgvector, MinIO, Redis) are properly configured.
 
 ## Prerequisites
 
@@ -156,7 +156,7 @@ jobs:
 ## Notes
 
 - Property-based tests may take longer to run (100 iterations each)
-- Face detection tests require the InsightFace buffalo_l model to be downloaded on first run
+- Face detection tests require the CompreFace buffalo_l model to be downloaded on first run
 - Some tests create temporary files in MinIO that are cleaned up automatically
 
 
