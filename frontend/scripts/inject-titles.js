@@ -25,9 +25,10 @@ const pagesDir = path.join(__dirname, '..', '.next', 'server', 'pages')
 function injectTitle(filePath, title) {
   if (!fs.existsSync(filePath)) return
   let html = fs.readFileSync(filePath, 'utf-8')
-  if (html.includes('<title>')) return
   const escapedTitle = title.replace(/'/g, "\\'")
   const titleScript = `<script>!function(){var t='${escapedTitle}';document.title=t;[0,50,150,300,600,1200].forEach(function(d){setTimeout(function(){document.title=t},d)})}()</script>`
+  // Remove any existing title tag first
+  html = html.replace(/<title>[^<]*<\/title>/, '')
   html = html.replace('<head>', `<head><title>${title}</title>${titleScript}`)
   fs.writeFileSync(filePath, html)
   console.log(`Injected title "${title}" into ${filePath}`)
