@@ -1,24 +1,38 @@
 import '@/styles/globals.css'
 import type { AppProps } from 'next/app'
 import Head from 'next/head'
+import { useRouter } from 'next/router'
 import { useEffect } from 'react'
 import ErrorBoundary from '@/components/ErrorBoundary'
 import { ToastProvider } from '@/components/Toast'
 
+const PAGE_TITLES: Record<string, string> = {
+  '/admin/login': 'Login - PicUr',
+  '/admin/register': 'Register - PicUr',
+  '/admin/forgot-password': 'Forgot Password - PicUr',
+  '/admin/verify': 'Verify Email - PicUr',
+  '/admin/reset-password': 'Reset Password - PicUr',
+  '/admin/superadmin': 'Super Admin - PicUr',
+  '/admin/events': 'Events - PicUr',
+  '/admin/events/create': 'Create Event - PicUr',
+  '/admin/events/[id]': 'Event Details - PicUr',
+  '/admin/events/[id]/photos': 'Photos - PicUr',
+  '/e/[slug]': 'Event - PicUr',
+  '/e/[slug]/gallery': 'Gallery - PicUr',
+  '/e/[slug]/results': 'Results - PicUr',
+  '/e/[slug]/scan': 'Scan - PicUr',
+}
+
 export default function App({ Component, pageProps }: AppProps) {
+  const router = useRouter()
+
   useEffect(() => {
-    const meta = document.querySelector('meta[name="page-title"]')
-    if (meta && meta.getAttribute('content')) {
-      document.title = meta.getAttribute('content') || 'PicUr'
-    } else {
-      document.title = 'PicUr'
-    }
-  })
+    document.title = PAGE_TITLES[router.pathname] || 'PicUr'
+  }, [router.pathname])
 
   return (
     <>
       <Head>
-        <meta name="page-title" content="PicUr" />
         <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
         <link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png" />
         <link rel="icon" href="/favicon.ico" />
