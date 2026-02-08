@@ -116,7 +116,7 @@ export default function PhotoUpload({ eventId, onUploadComplete }: PhotoUploadPr
           ref={fileInputRef}
           type="file"
           multiple
-          accept="image/jpeg,image/png"
+          accept="image/jpeg,image/png,.jpg,.jpeg,.png"
           onChange={handleFileSelect}
           className="hidden"
         />

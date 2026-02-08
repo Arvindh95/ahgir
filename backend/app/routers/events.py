@@ -579,14 +579,22 @@ def extract_exif_data(file_data: bytes) -> dict:
         if not exif_data:
             return {}
         
-        # Convert EXIF data to dict with string keys
+        def make_json_safe(v):
+            if isinstance(v, (bytes, bytearray)):
+                return str(v)
+            elif isinstance(v, (int, float, str, bool)) or v is None:
+                return v
+            elif isinstance(v, (list, tuple)):
+                return [make_json_safe(i) for i in v]
+            elif isinstance(v, dict):
+                return {str(k): make_json_safe(val) for k, val in v.items()}
+            else:
+                return float(v) if hasattr(v, '__float__') else str(v)
+
         exif_dict = {}
         for tag_id, value in exif_data.items():
-            # Convert value to string if it's not JSON serializable
-            if isinstance(value, (bytes, bytearray)):
-                value = str(value)
-            exif_dict[str(tag_id)] = value
-        
+            exif_dict[str(tag_id)] = make_json_safe(value)
+
         return exif_dict
     except Exception:
         return {}
