@@ -3,7 +3,6 @@ import type { AppProps } from 'next/app'
 import Head from 'next/head'
 import ErrorBoundary from '@/components/ErrorBoundary'
 import { ToastProvider } from '@/components/Toast'
-import PageTitle from '@/components/PageTitle'
 
 export default function App({ Component, pageProps }: AppProps) {
   return (
@@ -16,7 +15,6 @@ export default function App({ Component, pageProps }: AppProps) {
         <link rel="manifest" href="/site.webmanifest" />
         <meta name="theme-color" content="#000000" />
       </Head>
-      <PageTitle />
       <ErrorBoundary>
         <ToastProvider>
           <Component {...pageProps} />
