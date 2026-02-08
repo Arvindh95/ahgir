@@ -1,5 +1,6 @@
 import { useState, FormEvent, useEffect } from 'react'
 import { useRouter } from 'next/router'
+import Head from 'next/head'
 import { authService } from '@/lib/auth'
 import { Loader2, Lock, Mail, ArrowRight, RefreshCw } from 'lucide-react'
 
@@ -78,6 +79,8 @@ export default function Login() {
   }
 
   return (
+    <>
+    <Head><title>Login - Picur</title></Head>
     <div className="min-h-screen bg-black flex items-center justify-center p-4 overflow-hidden relative">
       {/* Background Ambience */}
       <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none z-0">
@@ -190,5 +193,6 @@ export default function Login() {
         </p>
       </div>
     </div>
+    </>
   )
 }
