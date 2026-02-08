@@ -50,7 +50,11 @@
       "Bash(git stash pop:*)",
       "Bash(docker restart:*)",
       "Bash(docker images:*)",
-      "Bash(npx next build:*)"
+      "Bash(npx next build:*)",
+      "Bash(powershell:*)",
+      "Bash(xargs -I{} python -c \"import sys; f=sys.argv[1]; open\\(f,''w'',encoding=''utf-8''\\).write\\(open\\(f,''r'',encoding=''utf-8''\\).read\\(\\).replace\\(''Picur'',''PicUr''\\)\\)\" {})",
+      "Bash(git reset:*)",
+      "Bash(wc:*)"
     ]
   }
 }
