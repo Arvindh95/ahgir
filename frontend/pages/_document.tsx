@@ -3,7 +3,10 @@ import { Html, Head, Main, NextScript } from 'next/document'
 export default function Document() {
   return (
     <Html lang="en">
-      <Head>
+      <Head />
+      <body>
+        <Main />
+        <NextScript />
         <script dangerouslySetInnerHTML={{ __html: `
           (function(){
             var meta=document.querySelector('meta[name="page-title"]');
@@ -14,10 +17,6 @@ export default function Document() {
             }
           })();
         ` }} />
-      </Head>
-      <body>
-        <Main />
-        <NextScript />
       </body>
     </Html>
   )
