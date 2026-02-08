@@ -13,7 +13,7 @@ COPY . .
 
 # Build for production (used when command is 'npm start')
 ARG BUILD_ENV=development
-RUN if [ "$BUILD_ENV" = "production" ]; then npm run build; fi
+RUN if [ "$BUILD_ENV" = "production" ]; then npm run build && node scripts/inject-titles.js; fi
 
 # Expose port
 EXPOSE 3000
