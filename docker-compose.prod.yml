@@ -177,8 +177,8 @@ services:
       SPRING_PROFILES_ACTIVE: dev
       API_JAVA_OPTS: "-Xmx4g"
       SAVE_IMAGES_TO_DB: "true"
-      MAX_FILE_SIZE: "10MB"
-      MAX_REQUEST_SIZE: "10MB"
+      MAX_FILE_SIZE: "50MB"
+      MAX_REQUEST_SIZE: "50MB"
     depends_on:
       compreface-postgres-db:
         condition: service_healthy
