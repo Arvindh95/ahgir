@@ -148,7 +148,7 @@ export default function SuperadminPage() {
 
   return (
     <ProtectedRoute>
-      <Head><title>Super Admin - PicUr</title></Head>
+      <Head><meta name="page-title" content="Super Admin - PicUr" /></Head>
       <AdminLayout>
         <div className="max-w-7xl mx-auto">
           <h1 className="text-3xl font-bold mb-8 flex items-center gap-3">

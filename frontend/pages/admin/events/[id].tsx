@@ -185,7 +185,7 @@ export default function EventDetailsPage() {
 
   return (
     <ProtectedRoute>
-      <Head><title>Event Details - PicUr</title></Head>
+      <Head><meta name="page-title" content="Event Details - PicUr" /></Head>
       <AdminLayout>
         <div className="max-w-7xl mx-auto">
           <Breadcrumbs crumbs={[

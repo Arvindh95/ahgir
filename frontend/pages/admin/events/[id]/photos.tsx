@@ -98,7 +98,7 @@ export default function EventPhotosPage() {
 
   return (
     <ProtectedRoute>
-      <Head><title>Photos - PicUr</title></Head>
+      <Head><meta name="page-title" content="Photos - PicUr" /></Head>
       <AdminLayout>
         <div className="max-w-7xl mx-auto">
           <Breadcrumbs crumbs={[

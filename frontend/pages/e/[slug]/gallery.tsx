@@ -96,7 +96,7 @@ export default function Gallery() {
 
   return (
     <div className="min-h-screen relative bg-black text-white">
-      <Head><title>Gallery - PicUr</title></Head>
+      <Head><meta name="page-title" content="Gallery - PicUr" /></Head>
       <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-br from-black via-[#0a0a0a] to-[#050505] z-0 fixed"></div>
 
       <div className="relative z-10 max-w-7xl mx-auto px-4 py-8">

@@ -58,7 +58,7 @@ export default function CreateEventPage() {
 
   return (
     <ProtectedRoute>
-      <Head><title>Create Event - PicUr</title></Head>
+      <Head><meta name="page-title" content="Create Event - PicUr" /></Head>
       <AdminLayout>
         <div className="max-w-2xl mx-auto">
           <div className="flex items-center gap-4 mb-8">

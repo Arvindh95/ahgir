@@ -383,7 +383,7 @@ export default function FaceScanner() {
 
   return (
     <div className="min-h-screen relative overflow-hidden bg-black text-white">
-      <Head><title>Scan - PicUr</title></Head>
+      <Head><meta name="page-title" content="Scan - PicUr" /></Head>
       <ScannerOnboarding />
       {/* Background Ambience */}
       <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-br from-black via-[#0a0a0a] to-[#050505] z-0"></div>
