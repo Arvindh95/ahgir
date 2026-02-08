@@ -1,5 +1,4 @@
 import { useRouter } from 'next/router'
-import { useEffect } from 'react'
 
 const PAGE_TITLES: Record<string, string> = {
   '/admin/login': 'Login - PicUr',
@@ -20,10 +19,13 @@ const PAGE_TITLES: Record<string, string> = {
 
 export default function PageTitle() {
   const router = useRouter()
+  const title = PAGE_TITLES[router.pathname] || 'PicUr'
 
-  useEffect(() => {
-    document.title = PAGE_TITLES[router.pathname] || 'PicUr'
-  }, [router.pathname])
-
-  return null
+  return (
+    <script
+      dangerouslySetInnerHTML={{
+        __html: `document.title=${JSON.stringify(title)}`,
+      }}
+    />
+  )
 }
