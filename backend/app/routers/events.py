@@ -14,7 +14,10 @@ from io import BytesIO
 import secrets
 import string
 import hashlib
+import logging
 from PIL import Image as PILImage
+
+logger = logging.getLogger(__name__)
 
 from app.auth import get_current_user, hash_password
 from app.database import get_db
@@ -556,16 +559,18 @@ def compute_file_hash(file_data: bytes) -> str:
     return hashlib.sha256(file_data).hexdigest()
 
 def validate_image_format(file_data: bytes, filename: str) -> bool:
-    """Validate that file is a valid JPEG or PNG image"""
+    """Validate that file is a valid JPEG, PNG, or MPO image"""
     try:
         img = PILImage.open(BytesIO(file_data))
-        # Check format
-        if img.format not in ['JPEG', 'PNG']:
+        # Check format - MPO is multi-picture JPEG used by Samsung and other phones
+        if img.format not in ['JPEG', 'PNG', 'MPO']:
+            logger.warning(f"Rejected {filename}: format is '{img.format}', expected JPEG/PNG/MPO")
             return False
         # Verify it's a valid image by trying to load it
         img.verify()
         return True
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Rejected {filename}: validation error: {e}")
         return False
 
 from app.utils.thumbnail import generate_thumbnail
@@ -650,6 +655,7 @@ async def upload_photos(
             
             # Validate image format
             if not validate_image_format(file_data, file.filename):
+                logger.warning(f"Upload rejected - invalid format: {file.filename} (size={len(file_data)}, content_type={file.content_type})")
                 duplicates.append(PhotoDuplicate(
                     filename=file.filename,
                     reason="Invalid image format. Only JPEG and PNG are supported."
@@ -666,6 +672,7 @@ async def upload_photos(
             ).first()
 
             if existing:
+                logger.warning(f"Upload rejected - duplicate filename: {file.filename} (existing image_id={existing.id})")
                 duplicates.append(PhotoDuplicate(
                     filename=file.filename,
                     reason="File with this name already exists in event"
@@ -745,6 +752,7 @@ async def upload_photos(
             ))
             
         except Exception as e:
+            logger.error(f"Upload failed for {file.filename}: {str(e)}", exc_info=True)
             db.rollback()
             duplicates.append(PhotoDuplicate(
                 filename=file.filename,
