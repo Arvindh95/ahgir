@@ -38,17 +38,20 @@ export default function PhotoUpload({ eventId, onUploadComplete }: PhotoUploadPr
     e.stopPropagation()
     setIsDragging(false)
 
-    const files = Array.from(e.dataTransfer.files).filter(
-      (file) => file.type === 'image/jpeg' || file.type === 'image/png'
-    )
+    const files = Array.from(e.dataTransfer.files).filter(isImageFile)
     setSelectedFiles(files)
+  }
+
+  const isImageFile = (file: File): boolean => {
+    const validTypes = ['image/jpeg', 'image/png', 'image/jpg', 'image/mpo']
+    const validExts = ['.jpg', '.jpeg', '.png']
+    const ext = file.name.toLowerCase().slice(file.name.lastIndexOf('.'))
+    return validTypes.includes(file.type) || validExts.includes(ext)
   }
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
-      const files = Array.from(e.target.files).filter(
-        (file) => file.type === 'image/jpeg' || file.type === 'image/png'
-      )
+      const files = Array.from(e.target.files).filter(isImageFile)
       setSelectedFiles(files)
     }
   }
