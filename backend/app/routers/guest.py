@@ -260,6 +260,15 @@ async def _scan_with_compreface(
 
                 # Only include results from this event
                 if result_event_id == str(event_id) and result_image_id not in seen_images:
+                    # Verify image still exists in database (may have been deleted)
+                    image_exists = db.query(Image).filter(
+                        Image.id == uuid.UUID(result_image_id),
+                        Image.event_id == event_id
+                    ).first()
+                    if not image_exists:
+                        logger.debug(f"Skipping match for deleted image {result_image_id}")
+                        continue
+
                     seen_images.add(result_image_id)
 
                     # Get face bbox from database

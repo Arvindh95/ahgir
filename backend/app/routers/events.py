@@ -903,6 +903,22 @@ async def delete_photo(
             detail="Image not found"
         )
     
+    # Delete face subjects from CompreFace
+    from app.models import Face
+    faces = db.query(Face).filter(Face.image_id == image_uuid).all()
+    for face in faces:
+        if face.compreface_subject_id:
+            try:
+                import httpx
+                httpx.delete(
+                    f"{settings.compreface_api_url}/api/v1/recognition/faces",
+                    params={"subject": face.compreface_subject_id},
+                    headers={"x-api-key": settings.compreface_api_key},
+                    timeout=5.0
+                )
+            except Exception:
+                pass
+
     # Delete from MinIO (both original and thumbnail)
     try:
         storage_service.delete_photo(
@@ -912,7 +928,7 @@ async def delete_photo(
     except Exception as e:
         # Log error but continue with database deletion
         pass
-    
+
     # Delete from database (cascades to faces)
     db.delete(image)
     db.commit()
