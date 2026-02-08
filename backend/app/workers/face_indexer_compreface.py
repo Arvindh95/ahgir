@@ -252,6 +252,22 @@ def index_photo_compreface(image_id: str, api_key: str, db_session: Optional[Ses
                 det_prob_threshold=0.5
             ))
 
+            # If multiple faces in crop (nearby faces), retry with no padding
+            if "error" in result and "More than one face" in str(result.get("error", "")):
+                logger.info(f"Retrying face {idx} with no padding (multiple faces in crop)")
+                face_img_tight = img.crop((x_min, y_min, x_max, y_max))
+                if face_img_tight.mode in ('RGBA', 'LA', 'P'):
+                    face_img_tight = face_img_tight.convert('RGB')
+                tight_buf = io.BytesIO()
+                face_img_tight.save(tight_buf, format='JPEG', quality=95)
+                tight_buf.seek(0)
+                result = _run_async(_add_face_to_compreface(
+                    tight_buf.getvalue(),
+                    subject_id,
+                    api_key,
+                    det_prob_threshold=0.5
+                ))
+
             if "error" not in result:
                 # Store face metadata in our database
                 bbox = [x_min, y_min, x_max, y_max]
