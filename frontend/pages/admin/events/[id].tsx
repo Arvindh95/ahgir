@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
+import Head from 'next/head'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import AdminLayout from '@/components/AdminLayout'
 import EventMonitoring from '@/components/EventMonitoring'
@@ -184,6 +185,7 @@ export default function EventDetailsPage() {
 
   return (
     <ProtectedRoute>
+      <Head><title>Event Details - PicUr</title></Head>
       <AdminLayout>
         <div className="max-w-7xl mx-auto">
           <Breadcrumbs crumbs={[

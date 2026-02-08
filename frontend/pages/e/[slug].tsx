@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/router'
+import Head from 'next/head'
 import axios from 'axios'
 import { Calendar, MapPin, Eye, Loader2, ArrowRight } from 'lucide-react'
 
@@ -102,6 +103,7 @@ export default function GuestEventAccess() {
 
   return (
     <div className="min-h-screen relative text-white overflow-hidden">
+      <Head><title>Event - PicUr</title></Head>
       {/* Background: cover image or dark gradient */}
       {hasCover ? (
         <>

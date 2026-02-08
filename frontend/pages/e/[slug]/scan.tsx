@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/router'
+import Head from 'next/head'
 import axios from 'axios'
 import { Camera, Upload, LogOut, Loader2, ScanFace, Image as ImageIcon } from 'lucide-react'
 import ScannerOnboarding from '@/components/ScannerOnboarding'
@@ -382,6 +383,7 @@ export default function FaceScanner() {
 
   return (
     <div className="min-h-screen relative overflow-hidden bg-black text-white">
+      <Head><title>Scan - PicUr</title></Head>
       <ScannerOnboarding />
       {/* Background Ambience */}
       <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-br from-black via-[#0a0a0a] to-[#050505] z-0"></div>

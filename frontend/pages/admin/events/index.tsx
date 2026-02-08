@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo } from 'react'
 import { useRouter } from 'next/router'
+import Head from 'next/head'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import AdminLayout from '@/components/AdminLayout'
 import ConfirmModal from '@/components/ConfirmModal'
@@ -111,6 +112,7 @@ export default function EventsPage() {
 
   return (
     <ProtectedRoute>
+      <Head><title>Events - PicUr</title></Head>
       <AdminLayout>
         <div className="max-w-7xl mx-auto">
           <div className="flex justify-between items-center mb-6">

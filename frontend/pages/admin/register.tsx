@@ -1,4 +1,5 @@
 import { useState, FormEvent } from 'react'
+import Head from 'next/head'
 import { authService } from '@/lib/auth'
 import { Loader2, Lock, Mail, UserPlus, CheckCircle } from 'lucide-react'
 
@@ -58,6 +59,7 @@ export default function Register() {
   if (registeredEmail) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center p-4 overflow-hidden relative">
+        <Head><title>Register - PicUr</title></Head>
         <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none z-0">
           <div className="absolute top-[-20%] left-[-10%] w-[60%] h-[60%] bg-green-900/10 rounded-full blur-[120px]" />
           <div className="absolute bottom-[-20%] right-[-10%] w-[60%] h-[60%] bg-blue-900/10 rounded-full blur-[120px]" />
@@ -88,6 +90,7 @@ export default function Register() {
 
   return (
     <div className="min-h-screen bg-black flex items-center justify-center p-4 overflow-hidden relative">
+      <Head><title>Register - PicUr</title></Head>
       {/* Background Ambience */}
       <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none z-0">
         <div className="absolute top-[-20%] left-[-10%] w-[60%] h-[60%] bg-purple-900/10 rounded-full blur-[120px]" />

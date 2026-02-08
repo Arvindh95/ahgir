@@ -1,4 +1,5 @@
 import { useState, FormEvent } from 'react'
+import Head from 'next/head'
 import { authService } from '@/lib/auth'
 import { Loader2, Mail, ArrowLeft, CheckCircle } from 'lucide-react'
 
@@ -24,6 +25,7 @@ export default function ForgotPassword() {
 
   return (
     <div className="min-h-screen bg-black flex items-center justify-center p-4 overflow-hidden relative">
+      <Head><title>Forgot Password - PicUr</title></Head>
       <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none z-0">
         <div className="absolute top-[-20%] left-[-10%] w-[60%] h-[60%] bg-blue-900/10 rounded-full blur-[120px]" />
         <div className="absolute bottom-[-20%] right-[-10%] w-[60%] h-[60%] bg-purple-900/10 rounded-full blur-[120px]" />

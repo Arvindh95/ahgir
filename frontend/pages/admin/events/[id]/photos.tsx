@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
+import Head from 'next/head'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import AdminLayout from '@/components/AdminLayout'
 import PhotoUpload from '@/components/PhotoUpload'
@@ -97,6 +98,7 @@ export default function EventPhotosPage() {
 
   return (
     <ProtectedRoute>
+      <Head><title>Photos - PicUr</title></Head>
       <AdminLayout>
         <div className="max-w-7xl mx-auto">
           <Breadcrumbs crumbs={[

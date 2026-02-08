@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/router'
+import Head from 'next/head'
 import PhotoGridSkeleton from '@/components/skeletons/PhotoGridSkeleton'
 import { ArrowLeft, Image as ImageIcon } from 'lucide-react'
 import PhotoGrid from '@/components/PhotoGrid'
@@ -81,6 +82,7 @@ export default function ScanResults() {
 
   return (
     <div className="min-h-screen relative bg-black text-white">
+      <Head><title>Results - PicUr</title></Head>
       <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-br from-black via-[#0a0a0a] to-[#050505] z-0 fixed"></div>
 
       <div className="relative z-10 max-w-7xl mx-auto px-4 py-8">

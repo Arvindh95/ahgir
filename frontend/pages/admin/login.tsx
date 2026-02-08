@@ -80,7 +80,7 @@ export default function Login() {
 
   return (
     <>
-    <Head><title>Login - Picur</title></Head>
+    <Head><title>Login - PicUr</title></Head>
     <div className="min-h-screen bg-black flex items-center justify-center p-4 overflow-hidden relative">
       {/* Background Ambience */}
       <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none z-0">

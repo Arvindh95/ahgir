@@ -1,5 +1,6 @@
 import { useState, FormEvent } from 'react'
 import { useRouter } from 'next/router'
+import Head from 'next/head'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import AdminLayout from '@/components/AdminLayout'
 import { eventService } from '@/lib/events'
@@ -57,6 +58,7 @@ export default function CreateEventPage() {
 
   return (
     <ProtectedRoute>
+      <Head><title>Create Event - PicUr</title></Head>
       <AdminLayout>
         <div className="max-w-2xl mx-auto">
           <div className="flex items-center gap-4 mb-8">

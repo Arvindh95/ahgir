@@ -56,7 +56,7 @@ export default function SharedPhoto({ shareInfo, error }: SharedPhotoProps) {
   return (
     <>
       <Head>
-        <title>{shareInfo.event_name} - Shared Photo</title>
+        <title>{shareInfo.event_name} - PicUr</title>
         <meta property="og:title" content={`Photo from ${shareInfo.event_name}`} />
         <meta property="og:image" content={shareInfo.thumbnail_url} />
         <meta property="og:type" content="website" />

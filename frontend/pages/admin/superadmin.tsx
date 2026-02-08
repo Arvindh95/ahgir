@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/router'
+import Head from 'next/head'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import AdminLayout from '@/components/AdminLayout'
 import ConfirmModal from '@/components/ConfirmModal'
@@ -147,6 +148,7 @@ export default function SuperadminPage() {
 
   return (
     <ProtectedRoute>
+      <Head><title>Super Admin - PicUr</title></Head>
       <AdminLayout>
         <div className="max-w-7xl mx-auto">
           <h1 className="text-3xl font-bold mb-8 flex items-center gap-3">
