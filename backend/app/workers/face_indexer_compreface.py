@@ -7,7 +7,7 @@ import httpx
 from datetime import datetime
 from sqlalchemy.orm import Session
 from typing import Optional
-from PIL import Image as PILImage
+from PIL import Image as PILImage, ImageOps
 import io
 
 from app.database import SessionLocal
@@ -192,19 +192,29 @@ def index_photo_compreface(image_id: str, api_key: str, db_session: Optional[Ses
         except Exception:
             pass  # Thumbnail exists or other error, continue
 
+        # Apply EXIF orientation so face detection works on upright images
+        pil_img = PILImage.open(io.BytesIO(photo_bytes))
+        pil_img = ImageOps.exif_transpose(pil_img)
+        if pil_img.mode in ('RGBA', 'LA', 'P'):
+            pil_img = pil_img.convert('RGB')
+        oriented_buf = io.BytesIO()
+        pil_img.save(oriented_buf, format='JPEG', quality=95)
+        oriented_buf.seek(0)
+        oriented_bytes = oriented_buf.getvalue()
+
         # Step 1: Detect all faces using Detection service
         logger.info(f"Detecting faces in image {image_id} using CompreFace Detection")
-        faces = _run_async(_detect_faces_compreface(photo_bytes, detection_api_key, det_prob_threshold=0.5))
+        faces = _run_async(_detect_faces_compreface(oriented_bytes, detection_api_key, det_prob_threshold=0.5))
         logger.info(f"Detected {len(faces)} faces in image {image_id}")
 
         # If no faces detected, try with lower threshold
         if len(faces) == 0:
-            faces = _run_async(_detect_faces_compreface(photo_bytes, detection_api_key, det_prob_threshold=0.3))
+            faces = _run_async(_detect_faces_compreface(oriented_bytes, detection_api_key, det_prob_threshold=0.3))
             logger.info(f"Detected {len(faces)} faces with lower threshold")
 
         # Step 2: Crop and add each detected face to Recognition service
-        # Open image with PIL for cropping
-        img = PILImage.open(io.BytesIO(photo_bytes))
+        # Use the EXIF-corrected image for cropping
+        img = pil_img
 
         face_count = 0
         for idx, face_data in enumerate(faces):
