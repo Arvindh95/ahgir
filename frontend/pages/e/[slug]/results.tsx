@@ -82,7 +82,7 @@ export default function ScanResults() {
 
   return (
     <div className="min-h-screen relative bg-black text-white">
-      <Head><meta name="page-title" content="Results - PicUr" /></Head>
+      <Head><title>Results - PicUr</title></Head>
       <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-br from-black via-[#0a0a0a] to-[#050505] z-0 fixed"></div>
 
       <div className="relative z-10 max-w-7xl mx-auto px-4 py-8">
@@ -97,8 +97,8 @@ export default function ScanResults() {
               All Photos
             </button>
             <button
-               onClick={handleBackToScanner}
-               className="flex items-center gap-2 text-blue-400 hover:text-blue-300 transition-colors font-medium"
+              onClick={handleBackToScanner}
+              className="flex items-center gap-2 text-blue-400 hover:text-blue-300 transition-colors font-medium"
             >
               <ArrowLeft className="w-5 h-5" />
               Back to Scanner
@@ -109,7 +109,7 @@ export default function ScanResults() {
         {scanResult.total_matches === 0 ? (
           <div className="glass-card p-12 rounded-2xl text-center max-w-2xl mx-auto">
             <div className="w-24 h-24 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-6">
-               <ImageIcon className="w-12 h-12 text-gray-500" />
+              <ImageIcon className="w-12 h-12 text-gray-500" />
             </div>
             <h2 className="text-2xl font-bold mb-4">No Photos Found</h2>
             <p className="text-gray-400 mb-4 max-w-md mx-auto">
@@ -122,8 +122,8 @@ export default function ScanResults() {
               <li>• Check back later — more photos may be uploaded soon</li>
             </ul>
             <button
-               onClick={handleBackToScanner}
-               className="bg-blue-600 text-white px-8 py-3 rounded-xl font-bold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/20"
+              onClick={handleBackToScanner}
+              className="bg-blue-600 text-white px-8 py-3 rounded-xl font-bold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/20"
             >
               Try Scanning Again
             </button>
@@ -132,10 +132,10 @@ export default function ScanResults() {
           <>
             <div className="mb-6 flex items-end justify-between px-2">
               <div>
-                 <h2 className="text-2xl font-bold flex items-center gap-2">
-                   Found {scanResult.total_matches} {scanResult.total_matches === 1 ? 'Photo' : 'Photos'}
-                 </h2>
-                 <p className="text-gray-400 text-sm mt-1">Sorted by match confidence</p>
+                <h2 className="text-2xl font-bold flex items-center gap-2">
+                  Found {scanResult.total_matches} {scanResult.total_matches === 1 ? 'Photo' : 'Photos'}
+                </h2>
+                <p className="text-gray-400 text-sm mt-1">Sorted by match confidence</p>
               </div>
             </div>
 

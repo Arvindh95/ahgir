@@ -148,7 +148,7 @@ export default function SuperadminPage() {
 
   return (
     <ProtectedRoute>
-      <Head><meta name="page-title" content="Super Admin - PicUr" /></Head>
+      <Head><title>Super Admin - PicUr</title></Head>
       <AdminLayout>
         <div className="max-w-7xl mx-auto">
           <h1 className="text-3xl font-bold mb-8 flex items-center gap-3">
@@ -242,11 +242,10 @@ export default function SuperadminPage() {
                           <button
                             onClick={() => setConfirmAction({ type: 'superadmin', userId: user.user_id, email: user.email, currentValue: user.is_superadmin })}
                             disabled={updating === user.user_id}
-                            className={`p-1.5 rounded-lg transition-colors ${
-                              user.is_superadmin
+                            className={`p-1.5 rounded-lg transition-colors ${user.is_superadmin
                                 ? 'bg-purple-500/20 text-purple-400 hover:bg-purple-500/30'
                                 : 'bg-white/5 text-gray-500 hover:bg-white/10 hover:text-purple-400'
-                            }`}
+                              }`}
                             title={user.is_superadmin ? 'Remove superadmin' : 'Make superadmin'}
                           >
                             {user.is_superadmin ? <ShieldCheck className="w-4 h-4" /> : <ShieldOff className="w-4 h-4" />}
@@ -254,11 +253,10 @@ export default function SuperadminPage() {
                           <button
                             onClick={() => setConfirmAction({ type: 'disabled', userId: user.user_id, email: user.email, currentValue: user.is_disabled })}
                             disabled={updating === user.user_id}
-                            className={`p-1.5 rounded-lg transition-colors ${
-                              user.is_disabled
+                            className={`p-1.5 rounded-lg transition-colors ${user.is_disabled
                                 ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
                                 : 'bg-white/5 text-gray-500 hover:bg-white/10 hover:text-red-400'
-                            }`}
+                              }`}
                             title={user.is_disabled ? 'Enable account' : 'Disable account'}
                           >
                             <Ban className="w-4 h-4" />

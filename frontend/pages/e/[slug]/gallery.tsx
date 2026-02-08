@@ -96,7 +96,7 @@ export default function Gallery() {
 
   return (
     <div className="min-h-screen relative bg-black text-white">
-      <Head><meta name="page-title" content="Gallery - PicUr" /></Head>
+      <Head><title>Gallery - PicUr</title></Head>
       <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-br from-black via-[#0a0a0a] to-[#050505] z-0 fixed"></div>
 
       <div className="relative z-10 max-w-7xl mx-auto px-4 py-8">
@@ -126,7 +126,7 @@ export default function Gallery() {
         {photos.length === 0 ? (
           <div className="glass-card p-12 rounded-2xl text-center max-w-2xl mx-auto">
             <div className="w-24 h-24 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-6">
-               <ImageIcon className="w-12 h-12 text-gray-500" />
+              <ImageIcon className="w-12 h-12 text-gray-500" />
             </div>
             <h2 className="text-2xl font-bold mb-4">No Photos Yet</h2>
             <p className="text-gray-400">Photos will appear here once they have been uploaded and processed.</p>

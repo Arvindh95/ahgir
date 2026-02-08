@@ -41,7 +41,7 @@ export default function SharedPhoto({ shareInfo, error }: SharedPhotoProps) {
     return (
       <>
         <Head>
-          <meta name="page-title" content="Photo Unavailable - PicUr" />
+          <title>Photo Unavailable - PicUr</title>
         </Head>
         <div className="min-h-screen bg-black flex items-center justify-center text-white">
           <div className="glass-card p-12 rounded-2xl text-center max-w-md">
@@ -56,7 +56,7 @@ export default function SharedPhoto({ shareInfo, error }: SharedPhotoProps) {
   return (
     <>
       <Head>
-        <meta name="page-title" content={`${shareInfo.event_name} - PicUr`} />
+        <title>{`${shareInfo.event_name} - PicUr`}</title>
         <meta property="og:title" content={`Photo from ${shareInfo.event_name}`} />
         <meta property="og:image" content={shareInfo.thumbnail_url} />
         <meta property="og:type" content="website" />

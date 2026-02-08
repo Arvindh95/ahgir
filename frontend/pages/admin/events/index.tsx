@@ -101,7 +101,7 @@ export default function EventsPage() {
       try {
         await eventService.deleteEvent(eventId)
         deleted++
-      } catch {}
+      } catch { }
     }
     setIsDeleting(false)
     setShowDeleteConfirm(false)
@@ -112,7 +112,7 @@ export default function EventsPage() {
 
   return (
     <ProtectedRoute>
-      <Head><meta name="page-title" content="Events - PicUr" /></Head>
+      <Head><title>Events - PicUr</title></Head>
       <AdminLayout>
         <div className="max-w-7xl mx-auto">
           <div className="flex justify-between items-center mb-6">
@@ -201,11 +201,10 @@ export default function EventsPage() {
                   >
                     {/* Selection checkbox */}
                     <div
-                      className={`absolute top-4 left-4 w-6 h-6 rounded border-2 flex items-center justify-center cursor-pointer z-10 transition-all ${
-                        selectedEvents.has(event.event_id)
+                      className={`absolute top-4 left-4 w-6 h-6 rounded border-2 flex items-center justify-center cursor-pointer z-10 transition-all ${selectedEvents.has(event.event_id)
                           ? 'bg-blue-600 border-blue-600'
                           : 'bg-black/40 border-white/20 opacity-0 group-hover:opacity-100'
-                      }`}
+                        }`}
                       onClick={(e) => { e.stopPropagation(); toggleSelect(event.event_id) }}
                     >
                       {selectedEvents.has(event.event_id) && <Check className="w-4 h-4 text-white" />}
@@ -233,22 +232,22 @@ export default function EventsPage() {
                       {event.photo_count !== undefined && (
                         <div className="grid grid-cols-3 gap-2 border-t border-white/10 pt-4 mt-4">
                           <div className="text-center">
-                             <div className="flex items-center justify-center gap-1 text-gray-400 text-xs mb-1">
-                                <ImageIcon className="w-3 h-3" /> Photos
-                             </div>
-                             <span className="font-semibold">{event.photo_count}</span>
+                            <div className="flex items-center justify-center gap-1 text-gray-400 text-xs mb-1">
+                              <ImageIcon className="w-3 h-3" /> Photos
+                            </div>
+                            <span className="font-semibold">{event.photo_count}</span>
                           </div>
                           <div className="text-center border-l border-white/10">
-                             <div className="flex items-center justify-center gap-1 text-gray-400 text-xs mb-1">
-                                <ScanFace className="w-3 h-3" /> Indexed
-                             </div>
-                             <span className="font-semibold">{event.indexed_count}</span>
+                            <div className="flex items-center justify-center gap-1 text-gray-400 text-xs mb-1">
+                              <ScanFace className="w-3 h-3" /> Indexed
+                            </div>
+                            <span className="font-semibold">{event.indexed_count}</span>
                           </div>
                           <div className="text-center border-l border-white/10">
-                             <div className="flex items-center justify-center gap-1 text-gray-400 text-xs mb-1">
-                                <Users className="w-3 h-3" /> Faces
-                             </div>
-                             <span className="font-semibold">{event.face_count}</span>
+                            <div className="flex items-center justify-center gap-1 text-gray-400 text-xs mb-1">
+                              <Users className="w-3 h-3" /> Faces
+                            </div>
+                            <span className="font-semibold">{event.face_count}</span>
                           </div>
                         </div>
                       )}

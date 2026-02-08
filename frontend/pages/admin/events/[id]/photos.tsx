@@ -29,7 +29,7 @@ export default function EventPhotosPage() {
   useEffect(() => {
     if (id && typeof id === 'string') {
       loadPhotos(id)
-      eventService.getEvent(id).then(e => setEventName(e.name)).catch(() => {})
+      eventService.getEvent(id).then(e => setEventName(e.name)).catch(() => { })
     }
   }, [id, statusFilter, page])
 
@@ -90,7 +90,7 @@ export default function EventPhotosPage() {
       default:
         return (
           <span className="flex items-center gap-1 bg-gray-500/20 text-gray-400 px-2 py-0.5 rounded text-xs font-bold">
-             {status}
+            {status}
           </span>
         )
     }
@@ -98,7 +98,7 @@ export default function EventPhotosPage() {
 
   return (
     <ProtectedRoute>
-      <Head><meta name="page-title" content="Photos - PicUr" /></Head>
+      <Head><title>Photos - PicUr</title></Head>
       <AdminLayout>
         <div className="max-w-7xl mx-auto">
           <Breadcrumbs crumbs={[
@@ -118,12 +118,12 @@ export default function EventPhotosPage() {
           <div className="glass-card p-6 rounded-2xl mt-8">
             <div className="flex flex-col sm:flex-row justify-between items-center gap-4 mb-6">
               <h2 className="text-xl font-bold flex items-center gap-2">
-                 <ImageIcon className="w-5 h-5" /> Photos <span className="text-gray-500 text-sm font-normal">({total})</span>
+                <ImageIcon className="w-5 h-5" /> Photos <span className="text-gray-500 text-sm font-normal">({total})</span>
               </h2>
               <div className="flex items-center gap-2 bg-white/5 px-3 py-1.5 rounded-lg border border-white/10 w-full sm:w-auto">
-                 <Filter className="w-4 h-4 text-gray-400" />
-                 <label htmlFor="statusFilter" className="text-sm text-gray-400">Filter:</label>
-                 <select
+                <Filter className="w-4 h-4 text-gray-400" />
+                <label htmlFor="statusFilter" className="text-sm text-gray-400">Filter:</label>
+                <select
                   id="statusFilter"
                   value={statusFilter}
                   onChange={(e) => {
@@ -142,11 +142,11 @@ export default function EventPhotosPage() {
             </div>
 
             {isLoading ? (
-               <PhotoGridSkeleton count={10} columns="grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5" />
+              <PhotoGridSkeleton count={10} columns="grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5" />
             ) : photos.length === 0 ? (
               <div className="text-center py-12 bg-white/5 rounded-xl border border-white/5 border-dashed">
                 <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-4">
-                   <ImageIcon className="w-8 h-8 text-gray-500" />
+                  <ImageIcon className="w-8 h-8 text-gray-500" />
                 </div>
                 <p className="text-lg text-gray-300 font-medium">No photos found</p>
                 <p className="text-gray-500 text-sm">Upload some photos to get started</p>
@@ -168,13 +168,13 @@ export default function EventPhotosPage() {
                           className="object-cover"
                         />
                         <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                           <button
-                             onClick={() => setDeleteTarget(photo.image_id)}
-                             className="bg-red-500 hover:bg-red-600 text-white p-2 rounded-lg transition-colors"
-                             title="Delete photo"
-                           >
-                             <Trash2 className="w-5 h-5" />
-                           </button>
+                          <button
+                            onClick={() => setDeleteTarget(photo.image_id)}
+                            className="bg-red-500 hover:bg-red-600 text-white p-2 rounded-lg transition-colors"
+                            title="Delete photo"
+                          >
+                            <Trash2 className="w-5 h-5" />
+                          </button>
                         </div>
                       </div>
                       <div className="p-3">
@@ -209,7 +209,7 @@ export default function EventPhotosPage() {
                     <button
                       onClick={() => setPage(page + 1)}
                       disabled={page >= Math.ceil(total / 50)}
-                       className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                     >
                       Next
                     </button>

@@ -58,11 +58,11 @@ export default function CreateEventPage() {
 
   return (
     <ProtectedRoute>
-      <Head><meta name="page-title" content="Create Event - PicUr" /></Head>
+      <Head><title>Create Event - PicUr</title></Head>
       <AdminLayout>
         <div className="max-w-2xl mx-auto">
           <div className="flex items-center gap-4 mb-8">
-            <button 
+            <button
               onClick={() => router.push('/admin/events')}
               className="p-2 rounded-lg hover:bg-white/10 transition-colors"
             >
@@ -127,7 +127,7 @@ export default function CreateEventPage() {
             </div>
 
             <div className="space-y-2">
-               <label htmlFor="retentionDays" className="block text-sm font-medium text-gray-300 ml-1">
+              <label htmlFor="retentionDays" className="block text-sm font-medium text-gray-300 ml-1">
                 Retention Days
               </label>
               <div className="relative">
@@ -158,8 +158,8 @@ export default function CreateEventPage() {
                 />
               </div>
               <label htmlFor="allowDownloads" className="flex items-center gap-2 text-sm font-medium text-gray-300 cursor-pointer select-none">
-                 <Download className="w-4 h-4" />
-                 Allow guests to download photos
+                <Download className="w-4 h-4" />
+                Allow guests to download photos
               </label>
             </div>
 
@@ -177,11 +177,11 @@ export default function CreateEventPage() {
               >
                 {isLoading ? (
                   <>
-                     <Loader2 className="w-5 h-5 animate-spin" /> Creating...
+                    <Loader2 className="w-5 h-5 animate-spin" /> Creating...
                   </>
                 ) : (
                   <>
-                     <Save className="w-5 h-5" /> Create Event
+                    <Save className="w-5 h-5" /> Create Event
                   </>
                 )}
               </button>

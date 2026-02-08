@@ -69,7 +69,7 @@ export default function ResetPassword() {
 
   return (
     <div className="min-h-screen bg-black flex items-center justify-center p-4 overflow-hidden relative">
-      <Head><meta name="page-title" content="Reset Password - PicUr" /></Head>
+      <Head><title>Reset Password - PicUr</title></Head>
       <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none z-0">
         <div className={`absolute top-[-20%] left-[-10%] w-[60%] h-[60%] ${status === 'success' ? 'bg-green-900/10' : status === 'error' ? 'bg-red-900/10' : 'bg-blue-900/10'} rounded-full blur-[120px]`} />
         <div className="absolute bottom-[-20%] right-[-10%] w-[60%] h-[60%] bg-purple-900/10 rounded-full blur-[120px]" />

@@ -383,7 +383,7 @@ export default function FaceScanner() {
 
   return (
     <div className="min-h-screen relative overflow-hidden bg-black text-white">
-      <Head><meta name="page-title" content="Scan - PicUr" /></Head>
+      <Head><title>Scan - PicUr</title></Head>
       <ScannerOnboarding />
       {/* Background Ambience */}
       <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-br from-black via-[#0a0a0a] to-[#050505] z-0"></div>
@@ -416,22 +416,20 @@ export default function FaceScanner() {
           <div className="flex justify-center gap-4 mb-8">
             <button
               onClick={() => setUseUpload(false)}
-              className={`flex items-center gap-2 px-6 py-3 rounded-xl font-medium transition-all ${
-                !useUpload 
-                ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20' 
-                : 'bg-white/5 text-gray-400 hover:bg-white/10'
-              }`}
+              className={`flex items-center gap-2 px-6 py-3 rounded-xl font-medium transition-all ${!useUpload
+                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20'
+                  : 'bg-white/5 text-gray-400 hover:bg-white/10'
+                }`}
             >
               <Camera className="w-5 h-5" />
               Camera
             </button>
             <button
               onClick={() => setUseUpload(true)}
-              className={`flex items-center gap-2 px-6 py-3 rounded-xl font-medium transition-all ${
-                useUpload 
-                ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20' 
-                : 'bg-white/5 text-gray-400 hover:bg-white/10'
-              }`}
+              className={`flex items-center gap-2 px-6 py-3 rounded-xl font-medium transition-all ${useUpload
+                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20'
+                  : 'bg-white/5 text-gray-400 hover:bg-white/10'
+                }`}
             >
               <Upload className="w-5 h-5" />
               Upload
@@ -459,28 +457,28 @@ export default function FaceScanner() {
 
               {/* Status indicator - Moved to be subtle and non-blocking */}
               <div className="absolute bottom-4 left-0 w-full flex justify-center pointer-events-none">
-                 {loadingModels ? (
+                {loadingModels ? (
                   <div className="px-4 py-2 rounded-full backdrop-blur-md bg-black/60 border border-white/10 flex items-center gap-2 text-yellow-500 font-semibold text-sm">
                     <Loader2 className="w-4 h-4 animate-spin" /> Loading AI models...
                   </div>
                 ) : !cameraReady ? (
-                   <div className="px-4 py-2 rounded-full backdrop-blur-md bg-black/60 border border-white/10 flex items-center gap-2 text-yellow-500 font-semibold text-sm">
+                  <div className="px-4 py-2 rounded-full backdrop-blur-md bg-black/60 border border-white/10 flex items-center gap-2 text-yellow-500 font-semibold text-sm">
                     <Loader2 className="w-4 h-4 animate-spin" /> Starting camera...
                   </div>
                 ) : faceDetected ? (
-                   // Face detected, green frame is the main indicator, show minimal text
-                   <div className="px-4 py-2 rounded-full backdrop-blur-md bg-green-500/20 border border-green-500/50 flex items-center gap-2 text-green-400 font-bold text-sm shadow-lg">
+                  // Face detected, green frame is the main indicator, show minimal text
+                  <div className="px-4 py-2 rounded-full backdrop-blur-md bg-green-500/20 border border-green-500/50 flex items-center gap-2 text-green-400 font-bold text-sm shadow-lg">
                     <ScanFace className="w-4 h-4" /> Ready to Scan
                   </div>
                 ) : (
-                   <div className="px-4 py-2 rounded-full backdrop-blur-md bg-black/60 border border-white/10 text-gray-300 font-medium text-sm">
-                     Position your face in the frame
+                  <div className="px-4 py-2 rounded-full backdrop-blur-md bg-black/60 border border-white/10 text-gray-300 font-medium text-sm">
+                    Position your face in the frame
                   </div>
                 )}
               </div>
             </div>
           ) : (
-             <div className="border-2 border-dashed border-white/10 rounded-xl p-12 mb-6 text-center hover:border-white/20 transition-colors bg-white/5">
+            <div className="border-2 border-dashed border-white/10 rounded-xl p-12 mb-6 text-center hover:border-white/20 transition-colors bg-white/5">
               <input
                 type="file"
                 ref={fileInputRef}
@@ -512,16 +510,16 @@ export default function FaceScanner() {
                 </div>
               ) : (
                 <label htmlFor="file-upload" className="cursor-pointer flex flex-col items-center gap-4">
-                   <div className="w-20 h-20 rounded-full bg-white/5 flex items-center justify-center">
-                      <ImageIcon className="w-10 h-10 text-gray-400" />
-                   </div>
-                   <div>
-                      <p className="text-xl font-semibold mb-2 text-white">Select a photo</p>
-                      <p className="text-gray-400 text-sm">JPG or PNG with your face visible</p>
-                   </div>
-                   <div className="bg-white/10 text-white px-6 py-2 rounded-lg font-medium hover:bg-white/20 transition-colors">
-                      Browse Files
-                   </div>
+                  <div className="w-20 h-20 rounded-full bg-white/5 flex items-center justify-center">
+                    <ImageIcon className="w-10 h-10 text-gray-400" />
+                  </div>
+                  <div>
+                    <p className="text-xl font-semibold mb-2 text-white">Select a photo</p>
+                    <p className="text-gray-400 text-sm">JPG or PNG with your face visible</p>
+                  </div>
+                  <div className="bg-white/10 text-white px-6 py-2 rounded-lg font-medium hover:bg-white/20 transition-colors">
+                    Browse Files
+                  </div>
                 </label>
               )}
             </div>
@@ -537,27 +535,26 @@ export default function FaceScanner() {
           <button
             onClick={handleScan}
             disabled={!canScan || scanning}
-            className={`w-full py-4 rounded-xl text-lg font-bold flex items-center justify-center gap-2 transition-all mb-8 ${
-               !canScan || scanning
-               ? 'bg-white/10 text-gray-500 cursor-not-allowed'
-               : 'bg-gradient-to-r from-blue-600 to-blue-500 text-white hover:shadow-lg hover:shadow-blue-500/30 hover:scale-[1.02] active:scale-[0.98]'
-            }`}
+            className={`w-full py-4 rounded-xl text-lg font-bold flex items-center justify-center gap-2 transition-all mb-8 ${!canScan || scanning
+                ? 'bg-white/10 text-gray-500 cursor-not-allowed'
+                : 'bg-gradient-to-r from-blue-600 to-blue-500 text-white hover:shadow-lg hover:shadow-blue-500/30 hover:scale-[1.02] active:scale-[0.98]'
+              }`}
           >
             {scanning ? (
-               <>
-                  <Loader2 className="w-6 h-6 animate-spin" /> Scanning...
-               </>
+              <>
+                <Loader2 className="w-6 h-6 animate-spin" /> Scanning...
+              </>
             ) : (
-               <>
-                  <ScanFace className="w-6 h-6" /> {faceDetected || useUpload ? 'Scan My Face' : 'Waiting for face...'}
-               </>
+              <>
+                <ScanFace className="w-6 h-6" /> {faceDetected || useUpload ? 'Scan My Face' : 'Waiting for face...'}
+              </>
             )}
           </button>
 
           {/* Instructions */}
           <div className="bg-white/5 rounded-xl p-6 border border-white/5">
             <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
-               <ScanFace className="w-5 h-5 text-blue-400" /> How to scan
+              <ScanFace className="w-5 h-5 text-blue-400" /> How to scan
             </h2>
             <ol className="list-decimal list-inside space-y-2 text-gray-300 ml-2">
               <li>Position your face clearly in the frame</li>

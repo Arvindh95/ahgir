@@ -103,7 +103,7 @@ export default function GuestEventAccess() {
 
   return (
     <div className="min-h-screen relative text-white overflow-hidden">
-      <Head><meta name="page-title" content="Event - PicUr" /></Head>
+      <Head><title>Event - PicUr</title></Head>
       {/* Background: cover image or dark gradient */}
       {hasCover ? (
         <>
