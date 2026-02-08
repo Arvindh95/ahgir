@@ -270,7 +270,7 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    command: npm start
+    command: sh -c "node scripts/inject-titles.js && npm start"
 
   caddy:
     image: caddy:2-alpine
