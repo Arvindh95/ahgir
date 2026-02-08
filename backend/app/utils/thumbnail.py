@@ -1,12 +1,15 @@
 """Shared thumbnail generation utility."""
 
 from io import BytesIO
-from PIL import Image as PILImage
+from PIL import Image as PILImage, ImageOps
 
 
 def generate_thumbnail(file_data: bytes, target_width: int = 512) -> bytes:
     """Generate thumbnail with specified width, maintaining aspect ratio"""
     img = PILImage.open(BytesIO(file_data))
+
+    # Apply EXIF orientation (phone cameras store rotation in metadata)
+    img = ImageOps.exif_transpose(img)
 
     # Convert to RGB if necessary (handles PNG with transparency)
     if img.mode in ('RGBA', 'LA', 'P'):
