@@ -11,7 +11,11 @@ const TITLE_SCRIPT = `
     '/admin/reset-password':'Reset Password - PicUr',
     '/admin/superadmin':'Super Admin - PicUr',
     '/admin/events':'Events - PicUr',
-    '/admin/events/create':'Create Event - PicUr'
+    '/admin/events/create':'Create Event - PicUr',
+    '/privacy':'Privacy Policy - PicUr',
+    '/terms':'Terms of Service - PicUr',
+    '/contact':'Contact - PicUr',
+    '/pricing':'Pricing - PicUr'
   };
   var p=[
     [/^\\/admin\\/events\\/[^/]+\\/photos$/,'Photos - PicUr'],
