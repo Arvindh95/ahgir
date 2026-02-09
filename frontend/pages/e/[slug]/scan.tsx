@@ -55,6 +55,7 @@ export default function FaceScanner() {
   const [loadingModels, setLoadingModels] = useState(true)
   const [fileSelected, setFileSelected] = useState(false)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [scanPhase, setScanPhase] = useState<string | null>(null) // guided capture phase text
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Load face-api.js models
@@ -271,10 +272,11 @@ export default function FaceScanner() {
       setError('')
       setScanResult(null)
 
-      let imageData: string | null = null
+      let primaryImage: string | null = null
+      let additionalFrames: string[] = []
 
       if (useUpload) {
-        // Use uploaded file
+        // Use uploaded file (single frame)
         const file = fileInputRef.current?.files?.[0]
         if (!file) {
           setError('Please select an image file')
@@ -282,44 +284,60 @@ export default function FaceScanner() {
           return
         }
 
-        imageData = await new Promise((resolve) => {
+        primaryImage = await new Promise((resolve) => {
           const reader = new FileReader()
           reader.onload = () => resolve(reader.result as string)
           reader.readAsDataURL(file)
         })
       } else {
-        // Capture from camera - capture 1-3 frames
+        // Guided multi-angle capture
+        const phases = [
+          { label: 'Look straight ahead', delay: 800 },
+          { label: 'Turn slightly left', delay: 1200 },
+          { label: 'Turn slightly right', delay: 1200 },
+        ]
+
         const frames: string[] = []
-        for (let i = 0; i < 3; i++) {
+        for (const phase of phases) {
+          setScanPhase(phase.label)
+          await new Promise(resolve => setTimeout(resolve, phase.delay))
           const frame = captureFrame()
-          if (frame) {
-            frames.push(frame)
-          }
-          // Small delay between captures
-          await new Promise(resolve => setTimeout(resolve, 200))
+          if (frame) frames.push(frame)
         }
+        setScanPhase('Matching...')
 
         if (frames.length === 0) {
           setError('Failed to capture frames from camera')
           setScanning(false)
+          setScanPhase(null)
           return
         }
 
-        imageData = frames[0]
+        primaryImage = frames[0]
+        additionalFrames = frames.slice(1)
       }
 
-      if (!imageData) {
+      if (!primaryImage) {
         setError('Failed to get image data')
         setScanning(false)
+        setScanPhase(null)
         return
       }
 
-      // Send first frame to backend (can be enhanced to send all frames)
+      // Send all frames to backend
       const token = localStorage.getItem('event_token')
+      const payload: any = {
+        image: primaryImage.includes(',') ? primaryImage.split(',')[1] : primaryImage,
+      }
+      if (additionalFrames.length > 0) {
+        payload.additional_frames = additionalFrames.map(f =>
+          f.includes(',') ? f.split(',')[1] : f
+        )
+      }
 
       const response = await axios.post(
         `${API_URL}/scan`,
-        { image: imageData.split(',')[1] }, // Remove data:image/jpeg;base64, prefix
+        payload,
         {
           headers: {
             'Authorization': `Bearer ${token}`,
@@ -329,6 +347,7 @@ export default function FaceScanner() {
       )
 
       setScanResult(response.data)
+      setScanPhase(null)
 
       // Store results in localStorage for results page
       localStorage.setItem('scan_results', JSON.stringify(response.data))
@@ -337,6 +356,7 @@ export default function FaceScanner() {
       router.push(`/e/${slug}/results`)
 
     } catch (err: any) {
+      setScanPhase(null)
       if (err.response?.status === 429) {
         setError('Rate limit exceeded. Please wait before scanning again.')
       } else if (err.response?.status === 401) {
@@ -455,6 +475,15 @@ export default function FaceScanner() {
               />
               <canvas ref={canvasRef} style={{ display: 'none' }} />
 
+              {/* Guided scan phase overlay */}
+              {scanPhase && scanning && (
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
+                  <div className="px-6 py-3 rounded-2xl backdrop-blur-md bg-blue-600/80 border border-blue-400/50 text-white font-bold text-lg shadow-lg animate-pulse">
+                    {scanPhase}
+                  </div>
+                </div>
+              )}
+
               {/* Status indicator - Moved to be subtle and non-blocking */}
               <div className="absolute bottom-4 left-0 w-full flex justify-center pointer-events-none">
                 {loadingModels ? (
@@ -542,7 +571,7 @@ export default function FaceScanner() {
           >
             {scanning ? (
               <>
-                <Loader2 className="w-6 h-6 animate-spin" /> Scanning...
+                <Loader2 className="w-6 h-6 animate-spin" /> {scanPhase || 'Scanning...'}
               </>
             ) : (
               <>
@@ -559,8 +588,8 @@ export default function FaceScanner() {
             <ol className="list-decimal list-inside space-y-2 text-gray-300 ml-2">
               <li>Position your face clearly in the frame</li>
               <li>Wait for the green border around the video</li>
-              <li>Click "Scan My Face" above</li>
-              <li>We will find your photos automatically</li>
+              <li>Click &quot;Scan My Face&quot; and follow the prompts</li>
+              <li>Turn your head as guided for best results</li>
             </ol>
           </div>
 

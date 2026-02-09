@@ -21,6 +21,7 @@ from app.rate_limiter import rate_limiter, auth_rate_limiter, share_rate_limiter
 from app.audit import log_action
 from app.config import settings
 import httpx
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -190,7 +191,8 @@ async def authenticate_guest(
 
 # Face scanning models
 class FaceScanRequest(BaseModel):
-    image: str  # Base64 encoded image
+    image: str  # Base64 encoded image (primary frame)
+    additional_frames: Optional[List[str]] = None  # Extra frames for multi-angle scan
 
 
 class FaceMatch(BaseModel):
@@ -208,103 +210,114 @@ class FaceScanResponse(BaseModel):
     total_matches: int
 
 
+async def _recognize_single_frame(image_bytes: bytes, api_key: str) -> list:
+    """Recognize faces in a single frame, using largest face only."""
+    results = await recognize_with_compreface(image_bytes, api_key, det_prob_threshold=0.5)
+    if not results:
+        results = await recognize_with_compreface(image_bytes, api_key, det_prob_threshold=0.3)
+    if not results:
+        return []
+
+    # Only use the LARGEST detected face to avoid matching background people
+    if len(results) > 1:
+        def _face_area(fr):
+            box = fr.get("box", {})
+            w = box.get("x_max", 0) - box.get("x_min", 0)
+            h = box.get("y_max", 0) - box.get("y_min", 0)
+            return w * h
+        results = [max(results, key=_face_area)]
+        logger.info("Multiple faces in frame, using largest only")
+
+    return results
+
+
 async def _scan_with_compreface(
-    image_bytes: bytes,
+    all_frames: List[bytes],
     event_id: uuid.UUID,
     session_id: uuid.UUID,
     event: Event,
     db: Session
 ) -> FaceScanResponse:
-    """Internal helper to perform face scan using CompreFace."""
+    """Perform face scan using CompreFace, processing multiple frames in parallel."""
     api_key = settings.compreface_api_key
 
-    # Call CompreFace recognition
-    recognition_results = await recognize_with_compreface(image_bytes, api_key, det_prob_threshold=0.5)
+    # Process all frames in parallel
+    frame_tasks = [_recognize_single_frame(frame, api_key) for frame in all_frames]
+    frame_results = await asyncio.gather(*frame_tasks)
 
-    # If no results, try with lower threshold
-    if not recognition_results:
-        recognition_results = await recognize_with_compreface(image_bytes, api_key, det_prob_threshold=0.3)
+    logger.info(f"Multi-scan: processed {len(all_frames)} frames, "
+                f"faces found in {sum(1 for r in frame_results if r)} frames")
 
-    if not recognition_results:
-        logger.warning("No face detected by CompreFace")
+    # Collect all subjects across all frames, keeping highest similarity per image
+    # key: image_id -> {similarity, subject_id, face_bbox}
+    best_matches: dict = {}
+    similarity_threshold = settings.face_similarity_threshold
+
+    for recognition_results in frame_results:
+        for face_result in recognition_results:
+            subjects = face_result.get("subjects", [])
+            for subject in subjects:
+                subject_id = subject.get("subject", "")
+                similarity = subject.get("similarity", 0)
+
+                if similarity < similarity_threshold:
+                    continue
+
+                parts = subject_id.split("/")
+                if len(parts) >= 2:
+                    result_event_id = parts[0]
+                    result_image_id = parts[1]
+
+                    if result_event_id != str(event_id):
+                        continue
+
+                    # Keep highest similarity per image across all frames
+                    existing = best_matches.get(result_image_id)
+                    if existing is None or similarity > existing["similarity"]:
+                        best_matches[result_image_id] = {
+                            "image_id": result_image_id,
+                            "similarity": similarity,
+                            "subject_id": subject_id,
+                        }
+
+    if not best_matches:
+        logger.warning("No matching faces found across all frames")
         return FaceScanResponse(
             matches=[],
             scan_id=str(uuid.uuid4()),
             total_matches=0
         )
 
-    # Process recognition results
-    # CompreFace returns subjects in format: event_id/image_id/face_idx
+    # Verify images exist and get bboxes
     matches = []
-    seen_images = set()
+    for match_data in best_matches.values():
+        result_image_id = match_data["image_id"]
+        image_exists = db.query(Image.id).filter(
+            Image.id == uuid.UUID(result_image_id),
+            Image.event_id == event_id
+        ).first()
+        if not image_exists:
+            continue
 
-    # Only use the LARGEST detected face from the selfie to avoid matching
-    # other people who may appear in the background of the scan image.
-    # CompreFace returns one entry per detected face; pick the one with
-    # the biggest bounding box (most prominent face = the person scanning).
-    if len(recognition_results) > 1:
-        def _face_area(fr):
-            box = fr.get("box", {})
-            w = box.get("x_max", 0) - box.get("x_min", 0)
-            h = box.get("y_max", 0) - box.get("y_min", 0)
-            return w * h
-        recognition_results = [max(recognition_results, key=_face_area)]
-        logger.info("Multiple faces detected in selfie, using largest face only")
+        face = db.query(Face).filter(
+            Face.compreface_subject_id == match_data["subject_id"]
+        ).first()
+        bbox = face.bbox if face else [0, 0, 0, 0]
 
-    for face_result in recognition_results:
-        subjects = face_result.get("subjects", [])
+        matches.append({
+            "image_id": result_image_id,
+            "similarity": match_data["similarity"],
+            "face_bbox": bbox
+        })
 
-        for subject in subjects:
-            subject_id = subject.get("subject", "")
-            similarity = subject.get("similarity", 0)
-
-            # Filter out low similarity matches (false positives)
-            similarity_threshold = settings.face_similarity_threshold
-            if similarity < similarity_threshold:
-                logger.debug(f"Skipping match with similarity {similarity:.2f} below threshold {similarity_threshold}")
-                continue
-
-            # Parse subject_id: event_id/image_id/face_idx
-            parts = subject_id.split("/")
-            if len(parts) >= 2:
-                result_event_id = parts[0]
-                result_image_id = parts[1]
-
-                # Only include results from this event
-                if result_event_id == str(event_id) and result_image_id not in seen_images:
-                    # Verify image still exists (may have been deleted while CompreFace entry lingers)
-                    image_exists = db.query(Image.id).filter(
-                        Image.id == uuid.UUID(result_image_id),
-                        Image.event_id == event_id
-                    ).first()
-                    if not image_exists:
-                        logger.debug(f"Skipping match for deleted image {result_image_id}")
-                        continue
-
-                    seen_images.add(result_image_id)
-
-                    # Get face bbox from database
-                    face = db.query(Face).filter(
-                        Face.compreface_subject_id == subject_id
-                    ).first()
-
-                    bbox = face.bbox if face else [0, 0, 0, 0]
-
-                    matches.append({
-                        "image_id": result_image_id,
-                        "similarity": similarity,
-                        "face_bbox": bbox
-                    })
-
-    logger.info(f"Found {len(matches)} matches from CompreFace")
+    logger.info(f"Found {len(matches)} matches from {len(all_frames)} frames")
 
     scan_id = str(uuid.uuid4())
 
-    # Generate URLs for matched photos (ownership verified by event_id matching above)
+    # Generate URLs for matched photos
     face_matches = []
     for match in matches:
         image_uuid = uuid.UUID(match["image_id"])
-
         try:
             thumbnail_url = storage_service.generate_url(
                 event_id=event_id, image_id=image_uuid, photo_type="thumb"
@@ -312,7 +325,6 @@ async def _scan_with_compreface(
             original_url = storage_service.generate_url(
                 event_id=event_id, image_id=image_uuid, photo_type="original"
             )
-
             download_url = None
             if event.allow_downloads:
                 download_url = original_url
@@ -325,7 +337,6 @@ async def _scan_with_compreface(
                 download_url=download_url,
                 face_bbox=match["face_bbox"]
             ))
-
         except Exception as e:
             logger.error(f"Failed to generate URL for image {match['image_id']}: {e}")
             continue
@@ -339,6 +350,7 @@ async def _scan_with_compreface(
         action='scan',
         metadata={
             'match_count': len(face_matches),
+            'frame_count': len(all_frames),
             'similarity_avg': sum(m.similarity for m in face_matches) / len(face_matches) if face_matches else 0,
             'recognition_engine': 'compreface'
         }
@@ -383,13 +395,21 @@ async def scan_face(
             detail="Event not found"
         )
 
-    # Decode base64 image (handle data URL format)
+    # Decode base64 images (handle data URL format)
+    def _decode_frame(data: str) -> bytes:
+        if data.startswith('data:'):
+            data = data.split(',')[1]
+        return base64.b64decode(data)
+
     try:
-        image_data = scan_request.image
-        if image_data.startswith('data:'):
-            image_data = image_data.split(',')[1]
-        image_bytes = base64.b64decode(image_data)
-        logger.info(f"Received scan image: {len(image_bytes)} bytes")
+        all_frames = [_decode_frame(scan_request.image)]
+        if scan_request.additional_frames:
+            for frame_data in scan_request.additional_frames[:4]:  # Max 5 total frames
+                try:
+                    all_frames.append(_decode_frame(frame_data))
+                except Exception:
+                    pass  # Skip invalid frames
+        logger.info(f"Received {len(all_frames)} scan frames")
     except Exception as e:
         logger.error(f"Failed to decode image: {e}")
         raise HTTPException(
@@ -397,10 +417,9 @@ async def scan_face(
             detail="Invalid base64 image data"
         )
 
-    # Use CompreFace for face recognition
-    logger.info("Using CompreFace for face recognition")
+    # Use CompreFace for face recognition (multi-frame)
     return await _scan_with_compreface(
-        image_bytes, event_id, session_id, event, db
+        all_frames, event_id, session_id, event, db
     )
 
 
