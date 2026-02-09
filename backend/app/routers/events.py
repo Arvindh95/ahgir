@@ -21,11 +21,12 @@ logger = logging.getLogger(__name__)
 
 from app.auth import get_current_user, hash_password
 from app.database import get_db
-from app.models import User, Event, Image, AuditLog
+from app.models import User, Event, Image, Face, AuditLog
 from app.storage import storage_service
 from app.queue import enqueue_face_indexing
 from app.audit import log_action
 from app.config import settings
+import httpx
 
 router = APIRouter(prefix="/events", tags=["events"])
 
@@ -926,8 +927,22 @@ async def delete_photo(
             image_id=image_uuid
         )
     except Exception as e:
-        # Log error but continue with database deletion
-        pass
+        logger.warning(f"Failed to delete MinIO objects for image {image_uuid}: {e}")
+
+    # Delete CompreFace subjects for this image's faces
+    if settings.compreface_api_key:
+        image_faces = db.query(Face).filter(Face.image_id == image_uuid).all()
+        for face in image_faces:
+            if face.compreface_subject_id:
+                try:
+                    httpx.delete(
+                        f"{settings.compreface_api_url}/api/v1/recognition/faces",
+                        headers={"x-api-key": settings.compreface_api_key},
+                        params={"subject": face.compreface_subject_id},
+                        timeout=10.0,
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to delete CompreFace subject {face.compreface_subject_id}: {e}")
 
     # Delete from database (cascades to faces)
     db.delete(image)
@@ -993,17 +1008,35 @@ async def reindex_event(
 
     # Get all images for this event
     images = db.query(Image).filter(Image.event_id == event_uuid).all()
-    
+
+    # Delete old CompreFace subjects BEFORE re-registering to avoid duplicates
+    old_faces = db.query(Face).filter(Face.event_id == event_uuid).all()
+    if old_faces and settings.compreface_api_key:
+        deleted_cf = 0
+        for face in old_faces:
+            if face.compreface_subject_id:
+                try:
+                    resp = httpx.delete(
+                        f"{settings.compreface_api_url}/api/v1/recognition/faces",
+                        headers={"x-api-key": settings.compreface_api_key},
+                        params={"subject": face.compreface_subject_id},
+                        timeout=10.0,
+                    )
+                    if resp.status_code in (200, 404):
+                        deleted_cf += 1
+                except Exception as e:
+                    logger.warning(f"Failed to delete CompreFace subject {face.compreface_subject_id}: {e}")
+        logger.info(f"Cleaned {deleted_cf}/{len(old_faces)} CompreFace subjects for event {event_uuid}")
+
     # Reset all image statuses to pending
     for image in images:
         image.status = 'pending'
         image.face_count = 0
         image.indexed_at = None
-    
+
     # Delete all existing face records for this event
-    from app.models import Face
     db.query(Face).filter(Face.event_id == event_uuid).delete()
-    
+
     db.commit()
     
     # Queue all images for reprocessing

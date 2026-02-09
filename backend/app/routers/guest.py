@@ -238,6 +238,19 @@ async def _scan_with_compreface(
     matches = []
     seen_images = set()
 
+    # Only use the LARGEST detected face from the selfie to avoid matching
+    # other people who may appear in the background of the scan image.
+    # CompreFace returns one entry per detected face; pick the one with
+    # the biggest bounding box (most prominent face = the person scanning).
+    if len(recognition_results) > 1:
+        def _face_area(fr):
+            box = fr.get("box", {})
+            w = box.get("x_max", 0) - box.get("x_min", 0)
+            h = box.get("y_max", 0) - box.get("y_min", 0)
+            return w * h
+        recognition_results = [max(recognition_results, key=_face_area)]
+        logger.info("Multiple faces detected in selfie, using largest face only")
+
     for face_result in recognition_results:
         subjects = face_result.get("subjects", [])
 
@@ -246,7 +259,6 @@ async def _scan_with_compreface(
             similarity = subject.get("similarity", 0)
 
             # Filter out low similarity matches (false positives)
-            # Use threshold from settings, default to 0.6 (60%)
             similarity_threshold = settings.face_similarity_threshold
             if similarity < similarity_threshold:
                 logger.debug(f"Skipping match with similarity {similarity:.2f} below threshold {similarity_threshold}")
@@ -260,8 +272,8 @@ async def _scan_with_compreface(
 
                 # Only include results from this event
                 if result_event_id == str(event_id) and result_image_id not in seen_images:
-                    # Verify image still exists in database (may have been deleted)
-                    image_exists = db.query(Image).filter(
+                    # Verify image still exists (may have been deleted while CompreFace entry lingers)
+                    image_exists = db.query(Image.id).filter(
                         Image.id == uuid.UUID(result_image_id),
                         Image.event_id == event_id
                     ).first()

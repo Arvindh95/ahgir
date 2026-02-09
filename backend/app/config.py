@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     jwt_expiration_hours: int = 24
     
     # Face Recognition
-    face_similarity_threshold: float = 0.75
+    face_similarity_threshold: float = 0.80
 
     # CompreFace
     compreface_api_url: str = "http://compreface-api:8080"
