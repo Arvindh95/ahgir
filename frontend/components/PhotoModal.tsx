@@ -123,7 +123,7 @@ export default function PhotoModal({
           />
         </div>
 
-        <div className="mt-6 flex items-center gap-4 bg-black/50 backdrop-blur-xl px-6 py-4 rounded-2xl border border-white/10">
+        <div className="mt-6 flex items-center gap-3 sm:gap-4 bg-black/50 backdrop-blur-xl px-4 sm:px-6 py-3 sm:py-4 rounded-2xl border border-white/10">
           {/* Photo counter */}
           <span className="text-sm text-gray-400 font-medium">
             {currentIndex + 1} / {photos.length}
@@ -132,7 +132,7 @@ export default function PhotoModal({
 
           {photo.similarity !== undefined && (
             <>
-              <div className="text-lg font-bold">
+              <div className="text-sm sm:text-lg font-bold">
                 Match: <span className="text-green-400">{Math.round(photo.similarity * 100)}%</span>
               </div>
               <div className="w-px h-6 bg-white/20"></div>
@@ -141,21 +141,20 @@ export default function PhotoModal({
 
           <button
             onClick={() => onShare(photo.image_id)}
-            className="flex items-center gap-2 bg-white/10 text-white px-4 py-2 rounded-lg font-medium hover:bg-white/20 transition-colors"
+            className="p-2.5 bg-white/10 text-white rounded-lg hover:bg-white/20 transition-colors"
+            title="Share"
           >
-            <Share2 className="w-4 h-4" /> Share
+            <Share2 className="w-5 h-5" />
           </button>
 
           {allowDownloads && photo.download_url && (
-            <>
-              <div className="w-px h-6 bg-white/20"></div>
-              <button
-                onClick={() => onDownload(photo)}
-                className="flex items-center gap-2 bg-white text-black px-6 py-2 rounded-lg font-bold hover:bg-gray-200 transition-colors"
-              >
-                <Download className="w-4 h-4" /> Download
-              </button>
-            </>
+            <button
+              onClick={() => onDownload(photo)}
+              className="p-2.5 bg-white text-black rounded-lg hover:bg-gray-200 transition-colors"
+              title="Download"
+            >
+              <Download className="w-5 h-5" />
+            </button>
           )}
         </div>
       </div>
