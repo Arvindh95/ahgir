@@ -588,8 +588,8 @@ export default function FaceScanner() {
             <ol className="list-decimal list-inside space-y-2 text-gray-300 ml-2">
               <li>Position your face clearly in the frame</li>
               <li>Wait for the green border around the video</li>
-              <li>Click &quot;Scan My Face&quot; and follow the prompts</li>
-              <li>Turn your head as guided for best results</li>
+              <li>Click &quot;Scan My Face&quot; and follow the on-screen prompts</li>
+              <li><span className="text-white font-medium">Turning your head slightly when prompted improves accuracy</span> — the scan will still work if you don&apos;t, but turning helps find more of your photos</li>
             </ol>
           </div>
 
