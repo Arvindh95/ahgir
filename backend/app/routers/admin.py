@@ -269,6 +269,43 @@ async def get_global_analytics(
     }
 
 
+@router.get("/events")
+async def admin_list_events(
+    current_user: User = Depends(get_superadmin_user),
+    db: Session = Depends(get_db),
+):
+    """List all events with tier info (superadmin only)."""
+    events = (
+        db.query(Event, User.email, EventTier)
+        .outerjoin(User, Event.user_id == User.id)
+        .outerjoin(EventTier, Event.id == EventTier.event_id)
+        .order_by(Event.created_at.desc())
+        .all()
+    )
+
+    photo_counts = dict(
+        db.query(Image.event_id, func.count(Image.id))
+        .group_by(Image.event_id)
+        .all()
+    )
+
+    return {
+        "events": [
+            {
+                "event_id": str(event.id),
+                "name": event.name,
+                "date": event.date.isoformat() if event.date else None,
+                "owner_email": email,
+                "photo_count": photo_counts.get(event.id, 0),
+                "tier_name": tier.tier_name if tier else "free",
+                "photo_limit": tier.photo_limit if tier else 25,
+                "created_at": event.created_at.isoformat(),
+            }
+            for event, email, tier in events
+        ]
+    }
+
+
 @router.delete("/events/{event_id}")
 async def admin_delete_event(
     event_id: str,

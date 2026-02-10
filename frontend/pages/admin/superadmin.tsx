@@ -9,7 +9,7 @@ import { authService } from '@/lib/auth'
 import { useToast } from '@/hooks/useToast'
 import SuperadminSkeleton from '@/components/skeletons/SuperadminSkeleton'
 import GlobalAnalytics from '@/components/GlobalAnalytics'
-import { Shield, Users, Image as ImageIcon, Database, Ban, ShieldCheck, ShieldOff, Trash2, DollarSign, CreditCard } from 'lucide-react'
+import { Shield, Users, Image as ImageIcon, Database, Ban, ShieldCheck, ShieldOff, Trash2, DollarSign, CreditCard, Settings, Loader2, Search } from 'lucide-react'
 
 interface UserItem {
   user_id: string
@@ -41,6 +41,25 @@ interface PaymentItem {
   created_at: string
 }
 
+interface EventItem {
+  event_id: string
+  name: string
+  date: string | null
+  owner_email: string
+  photo_count: number
+  tier_name: string
+  photo_limit: number
+  created_at: string
+}
+
+interface TierEditState {
+  eventId: string
+  eventName: string
+  tierName: string
+  photoLimit: string
+  priceCents: string
+}
+
 interface ConfirmAction {
   type: 'superadmin' | 'disabled' | 'delete'
   userId: string
@@ -58,6 +77,10 @@ export default function SuperadminPage() {
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null)
   const [currentUserId, setCurrentUserId] = useState<string>('')
   const [payments, setPayments] = useState<PaymentItem[]>([])
+  const [events, setEvents] = useState<EventItem[]>([])
+  const [eventSearch, setEventSearch] = useState('')
+  const [tierEdit, setTierEdit] = useState<TierEditState | null>(null)
+  const [savingTier, setSavingTier] = useState(false)
 
   useEffect(() => {
     checkAccess()
@@ -71,7 +94,7 @@ export default function SuperadminPage() {
         router.push('/admin/events')
         return
       }
-      await Promise.all([loadUsers(), loadStats(), loadPayments()])
+      await Promise.all([loadUsers(), loadStats(), loadPayments(), loadEvents()])
     } catch {
       router.push('/admin/login')
     } finally {
@@ -95,6 +118,33 @@ export default function SuperadminPage() {
       setPayments(response.data.payments || [])
     } catch {
       // payments endpoint may not exist on older backends
+    }
+  }
+
+  const loadEvents = async () => {
+    try {
+      const response = await api.get('/admin/events')
+      setEvents(response.data.events || [])
+    } catch {
+      // endpoint may not exist on older backends
+    }
+  }
+
+  const handleTierSave = async () => {
+    if (!tierEdit) return
+    setSavingTier(true)
+    try {
+      const body: any = { tier_name: tierEdit.tierName }
+      if (tierEdit.photoLimit) body.photo_limit = parseInt(tierEdit.photoLimit)
+      if (tierEdit.priceCents) body.price_cents = parseInt(tierEdit.priceCents)
+      await api.patch(`/admin/events/${tierEdit.eventId}/tier`, body)
+      toast(`Tier updated to ${tierEdit.tierName} for "${tierEdit.eventName}"`, 'success')
+      setTierEdit(null)
+      loadEvents()
+    } catch (err: any) {
+      toast(err.response?.data?.detail || 'Failed to update tier', 'error')
+    } finally {
+      setSavingTier(false)
     }
   }
 
@@ -319,6 +369,154 @@ export default function SuperadminPage() {
               </table>
             </div>
           </div>
+
+          {/* Event Tier Management */}
+          <div className="glass-card p-6 rounded-2xl mt-8">
+            <h2 className="text-xl font-bold mb-6 flex items-center gap-2">
+              <Settings className="w-5 h-5" /> Event Tier Management
+            </h2>
+
+            <div className="relative mb-4">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+              <input
+                type="text"
+                placeholder="Search events by name or owner email..."
+                value={eventSearch}
+                onChange={(e) => setEventSearch(e.target.value)}
+                className="glass-input w-full pl-10 pr-4 py-2.5 rounded-xl text-sm"
+              />
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-white/10 text-gray-400">
+                    <th className="pb-3 pl-2 font-medium">Event</th>
+                    <th className="pb-3 font-medium">Owner</th>
+                    <th className="pb-3 font-medium">Photos</th>
+                    <th className="pb-3 font-medium">Current Tier</th>
+                    <th className="pb-3 font-medium">Limit</th>
+                    <th className="pb-3 font-medium text-right pr-2">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {events
+                    .filter((e) => {
+                      if (!eventSearch) return true
+                      const q = eventSearch.toLowerCase()
+                      return e.name.toLowerCase().includes(q) || e.owner_email?.toLowerCase().includes(q)
+                    })
+                    .slice(0, 20)
+                    .map((event) => (
+                      <tr key={event.event_id} className="hover:bg-white/5 transition-colors">
+                        <td className="py-3 pl-2 font-medium">{event.name}</td>
+                        <td className="py-3 text-gray-400 text-xs">{event.owner_email}</td>
+                        <td className="py-3">{event.photo_count}</td>
+                        <td className="py-3">
+                          <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase ${
+                            event.tier_name === 'free' ? 'bg-gray-500/20 text-gray-400' :
+                            event.tier_name === 'standard' ? 'bg-blue-500/20 text-blue-400' :
+                            event.tier_name === 'premium' ? 'bg-purple-500/20 text-purple-400' :
+                            'bg-yellow-500/20 text-yellow-400'
+                          }`}>
+                            {event.tier_name}
+                          </span>
+                        </td>
+                        <td className="py-3">{event.photo_limit.toLocaleString()}</td>
+                        <td className="py-3 pr-2 text-right">
+                          <button
+                            onClick={() => setTierEdit({
+                              eventId: event.event_id,
+                              eventName: event.name,
+                              tierName: event.tier_name,
+                              photoLimit: String(event.photo_limit),
+                              priceCents: '',
+                            })}
+                            className="px-3 py-1 rounded-lg text-xs font-medium bg-white/5 text-gray-400 hover:bg-white/10 hover:text-white transition-colors"
+                          >
+                            Edit Tier
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Tier Edit Modal */}
+          {tierEdit && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={() => setTierEdit(null)}>
+              <div className="glass-card rounded-2xl p-8 max-w-md w-full mx-4" onClick={(e) => e.stopPropagation()}>
+                <h3 className="text-lg font-bold mb-1">Edit Tier</h3>
+                <p className="text-sm text-gray-400 mb-6">{tierEdit.eventName}</p>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-1">Tier</label>
+                    <select
+                      value={tierEdit.tierName}
+                      onChange={(e) => {
+                        const tier = e.target.value
+                        const defaults: Record<string, string> = { free: '25', standard: '1000', premium: '2000' }
+                        setTierEdit({
+                          ...tierEdit,
+                          tierName: tier,
+                          photoLimit: tier === 'custom' ? tierEdit.photoLimit : (defaults[tier] || tierEdit.photoLimit),
+                        })
+                      }}
+                      className="glass-input w-full px-3 py-2.5 rounded-xl text-sm"
+                    >
+                      <option value="free">Free (25 photos)</option>
+                      <option value="standard">Standard (1,000 photos)</option>
+                      <option value="premium">Premium (2,000 photos)</option>
+                      <option value="custom">Custom</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-1">Photo Limit</label>
+                    <input
+                      type="number"
+                      value={tierEdit.photoLimit}
+                      onChange={(e) => setTierEdit({ ...tierEdit, photoLimit: e.target.value })}
+                      className="glass-input w-full px-3 py-2.5 rounded-xl text-sm"
+                      disabled={tierEdit.tierName !== 'custom'}
+                    />
+                  </div>
+
+                  {tierEdit.tierName === 'custom' && (
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-1">Price (RM)</label>
+                      <input
+                        type="number"
+                        placeholder="e.g. 1500"
+                        value={tierEdit.priceCents ? String(Number(tierEdit.priceCents) / 100) : ''}
+                        onChange={(e) => setTierEdit({ ...tierEdit, priceCents: String(Number(e.target.value) * 100) })}
+                        className="glass-input w-full px-3 py-2.5 rounded-xl text-sm"
+                      />
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex gap-3 mt-6">
+                  <button
+                    onClick={() => setTierEdit(null)}
+                    className="flex-1 py-2.5 rounded-xl text-sm font-medium bg-white/5 hover:bg-white/10 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleTierSave}
+                    disabled={savingTier}
+                    className="flex-1 py-2.5 rounded-xl text-sm font-semibold bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {savingTier ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving...</> : 'Save'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Recent Payments */}
           <div className="glass-card p-6 rounded-2xl mt-8">
