@@ -49,6 +49,16 @@ export default function Register() {
       await authService.register(email, password)
       setRegisteredEmail(email)
     } catch (err: any) {
+      if (err.response?.status === 429) {
+        const retryAfter = err.response?.headers?.['retry-after']
+        const minutes = retryAfter ? Math.ceil(parseInt(retryAfter) / 60) : null
+        setError(
+          minutes
+            ? `Too many attempts. Please wait ${minutes} minute${minutes > 1 ? 's' : ''} and try again.`
+            : 'Too many attempts. Please wait a few minutes and try again.'
+        )
+        return
+      }
       setError(err.response?.data?.error?.message || 'Registration failed')
     } finally {
       setIsLoading(false)

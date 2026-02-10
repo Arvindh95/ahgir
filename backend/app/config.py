@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     # Rate Limiting
     scan_rate_limit: int = 30
     scan_rate_window_hours: int = 1
-    auth_rate_limit: int = 10
+    auth_rate_limit: int = 30
     auth_rate_window_hours: int = 1
     share_rate_limit: int = 60
     share_rate_window_hours: int = 1

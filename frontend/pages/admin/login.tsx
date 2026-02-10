@@ -50,6 +50,18 @@ export default function Login() {
       await authService.login(email, password)
       router.push('/admin/events')
     } catch (err: any) {
+      if (err.response?.status === 429) {
+        const detail = err.response?.data?.detail || ''
+        const retryAfter = err.response?.headers?.['retry-after']
+        const minutes = retryAfter ? Math.ceil(parseInt(retryAfter) / 60) : null
+        setError(
+          minutes
+            ? `Too many login attempts. Please wait ${minutes} minute${minutes > 1 ? 's' : ''} and try again.`
+            : 'Too many login attempts. Please wait a few minutes and try again.'
+        )
+        return
+      }
+
       const errorCode = err.response?.data?.error?.code
       const errorMessage = err.response?.data?.error?.message || 'Login failed'
 
