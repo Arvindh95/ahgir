@@ -1,10 +1,10 @@
 services:
   backend:
-    volumes: []
+    volumes: !reset []
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
 
   worker:
-    volumes: []
+    volumes: !reset []
 
   frontend:
     build:
@@ -13,5 +13,5 @@ services:
       args:
         BUILD_ENV: production
         NEXT_PUBLIC_API_URL: /api
-    volumes: []
+    volumes: !reset []
     command: ["npm", "start"]
