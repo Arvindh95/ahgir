@@ -4,9 +4,13 @@
 @tailwind components;
 @tailwind utilities;
 
+html,
+body {
+  overflow-x: clip;
+}
+
 html {
   scroll-behavior: smooth;
-  overflow-x: hidden;
 }
 
 :root {
