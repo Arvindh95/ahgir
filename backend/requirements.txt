@@ -19,3 +19,4 @@ pytest-asyncio==0.23.3
 hypothesis==6.98.3
 httpx==0.26.0
 qrcode[pil]==7.4.2
+stripe>=7.0.0

@@ -83,7 +83,14 @@ export default function PhotoUpload({ eventId, onUploadComplete }: PhotoUploadPr
         onUploadComplete()
       }, 1000)
     } catch (err: any) {
-      setError(err.response?.data?.error?.message || 'Upload failed')
+      const detail = err.response?.data?.detail
+      if (detail && typeof detail === 'object' && detail.code === 'PHOTO_LIMIT_EXCEEDED') {
+        setError(`${detail.message} Upgrade your plan to upload more photos.`)
+      } else if (typeof detail === 'string') {
+        setError(detail)
+      } else {
+        setError(err.response?.data?.error?.message || 'Upload failed')
+      }
     } finally {
       setIsUploading(false)
     }

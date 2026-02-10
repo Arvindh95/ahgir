@@ -29,8 +29,15 @@ export interface EventStatus {
   indexing_percentage: number
 }
 
+export interface EventTierInfo {
+  tier_name: string
+  photo_limit: number
+  is_active: boolean
+}
+
 export interface EventDetails extends Event {
   status: EventStatus
+  tier?: EventTierInfo
 }
 
 export interface CreateEventRequest {

@@ -40,6 +40,11 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from_email: str = "noreply@picur.my"
 
+    # Stripe
+    stripe_secret_key: str = ""
+    stripe_publishable_key: str = ""
+    stripe_webhook_secret: str = ""
+
     # CORS
     cors_origins: str = "http://localhost:3000"  # Comma-separated; set to "https://picur.my" in production
 

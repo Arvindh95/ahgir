@@ -10,7 +10,8 @@ import { eventService, EventDetails } from '@/lib/events'
 import { useToast } from '@/hooks/useToast'
 import api from '@/lib/api'
 import { getErrorMessage } from '@/lib/errors'
-import { Loader2, ArrowLeft, Image as ImageIcon, Trash2, Calendar, Link as LinkIcon, Download, Clock, QrCode, Copy, Pencil, Save, MapPin, Upload } from 'lucide-react'
+import UpgradeModal from '@/components/UpgradeModal'
+import { Loader2, ArrowLeft, Image as ImageIcon, Trash2, Calendar, Link as LinkIcon, Download, Clock, QrCode, Copy, Pencil, Save, MapPin, Upload, Zap } from 'lucide-react'
 import Image from 'next/image'
 import EventDetailSkeleton from '@/components/skeletons/EventDetailSkeleton'
 import Breadcrumbs from '@/components/Breadcrumbs'
@@ -34,6 +35,7 @@ export default function EventDetailsPage() {
   const [coverImageUrl, setCoverImageUrl] = useState<string | null>(null)
   const [isSavingDetails, setIsSavingDetails] = useState(false)
   const [isUploadingCover, setIsUploadingCover] = useState(false)
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false)
   const coverInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -41,6 +43,18 @@ export default function EventDetailsPage() {
       loadEvent(id)
     }
   }, [id])
+
+  // Handle payment redirect
+  useEffect(() => {
+    const { payment } = router.query
+    if (payment === 'success') {
+      toast('Payment successful! Your plan has been upgraded.', 'success')
+      router.replace(`/admin/events/${id}`, undefined, { shallow: true })
+    } else if (payment === 'cancelled') {
+      toast('Payment was cancelled.', 'error')
+      router.replace(`/admin/events/${id}`, undefined, { shallow: true })
+    }
+  }, [router.query.payment])
 
   const loadEvent = async (eventId: string) => {
     try {
@@ -366,6 +380,46 @@ export default function EventDetailsPage() {
             </div>
           </div>
 
+          {/* Plan & Usage */}
+          {event.tier && (
+            <div className="glass-card p-6 rounded-2xl mb-8">
+              <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+                <Zap className="w-5 h-5 text-yellow-400" /> Plan & Usage
+              </h2>
+              <div className="flex items-center gap-3 mb-4">
+                <span className={`px-3 py-1 rounded-full text-sm font-bold uppercase ${
+                  event.tier.tier_name === 'free' ? 'bg-gray-500/20 text-gray-400' :
+                  event.tier.tier_name === 'standard' ? 'bg-blue-500/20 text-blue-400' :
+                  event.tier.tier_name === 'premium' ? 'bg-purple-500/20 text-purple-400' :
+                  'bg-yellow-500/20 text-yellow-400'
+                }`}>
+                  {event.tier.tier_name}
+                </span>
+                <span className="text-sm text-gray-400">
+                  {event.status.total_photos} / {event.tier.photo_limit} photos used
+                </span>
+              </div>
+              <div className="w-full bg-white/10 rounded-full h-3 mb-4">
+                <div
+                  className={`h-3 rounded-full transition-all ${
+                    (event.status.total_photos / event.tier.photo_limit) > 0.9 ? 'bg-red-500' :
+                    (event.status.total_photos / event.tier.photo_limit) > 0.7 ? 'bg-yellow-500' :
+                    'bg-blue-500'
+                  }`}
+                  style={{ width: `${Math.min(100, (event.status.total_photos / event.tier.photo_limit) * 100)}%` }}
+                />
+              </div>
+              {event.tier.tier_name !== 'premium' && event.tier.tier_name !== 'custom' && (
+                <button
+                  onClick={() => setShowUpgradeModal(true)}
+                  className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-blue-700 transition-colors text-sm"
+                >
+                  <Zap className="w-4 h-4" /> Upgrade Plan
+                </button>
+              )}
+            </div>
+          )}
+
           {/* Event Monitoring Dashboard */}
           <EventMonitoring eventId={event.event_id} />
 
@@ -384,6 +438,13 @@ export default function EventDetailsPage() {
           loading={isDeleting}
           onConfirm={handleDelete}
           onCancel={() => setShowDeleteConfirm(false)}
+        />
+
+        <UpgradeModal
+          open={showUpgradeModal}
+          eventId={event.event_id}
+          currentTier={event.tier?.tier_name || 'free'}
+          onClose={() => setShowUpgradeModal(false)}
         />
       </AdminLayout>
     </ProtectedRoute>

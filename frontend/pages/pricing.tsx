@@ -3,61 +3,53 @@ import Link from 'next/link'
 import { Check, ArrowRight } from 'lucide-react'
 import PublicLayout from '@/components/PublicLayout'
 
-// TODO: finalize pricing values and tiers
 const tiers = [
   {
     name: 'Free',
-    price: 'RM0',
+    price: 'RM 0',
     period: '',
     description: 'Perfect for trying out PicUr',
     features: [
-      '1 event',
-      'Up to 50 photos',
+      'Up to 25 photos per event',
       'Face recognition',
       'Guest scanning',
       'Photo downloads',
     ],
     cta: 'Get Started',
     href: '/admin/register',
-    disabled: false,
     highlighted: false,
   },
   {
-    name: 'Single Event',
-    price: 'RM29',
+    name: 'Standard',
+    price: 'RM 500',
     period: 'per event',
-    description: 'For one-time events like weddings or parties',
+    description: 'For small events like birthdays or corporate events',
     features: [
-      '1 event',
-      'Up to 2,000 photos',
+      'Up to 1,000 photos per event',
       'Face recognition',
       'Guest scanning',
       'Photo downloads',
       'Priority support',
     ],
-    cta: 'Coming Soon',
-    href: '#',
-    disabled: true,
-    highlighted: true,
+    cta: 'Get Started',
+    href: '/admin/register',
+    highlighted: false,
   },
   {
-    name: 'Pro',
-    price: 'RM79',
-    period: '/month',
-    description: 'For photographers and frequent event organizers',
+    name: 'Premium',
+    price: 'RM 800',
+    period: 'per event',
+    description: 'For large events like weddings or festivals',
     features: [
-      'Unlimited events',
-      'Unlimited photos',
+      'Up to 2,000 photos per event',
       'Face recognition',
       'Guest scanning',
       'Photo downloads',
       'Priority support',
-      'Analytics dashboard',
     ],
-    cta: 'Coming Soon',
-    href: '#',
-    disabled: true,
-    highlighted: false,
+    cta: 'Get Started',
+    href: '/admin/register',
+    highlighted: true,
   },
 ]
 
@@ -72,7 +64,7 @@ export default function Pricing() {
         <div className="text-center mb-16">
           <h1 className="text-3xl md:text-4xl font-bold mb-4">Simple, transparent pricing</h1>
           <p className="text-gray-400 text-lg max-w-xl mx-auto">
-            Start free, upgrade when you need more.
+            Start free, upgrade per event when you need more photos.
           </p>
         </div>
 
@@ -105,25 +97,24 @@ export default function Pricing() {
                 ))}
               </ul>
 
-              {tier.disabled ? (
-                <button
-                  disabled
-                  className="w-full py-3 rounded-xl font-semibold text-sm bg-white/10 text-gray-500 cursor-not-allowed"
-                >
-                  {tier.cta}
-                </button>
-              ) : (
-                <Link
-                  href={tier.href}
-                  className="inline-flex items-center justify-center gap-2 w-full py-3 rounded-xl font-semibold text-sm bg-white text-black hover:bg-gray-100 transition-all active:scale-[0.98]"
-                >
-                  {tier.cta}
-                  <ArrowRight className="w-4 h-4" />
-                </Link>
-              )}
+              <Link
+                href={tier.href}
+                className={`inline-flex items-center justify-center gap-2 w-full py-3 rounded-xl font-semibold text-sm transition-all active:scale-[0.98] ${
+                  tier.highlighted
+                    ? 'bg-blue-600 text-white hover:bg-blue-700'
+                    : 'bg-white text-black hover:bg-gray-100'
+                }`}
+              >
+                {tier.cta}
+                <ArrowRight className="w-4 h-4" />
+              </Link>
             </div>
           ))}
         </div>
+
+        <p className="text-center text-gray-500 text-sm mt-12">
+          Need more than 2,000 photos? Contact us for a custom plan.
+        </p>
       </div>
     </PublicLayout>
   )
