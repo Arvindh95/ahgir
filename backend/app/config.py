@@ -37,10 +37,10 @@ class Settings(BaseSettings):
     smtp_port: int = 587
     smtp_username: str = ""
     smtp_password: str = ""
-    smtp_from_email: str = "noreply@ahgir.com"
+    smtp_from_email: str = "noreply@picur.my"
 
     # CORS
-    cors_origins: str = "http://localhost:3000"  # Comma-separated; set to "https://ahgir.com" in production
+    cors_origins: str = "http://localhost:3000"  # Comma-separated; set to "https://picur.my" in production
 
     # Rate Limiting
     scan_rate_limit: int = 30

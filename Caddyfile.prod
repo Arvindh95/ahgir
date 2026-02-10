@@ -1,4 +1,4 @@
-ahgir.com {
+picur.my {
     # Security headers
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"

@@ -68,7 +68,7 @@ services:
       COMPREFACE_API_URL: http://compreface-api:8080
       COMPREFACE_API_KEY: "00000000-0000-0000-0000-000000000002"
       COMPREFACE_DETECTION_API_KEY: "00000000-0000-0000-0000-000000000003"
-      FRONTEND_URL: https://ahgir.com
+      FRONTEND_URL: https://picur.my
       SMTP_HOST: ${SMTP_HOST:-smtp-relay.brevo.com}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USERNAME: ${SMTP_USERNAME}
@@ -111,7 +111,7 @@ services:
       SMTP_USERNAME: ${SMTP_USERNAME}
       SMTP_PASSWORD: ${SMTP_PASSWORD}
       SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL}
-      FRONTEND_URL: https://ahgir.com
+      FRONTEND_URL: https://picur.my
     volumes:
       - ./backend:/app
     depends_on:

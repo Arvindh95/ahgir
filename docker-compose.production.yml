@@ -144,9 +144,9 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD}
       SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL}
       # Frontend URL (for email links)
-      FRONTEND_URL: ${FRONTEND_URL:-https://ahgir.com}
+      FRONTEND_URL: ${FRONTEND_URL:-https://picur.my}
       # External MinIO
-      MINIO_EXTERNAL_ENDPOINT: ${MINIO_EXTERNAL_ENDPOINT:-ahgir.com/storage}
+      MINIO_EXTERNAL_ENDPOINT: ${MINIO_EXTERNAL_ENDPOINT:-picur.my/storage}
       MINIO_EXTERNAL_SECURE: ${MINIO_EXTERNAL_SECURE:-true}
       # CompreFace
       COMPREFACE_API_URL: http://compreface-api:8080
@@ -205,7 +205,7 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD}
       SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL}
       # Frontend URL (for email links)
-      FRONTEND_URL: ${FRONTEND_URL:-https://ahgir.com}
+      FRONTEND_URL: ${FRONTEND_URL:-https://picur.my}
       # CompreFace
       COMPREFACE_API_URL: http://compreface-api:8080
       COMPREFACE_API_KEY: ${COMPREFACE_API_KEY:-00000000-0000-0000-0000-000000000002}
