@@ -450,7 +450,7 @@ async def admin_list_payments(
 ):
     """List all payments platform-wide."""
     payments = (
-        db.query(Payment, User.email, Event.name)
+        db.query(Payment, User.email, Event.name, EventTier.tier_name)
         .outerjoin(User, Payment.user_id == User.id)
         .outerjoin(EventTier, Payment.event_tier_id == EventTier.id)
         .outerjoin(Event, EventTier.event_id == Event.id)
@@ -472,12 +472,13 @@ async def admin_list_payments(
                 "payment_id": str(p.id),
                 "user_email": email,
                 "event_name": event_name,
+                "tier_name": tier_name or "unknown",
                 "amount_cents": p.amount_cents,
                 "currency": p.currency,
                 "status": p.status,
                 "created_at": p.created_at.isoformat(),
             }
-            for p, email, event_name in payments
+            for p, email, event_name, tier_name in payments
         ],
         "total_revenue_cents": total_revenue,
         "total_revenue_display": f"RM {total_revenue / 100:.2f}",

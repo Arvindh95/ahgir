@@ -9,7 +9,7 @@ import { authService } from '@/lib/auth'
 import { useToast } from '@/hooks/useToast'
 import SuperadminSkeleton from '@/components/skeletons/SuperadminSkeleton'
 import GlobalAnalytics from '@/components/GlobalAnalytics'
-import { Shield, Users, Image as ImageIcon, Database, Ban, ShieldCheck, ShieldOff, Trash2 } from 'lucide-react'
+import { Shield, Users, Image as ImageIcon, Database, Ban, ShieldCheck, ShieldOff, Trash2, DollarSign, CreditCard } from 'lucide-react'
 
 interface UserItem {
   user_id: string
@@ -27,6 +27,18 @@ interface PlatformStats {
   total_photos: number
   total_faces: number
   total_storage_bytes: number
+  total_revenue_cents: number
+}
+
+interface PaymentItem {
+  payment_id: string
+  event_name: string
+  user_email: string
+  tier_name: string
+  amount_cents: number
+  currency: string
+  status: string
+  created_at: string
 }
 
 interface ConfirmAction {
@@ -45,6 +57,7 @@ export default function SuperadminPage() {
   const [updating, setUpdating] = useState<string | null>(null)
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null)
   const [currentUserId, setCurrentUserId] = useState<string>('')
+  const [payments, setPayments] = useState<PaymentItem[]>([])
 
   useEffect(() => {
     checkAccess()
@@ -58,7 +71,7 @@ export default function SuperadminPage() {
         router.push('/admin/events')
         return
       }
-      await Promise.all([loadUsers(), loadStats()])
+      await Promise.all([loadUsers(), loadStats(), loadPayments()])
     } catch {
       router.push('/admin/login')
     } finally {
@@ -74,6 +87,15 @@ export default function SuperadminPage() {
   const loadStats = async () => {
     const response = await api.get('/admin/stats')
     setStats(response.data)
+  }
+
+  const loadPayments = async () => {
+    try {
+      const response = await api.get('/admin/payments')
+      setPayments(response.data.payments || [])
+    } catch {
+      // payments endpoint may not exist on older backends
+    }
   }
 
   const handleConfirm = async () => {
@@ -172,7 +194,7 @@ export default function SuperadminPage() {
 
           {/* Platform Stats */}
           {stats && (
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-4 mb-8">
               <div className="glass-card p-4 rounded-xl text-center">
                 <div className="text-2xl font-bold text-purple-400 mb-1">{stats.total_users}</div>
                 <div className="text-xs text-gray-400 uppercase tracking-wider flex items-center justify-center gap-1">
@@ -197,6 +219,12 @@ export default function SuperadminPage() {
                 <div className="text-2xl font-bold text-orange-400 mb-1">{formatBytes(stats.total_storage_bytes)}</div>
                 <div className="text-xs text-gray-400 uppercase tracking-wider flex items-center justify-center gap-1">
                   <Database className="w-3 h-3" /> Storage
+                </div>
+              </div>
+              <div className="glass-card p-4 rounded-xl text-center">
+                <div className="text-2xl font-bold text-emerald-400 mb-1">RM {(stats.total_revenue_cents / 100).toFixed(0)}</div>
+                <div className="text-xs text-gray-400 uppercase tracking-wider flex items-center justify-center gap-1">
+                  <DollarSign className="w-3 h-3" /> Revenue
                 </div>
               </div>
             </div>
@@ -290,6 +318,59 @@ export default function SuperadminPage() {
                 </tbody>
               </table>
             </div>
+          </div>
+
+          {/* Recent Payments */}
+          <div className="glass-card p-6 rounded-2xl mt-8">
+            <h2 className="text-xl font-bold mb-6 flex items-center gap-2">
+              <CreditCard className="w-5 h-5" /> Recent Payments
+            </h2>
+            {payments.length === 0 ? (
+              <p className="text-gray-500 text-sm text-center py-8">No payments yet</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-white/10 text-gray-400">
+                      <th className="pb-3 pl-2 font-medium">Event</th>
+                      <th className="pb-3 font-medium">User</th>
+                      <th className="pb-3 font-medium">Tier</th>
+                      <th className="pb-3 font-medium">Amount</th>
+                      <th className="pb-3 font-medium">Status</th>
+                      <th className="pb-3 font-medium">Date</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {payments.slice(0, 20).map((payment) => (
+                      <tr key={payment.payment_id} className="hover:bg-white/5 transition-colors">
+                        <td className="py-3 pl-2 font-medium">{payment.event_name}</td>
+                        <td className="py-3 text-gray-400">{payment.user_email}</td>
+                        <td className="py-3">
+                          <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase ${
+                            payment.tier_name === 'standard' ? 'bg-blue-500/20 text-blue-400' :
+                            payment.tier_name === 'premium' ? 'bg-purple-500/20 text-purple-400' :
+                            'bg-gray-500/20 text-gray-400'
+                          }`}>
+                            {payment.tier_name}
+                          </span>
+                        </td>
+                        <td className="py-3 font-medium">RM {(payment.amount_cents / 100).toFixed(0)}</td>
+                        <td className="py-3">
+                          <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                            payment.status === 'completed' ? 'bg-green-500/20 text-green-400' :
+                            payment.status === 'pending' ? 'bg-yellow-500/20 text-yellow-400' :
+                            'bg-red-500/20 text-red-400'
+                          }`}>
+                            {payment.status}
+                          </span>
+                        </td>
+                        <td className="py-3 text-gray-400">{formatDate(payment.created_at)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
 

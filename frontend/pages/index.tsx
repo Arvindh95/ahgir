@@ -12,6 +12,7 @@ import {
   ImageDown,
   ArrowRight,
   ChevronDown,
+  Check,
 } from 'lucide-react'
 import PublicLayout from '@/components/PublicLayout'
 import { FadeIn, FadeInStagger } from '@/components/FadeIn'
@@ -179,6 +180,68 @@ export default function Home() {
               ))}
             </div>
           </FadeInStagger>
+        </div>
+      </section>
+
+      {/* Pricing Preview */}
+      <section className="py-32">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <FadeIn>
+            <div className="text-center mb-24">
+              <h2 className="text-4xl md:text-6xl font-bold mb-6 tracking-tight">Simple pricing</h2>
+              <p className="text-gray-400 text-xl max-w-2xl mx-auto font-light">
+                Start free, upgrade per event when you need more.
+              </p>
+            </div>
+          </FadeIn>
+
+          <FadeInStagger>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8 max-w-5xl mx-auto">
+              {[
+                { name: 'Free', price: 'RM 0', period: '', photos: '25 photos', highlighted: false },
+                { name: 'Standard', price: 'RM 500', period: 'per event', photos: '1,000 photos', highlighted: false },
+                { name: 'Premium', price: 'RM 800', period: 'per event', photos: '2,000 photos', highlighted: true },
+              ].map((tier) => (
+                <FadeIn key={tier.name}>
+                  <div className={`rounded-2xl p-8 flex flex-col text-center ${
+                    tier.highlighted
+                      ? 'glass-card border-blue-500/30 ring-1 ring-blue-500/20'
+                      : 'glass-card'
+                  }`}>
+                    {tier.highlighted && (
+                      <div className="text-xs font-bold text-blue-400 mb-4">MOST POPULAR</div>
+                    )}
+                    <h3 className="text-xl font-bold mb-1">{tier.name}</h3>
+                    <div className="flex items-baseline gap-1 justify-center mb-2">
+                      <span className="text-3xl font-bold">{tier.price}</span>
+                      {tier.period && <span className="text-gray-400 text-sm">{tier.period}</span>}
+                    </div>
+                    <p className="text-gray-400 text-sm mb-6">Up to {tier.photos} per event</p>
+                    <ul className="space-y-2 mb-6 text-left">
+                      {['Face recognition', 'Guest scanning', 'Photo downloads'].map((f) => (
+                        <li key={f} className="flex items-center gap-2 text-sm text-gray-300">
+                          <Check className="w-4 h-4 text-green-400 flex-shrink-0" />
+                          {f}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </FadeIn>
+              ))}
+            </div>
+          </FadeInStagger>
+
+          <FadeIn>
+            <div className="text-center mt-12">
+              <Link
+                href="/pricing"
+                className="inline-flex items-center gap-2 text-blue-400 hover:text-blue-300 font-medium transition-colors"
+              >
+                View full pricing details
+                <ArrowRight className="w-4 h-4" />
+              </Link>
+            </div>
+          </FadeIn>
         </div>
       </section>
 
