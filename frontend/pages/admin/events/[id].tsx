@@ -158,6 +158,7 @@ export default function EventDetailsPage() {
       toast(err.response?.data?.detail || 'Failed to upload cover image', 'error')
     } finally {
       setIsUploadingCover(false)
+      e.target.value = ''
     }
   }
 

@@ -343,11 +343,12 @@ async def get_event(
     # Generate guest link
     guest_link = f"{settings.frontend_url}/e/{event.slug}"
     
-    # Generate cover image URL if exists
+    # Generate cover image URL if exists (with cache-buster since filename is always cover.jpg)
     cover_image_url = None
     if event.cover_image:
         _protocol = "https" if settings.minio_external_secure else "http"
-        cover_image_url = f"{_protocol}://{settings.minio_external_endpoint}/{settings.minio_bucket}/{event.cover_image}"
+        timestamp = int(datetime.utcnow().timestamp())
+        cover_image_url = f"{_protocol}://{settings.minio_external_endpoint}/{settings.minio_bucket}/{event.cover_image}?v={timestamp}"
 
     return EventDetailResponse(
         event_id=str(event.id),
@@ -466,8 +467,12 @@ async def upload_cover_image(
     event.cover_image = object_key
     db.commit()
 
+    # Invalidate event info cache so guest page picks up the new cover
+    cache_delete_pattern(f"event_info:{event.slug}")
+
     _protocol = "https" if settings.minio_external_secure else "http"
-    cover_url = f"{_protocol}://{settings.minio_external_endpoint}/{settings.minio_bucket}/{object_key}"
+    timestamp = int(datetime.utcnow().timestamp())
+    cover_url = f"{_protocol}://{settings.minio_external_endpoint}/{settings.minio_bucket}/{object_key}?v={timestamp}"
     return {"message": "Cover image uploaded", "cover_image_url": cover_url}
 
 @router.get("/{event_id}/qr")
