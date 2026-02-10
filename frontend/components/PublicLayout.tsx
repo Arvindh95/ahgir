@@ -32,13 +32,7 @@ export default function PublicLayout({ children }: PublicLayoutProps) {
                   href="/contact"
                   className="text-sm font-medium text-gray-300 hover:text-white transition-colors"
                 >
-                  About
-                </Link>
-                <Link
-                  href="/contact"
-                  className="text-sm font-medium text-gray-300 hover:text-white transition-colors"
-                >
-                  Contact
+                  About Us & Contact
                 </Link>
               </div>
             </div>
@@ -73,13 +67,7 @@ export default function PublicLayout({ children }: PublicLayoutProps) {
                 href="/contact"
                 className="block px-3 py-2 text-sm font-medium text-gray-300 hover:text-white hover:bg-white/5 rounded-lg"
               >
-                About
-              </Link>
-              <Link
-                href="/contact"
-                className="block px-3 py-2 text-sm font-medium text-gray-300 hover:text-white hover:bg-white/5 rounded-lg"
-              >
-                Contact
+                About Us & Contact
               </Link>
               <Link
                 href="/admin/login"
