@@ -28,7 +28,7 @@ from app.models import User, Event, Image, Face, AuditLog
 from app.storage import storage_service
 from app.queue import enqueue_face_indexing
 from app.audit import log_action
-from app.config import settings
+from app.config import settings, get_compreface_url
 from app.cache import cache_delete_pattern
 import httpx
 
@@ -932,7 +932,7 @@ async def delete_photo(
             try:
                 import httpx
                 httpx.delete(
-                    f"{settings.compreface_api_url}/api/v1/recognition/faces",
+                    f"{get_compreface_url()}/api/v1/recognition/faces",
                     params={"subject": face.compreface_subject_id},
                     headers={"x-api-key": settings.compreface_api_key},
                     timeout=5.0
@@ -956,7 +956,7 @@ async def delete_photo(
             if face.compreface_subject_id:
                 try:
                     httpx.delete(
-                        f"{settings.compreface_api_url}/api/v1/recognition/faces",
+                        f"{get_compreface_url()}/api/v1/recognition/faces",
                         headers={"x-api-key": settings.compreface_api_key},
                         params={"subject": face.compreface_subject_id},
                         timeout=10.0,
@@ -1033,7 +1033,7 @@ async def bulk_delete_photos(
                 if face.compreface_subject_id:
                     try:
                         httpx.delete(
-                            f"{settings.compreface_api_url}/api/v1/recognition/faces",
+                            f"{get_compreface_url()}/api/v1/recognition/faces",
                             headers={"x-api-key": settings.compreface_api_key},
                             params={"subject": face.compreface_subject_id},
                             timeout=5.0,
@@ -1266,7 +1266,7 @@ async def reindex_event(
             if face.compreface_subject_id:
                 try:
                     resp = httpx.delete(
-                        f"{settings.compreface_api_url}/api/v1/recognition/faces",
+                        f"{get_compreface_url()}/api/v1/recognition/faces",
                         headers={"x-api-key": settings.compreface_api_key},
                         params={"subject": face.compreface_subject_id},
                         timeout=10.0,

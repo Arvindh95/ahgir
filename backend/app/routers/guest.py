@@ -19,7 +19,7 @@ from app.models import Event, GuestSession, Face, Image
 from app.storage import storage_service
 from app.rate_limiter import rate_limiter, auth_rate_limiter, share_rate_limiter
 from app.audit import log_action
-from app.config import settings
+from app.config import settings, get_compreface_url
 from app.cache import cache_get, cache_set
 import httpx
 import asyncio
@@ -39,7 +39,7 @@ async def recognize_with_compreface(image_bytes: bytes, api_key: str, det_prob_t
             headers = {"x-api-key": api_key}
 
             response = await client.post(
-                f"{settings.compreface_api_url}/api/v1/recognition/recognize",
+                f"{get_compreface_url()}/api/v1/recognition/recognize",
                 headers=headers,
                 files=files,
                 params=params,

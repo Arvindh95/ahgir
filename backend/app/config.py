@@ -1,3 +1,4 @@
+import itertools
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
@@ -24,7 +25,7 @@ class Settings(BaseSettings):
     # Face Recognition
     face_similarity_threshold: float = 0.90
 
-    # CompreFace
+    # CompreFace (comma-separated URLs for round-robin load balancing)
     compreface_api_url: str = "http://compreface-api:8080"
     compreface_api_key: str = ""  # Recognition service API key
     compreface_detection_api_key: str = ""  # Detection service API key
@@ -56,3 +57,11 @@ class Settings(BaseSettings):
         env_file = ".env"
 
 settings = Settings()
+
+# Round-robin CompreFace URL selector (supports comma-separated URLs)
+_compreface_urls = [u.strip() for u in settings.compreface_api_url.split(",") if u.strip()]
+_compreface_cycle = itertools.cycle(_compreface_urls)
+
+def get_compreface_url() -> str:
+    """Get the next CompreFace API URL in round-robin order."""
+    return next(_compreface_cycle)

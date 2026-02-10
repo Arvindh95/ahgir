@@ -13,7 +13,7 @@ import io
 from app.database import SessionLocal
 from app.models import Image, Face
 from app.storage import storage_service
-from app.config import settings
+from app.config import settings, get_compreface_url
 from app.utils.thumbnail import generate_thumbnail
 
 logger = logging.getLogger(__name__)
@@ -46,7 +46,7 @@ async def _add_face_to_compreface(
             headers = {"x-api-key": api_key}
 
             response = await client.post(
-                f"{settings.compreface_api_url}/api/v1/recognition/faces",
+                f"{get_compreface_url()}/api/v1/recognition/faces",
                 headers=headers,
                 files=files,
                 params=params,
@@ -79,7 +79,7 @@ async def _detect_faces_compreface(
             headers = {"x-api-key": api_key}
 
             response = await client.post(
-                f"{settings.compreface_api_url}/api/v1/detection/detect",
+                f"{get_compreface_url()}/api/v1/detection/detect",
                 headers=headers,
                 files=files,
                 params=params,

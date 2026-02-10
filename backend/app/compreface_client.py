@@ -3,7 +3,7 @@
 import httpx
 import logging
 from typing import List, Dict, Any, Optional, Tuple
-from app.config import settings
+from app.config import settings, get_compreface_url
 
 logger = logging.getLogger(__name__)
 
@@ -12,7 +12,6 @@ class CompreFaceClient:
     """Client for CompreFace Recognition API."""
 
     def __init__(self):
-        self.base_url = settings.compreface_api_url
         self.api_key = settings.compreface_api_key
         self._recognition_service_name = "picur-recognition"
 
@@ -27,7 +26,7 @@ class CompreFaceClient:
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.get(
-                    f"{self.base_url}/api/v1/recognition/subjects",
+                    f"{get_compreface_url()}/api/v1/recognition/subjects",
                     headers=self._get_headers()
                 )
                 return response.status_code == 200
@@ -61,7 +60,7 @@ class CompreFaceClient:
                 }
 
                 response = await client.post(
-                    f"{self.base_url}/api/v1/recognition/faces",
+                    f"{get_compreface_url()}/api/v1/recognition/faces",
                     headers=self._get_headers(),
                     files=files,
                     params=params,
@@ -105,7 +104,7 @@ class CompreFaceClient:
                 }
 
                 response = await client.post(
-                    f"{self.base_url}/api/v1/detection/detect",
+                    f"{get_compreface_url()}/api/v1/detection/detect",
                     headers=self._get_headers(),
                     files=files,
                     params=params,
@@ -151,7 +150,7 @@ class CompreFaceClient:
                 }
 
                 response = await client.post(
-                    f"{self.base_url}/api/v1/recognition/recognize",
+                    f"{get_compreface_url()}/api/v1/recognition/recognize",
                     headers=self._get_headers(),
                     files=files,
                     params=params,
@@ -173,7 +172,7 @@ class CompreFaceClient:
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.delete(
-                    f"{self.base_url}/api/v1/recognition/faces",
+                    f"{get_compreface_url()}/api/v1/recognition/faces",
                     headers=self._get_headers(),
                     params={"subject": subject_id},
                 )
@@ -187,7 +186,7 @@ class CompreFaceClient:
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.delete(
-                    f"{self.base_url}/api/v1/recognition/faces",
+                    f"{get_compreface_url()}/api/v1/recognition/faces",
                     headers=self._get_headers(),
                     params={"subject": subject_id},
                 )
@@ -201,7 +200,7 @@ class CompreFaceClient:
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.get(
-                    f"{self.base_url}/api/v1/recognition/subjects",
+                    f"{get_compreface_url()}/api/v1/recognition/subjects",
                     headers=self._get_headers(),
                 )
                 if response.status_code == 200:

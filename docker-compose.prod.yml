@@ -2,9 +2,19 @@ services:
   backend:
     volumes: !reset []
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+    environment:
+      COMPREFACE_API_URL: "http://compreface-api:8080,http://compreface-api-2:8080"
+    depends_on:
+      compreface-api-2:
+        condition: service_started
 
   worker:
     volumes: !reset []
+    environment:
+      COMPREFACE_API_URL: "http://compreface-api:8080,http://compreface-api-2:8080"
+    depends_on:
+      compreface-api-2:
+        condition: service_started
 
   frontend:
     build:
@@ -15,3 +25,46 @@ services:
         NEXT_PUBLIC_API_URL: /api
     volumes: !reset []
     command: ["npm", "start"]
+
+  # Disable CompreFace admin in production (saves ~660MB RAM)
+  compreface-admin:
+    profiles:
+      - disabled
+
+  # Tune CompreFace API memory (8g -> 2g)
+  compreface-api:
+    environment:
+      API_JAVA_OPTS: "-Xmx2g"
+
+  # Second CompreFace instance for load balancing
+  compreface-api-2:
+    image: exadel/compreface-api:1.2.0
+    container_name: compreface-api-2
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_URL: jdbc:postgresql://compreface-postgres-db:5432/frs
+      SPRING_PROFILES_ACTIVE: dev
+      API_JAVA_OPTS: "-Xmx2g"
+      SAVE_IMAGES_TO_DB: "true"
+      MAX_FILE_SIZE: "50MB"
+      MAX_REQUEST_SIZE: "50MB"
+      CONNECTION_TIMEOUT: "10000"
+      READ_TIMEOUT: "60000"
+    depends_on:
+      compreface-postgres-db:
+        condition: service_healthy
+      compreface-core-2:
+        condition: service_started
+
+  compreface-core-2:
+    image: exadel/compreface-core:1.2.0
+    container_name: compreface-core-2
+    environment:
+      ML_PORT: "3000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s

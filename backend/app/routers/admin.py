@@ -10,7 +10,7 @@ import uuid
 from app.auth import get_current_user
 from app.database import get_db
 from app.models import User, Event, Image, Face, AuditLog
-from app.config import settings
+from app.config import settings, get_compreface_url
 from app.storage import storage_service
 from app.queue import get_failed_jobs, retry_failed_job
 
@@ -159,7 +159,7 @@ async def delete_user(
                 if face.compreface_subject_id:
                     try:
                         httpx.delete(
-                            f"{settings.compreface_api_url}/api/v1/recognition/faces",
+                            f"{get_compreface_url()}/api/v1/recognition/faces",
                             headers={"x-api-key": settings.compreface_api_key},
                             params={"subject": face.compreface_subject_id},
                             timeout=5.0,
