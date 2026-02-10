@@ -1,4 +1,0 @@
-# file: C:\Users\CSM-Arvindh\AppData\Roaming\Python\Python313\site-packages\sqlalchemy\dialects\__init__.py
-# hypothesis_version: 6.150.2
-
-['.', 'base', 'mariadb', 'mssql', 'mysql', 'oracle', 'postgresql', 'sqlalchemy.dialects', 'sqlalchemy.plugins', 'sqlite']

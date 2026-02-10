@@ -53,9 +53,9 @@ cd "$PROJECT_DIR"
 if tar czf "$CONFIG_BACKUP_FILE" \
     .env.production \
     Caddyfile \
-    Caddyfile.production \
+    Caddyfile.prod \
     docker-compose.yml \
-    docker-compose.production.yml \
+    docker-compose.prod.yml \
     2>/dev/null; then
     echo -e "${GREEN}✓ Configuration backup completed${NC}"
     CONFIG_SIZE=$(du -h "$CONFIG_BACKUP_FILE" | cut -f1)

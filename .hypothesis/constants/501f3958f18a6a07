@@ -1,4 +1,0 @@
-# file: C:\Users\CSM-Arvindh\AppData\Roaming\Python\Python313\site-packages\sqlalchemy\dialects\postgresql\json.py
-# hypothesis_version: 6.150.2
-
-[', ', 'JSON', 'JSONB', 'JSONPATH', '{%s}', '{}']

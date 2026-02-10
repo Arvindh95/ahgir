@@ -1,4 +1,0 @@
-# file: D:\ahgir\backend\app\auth.py
-# hypothesis_version: 6.150.2
-
-['Bearer', 'Invalid event token', 'Invalid token', 'User not found', 'WWW-Authenticate', 'event_id', 'exp', 'iat', 'session_id', 'sub', 'utf-8']

@@ -1,4 +1,0 @@
-# file: D:\ahgir\backend\app\config.py
-# hypothesis_version: 6.150.2
-
-[0.6, '.env', 'HS256', 'minio:9000', 'minioadmin', 'photos', 'redis://redis:6379/0']

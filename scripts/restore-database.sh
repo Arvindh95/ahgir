@@ -12,7 +12,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.production.yml}"
+COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml -f docker-compose.prod.yml}"
 
 # Check if backup file is provided
 if [ -z "$1" ]; then
@@ -50,34 +50,34 @@ fi
 
 # Stop backend and worker services
 echo -e "${YELLOW}Stopping backend and worker services...${NC}"
-docker-compose -f "$COMPOSE_FILE" stop backend worker
+docker compose -f $COMPOSE_FILE stop backend worker
 echo -e "${GREEN}✓ Services stopped${NC}"
 echo ""
 
 # Restore database
 echo -e "${YELLOW}Restoring database...${NC}"
 if gunzip -c "$BACKUP_FILE" | \
-    docker-compose -f "$COMPOSE_FILE" exec -T postgres \
+    docker compose -f $COMPOSE_FILE exec -T postgres \
     psql -U picur picur; then
     echo -e "${GREEN}✓ Database restored successfully${NC}"
 else
     echo -e "${RED}✗ Database restore failed${NC}"
     echo -e "${YELLOW}Starting services...${NC}"
-    docker-compose -f "$COMPOSE_FILE" start backend worker
+    docker compose -f $COMPOSE_FILE start backend worker
     exit 1
 fi
 echo ""
 
 # Start services
 echo -e "${YELLOW}Starting backend and worker services...${NC}"
-docker-compose -f "$COMPOSE_FILE" start backend worker
+docker compose -f $COMPOSE_FILE start backend worker
 echo -e "${GREEN}✓ Services started${NC}"
 echo ""
 
 # Verify restore
 echo -e "${YELLOW}Verifying restore...${NC}"
 sleep 5
-if docker-compose -f "$COMPOSE_FILE" exec postgres \
+if docker compose -f $COMPOSE_FILE exec postgres \
     psql -U picur -d picur -c "SELECT COUNT(*) FROM users;" > /dev/null 2>&1; then
     echo -e "${GREEN}✓ Database is accessible${NC}"
 else

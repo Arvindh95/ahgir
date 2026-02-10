@@ -9,7 +9,7 @@ BACKUP_DIR="${BACKUP_DIR:-/backups/postgres}"
 RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-30}"
 DATE=$(date +%Y%m%d_%H%M%S)
 BACKUP_FILE="$BACKUP_DIR/picur_backup_$DATE.sql.gz"
-COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.production.yml}"
+COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml -f docker-compose.prod.yml}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -23,14 +23,14 @@ mkdir -p "$BACKUP_DIR"
 echo -e "${YELLOW}Starting database backup at $(date)${NC}"
 
 # Check if PostgreSQL container is running
-if ! docker-compose -f "$COMPOSE_FILE" ps postgres | grep -q "Up"; then
+if ! docker compose -f $COMPOSE_FILE ps postgres | grep -q "Up"; then
     echo -e "${RED}Error: PostgreSQL container is not running${NC}"
     exit 1
 fi
 
 # Create backup
 echo -e "${YELLOW}Creating backup: $BACKUP_FILE${NC}"
-if docker-compose -f "$COMPOSE_FILE" exec -T postgres \
+if docker compose -f $COMPOSE_FILE exec -T postgres \
     pg_dump -U picur picur | gzip > "$BACKUP_FILE"; then
     echo -e "${GREEN}Backup created successfully${NC}"
     

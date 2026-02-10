@@ -1,4 +1,0 @@
-# file: C:\Users\CSM-Arvindh\AppData\Roaming\Python\Python313\site-packages\httpx\_types.py
-# hypothesis_version: 6.150.2
-
-['AsyncByteStream', 'Auth', 'Cookies', 'Headers', 'Proxy', 'QueryParams', 'Request', 'SyncByteStream', 'Timeout', 'URL']
