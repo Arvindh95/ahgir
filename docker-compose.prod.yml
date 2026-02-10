@@ -28,8 +28,8 @@ services:
 
   # Disable CompreFace admin in production (saves ~660MB RAM)
   compreface-admin:
-    profiles:
-      - disabled
+    deploy:
+      replicas: 0
 
   # Tune CompreFace API memory (8g -> 2g)
   compreface-api:
