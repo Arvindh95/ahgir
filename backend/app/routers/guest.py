@@ -20,6 +20,7 @@ from app.storage import storage_service
 from app.rate_limiter import rate_limiter, auth_rate_limiter, share_rate_limiter
 from app.audit import log_action
 from app.config import settings
+from app.cache import cache_get, cache_set
 import httpx
 import asyncio
 
@@ -81,27 +82,33 @@ class EventTokenResponse(BaseModel):
 async def get_event_by_slug(slug: str, db: Session = Depends(get_db)):
     """
     Retrieve Event information by slug
-    
+
     - **slug**: Unique event slug
-    
+
     Returns event information including whether a passcode is required
     """
+    # Check cache first
+    cache_key = f"event_info:{slug}"
+    cached = cache_get(cache_key)
+    if cached:
+        return EventInfoResponse(**cached)
+
     # Find event by slug
     event = db.query(Event).filter(Event.slug == slug).first()
-    
+
     if not event:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Event not found"
         )
-    
+
     cover_image_url = None
     if event.cover_image:
         from app.config import settings as _settings
         _protocol = "https" if _settings.minio_external_secure else "http"
         cover_image_url = f"{_protocol}://{_settings.minio_external_endpoint}/{_settings.minio_bucket}/{event.cover_image}"
 
-    return EventInfoResponse(
+    result = EventInfoResponse(
         event_id=str(event.id),
         name=event.name,
         date=event.date.isoformat() if event.date else None,
@@ -110,6 +117,8 @@ async def get_event_by_slug(slug: str, db: Session = Depends(get_db)):
         description=event.description,
         cover_image_url=cover_image_url
     )
+    cache_set(cache_key, result.model_dump(), ttl_seconds=300)
+    return result
 
 @router.post("/e/{slug}/auth", response_model=EventTokenResponse)
 async def authenticate_guest(
@@ -585,6 +594,19 @@ async def get_gallery(
     event_id = uuid.UUID(event_token.event_id)
     session_id = uuid.UUID(event_token.session_id)
 
+    # Check cache first
+    cache_key = f"gallery:{event_token.event_id}:p{page}:l{limit}"
+    cached = cache_get(cache_key)
+    if cached:
+        # Still log gallery views even on cache hits (first page only)
+        if page == 1:
+            event = db.query(Event).filter(Event.id == event_id).first()
+            if event:
+                log_action(db=db, event_id=event_id, actor_type='guest',
+                           actor_id=session_id, action='gallery_view',
+                           metadata={'total_photos': cached.get('total', 0)})
+        return GalleryResponse(**cached)
+
     # Verify event exists
     event = db.query(Event).filter(Event.id == event_id).first()
     if not event:
@@ -638,7 +660,7 @@ async def get_gallery(
             metadata={'total_photos': total}
         )
 
-    return GalleryResponse(
+    result = GalleryResponse(
         photos=photos,
         total=total,
         page=page,
@@ -646,6 +668,8 @@ async def get_gallery(
         event_name=event.name,
         allow_downloads=event.allow_downloads
     )
+    cache_set(cache_key, result.model_dump(), ttl_seconds=120)
+    return result
 
 
 # ─── Share ────────────────────────────────────────────────────────────────────
@@ -672,6 +696,12 @@ async def get_share_info(
     client_ip = request.client.host if request.client else "unknown"
     share_rate_limiter.enforce_rate_limit(client_ip, action="share")
 
+    # Check cache first
+    cache_key = f"share:{event_id}:{image_id}"
+    cached = cache_get(cache_key)
+    if cached:
+        return ShareInfoResponse(**cached)
+
     try:
         event_uuid = uuid.UUID(event_id)
         image_uuid = uuid.UUID(image_id)
@@ -694,11 +724,13 @@ async def get_share_info(
         event_id=event_uuid, image_id=image_uuid, photo_type="thumb"
     )
 
-    return ShareInfoResponse(
+    result = ShareInfoResponse(
         event_name=event.name,
         image_url=image_url,
         thumbnail_url=thumbnail_url,
         event_slug=event.slug
     )
+    cache_set(cache_key, result.model_dump(), ttl_seconds=600)
+    return result
 
 

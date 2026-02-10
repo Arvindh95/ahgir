@@ -29,6 +29,7 @@ from app.storage import storage_service
 from app.queue import enqueue_face_indexing
 from app.audit import log_action
 from app.config import settings
+from app.cache import cache_delete_pattern
 import httpx
 
 router = APIRouter(prefix="/events", tags=["events"])
@@ -387,6 +388,7 @@ async def update_event(
     if not current_user.is_superadmin and event.owner_user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to update this event")
 
+    old_slug = event.slug
     if update_data.slug is not None:
         existing = db.query(Event).filter(Event.slug == update_data.slug, Event.id != event_uuid).first()
         if existing:
@@ -399,6 +401,12 @@ async def update_event(
 
     db.commit()
     db.refresh(event)
+
+    # Invalidate event info cache (both old and new slug if changed)
+    cache_delete_pattern(f"event_info:{event.slug}")
+    if old_slug != event.slug:
+        cache_delete_pattern(f"event_info:{old_slug}")
+
     return {"message": "Event updated", "slug": event.slug}
 
 @router.post("/{event_id}/cover")
@@ -764,6 +772,10 @@ async def upload_photos(
                 reason=f"Upload failed: {str(e)}"
             ))
     
+    # Invalidate gallery cache for this event
+    if uploaded:
+        cache_delete_pattern(f"gallery:{event_id}:*")
+
     return PhotoUploadResponse(
         uploaded=uploaded,
         duplicates=duplicates
@@ -969,6 +981,9 @@ async def delete_photo(
         }
     )
     
+    # Invalidate gallery cache
+    cache_delete_pattern(f"gallery:{event_id}:*")
+
     return PhotoDeleteResponse(
         message="Photo deleted",
         image_id=str(image_uuid)
@@ -1045,6 +1060,9 @@ async def bulk_delete_photos(
         action='delete',
         metadata={'bulk_delete': True, 'count': deleted}
     )
+
+    # Invalidate gallery cache
+    cache_delete_pattern(f"gallery:{event_id}:*")
 
     return {"message": f"Deleted {deleted} photos", "deleted": deleted}
 
@@ -1442,10 +1460,15 @@ async def delete_event(
         # Log error but continue with database deletion
         print(f"Failed to delete photos from MinIO for event {event_uuid}: {str(e)}")
     
+    # Invalidate caches
+    slug = event.slug
+    cache_delete_pattern(f"event_info:{slug}")
+    cache_delete_pattern(f"gallery:{event_id}:*")
+
     # Delete event from database (cascades to images, faces, sessions, audit logs)
     db.delete(event)
     db.commit()
-    
+
     return EventDeleteResponse(
         message="Event deleted successfully",
         event_id=str(event_uuid)
