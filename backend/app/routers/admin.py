@@ -277,7 +277,7 @@ async def admin_list_events(
     """List all events with tier info (superadmin only)."""
     events = (
         db.query(Event, User.email, EventTier)
-        .outerjoin(User, Event.user_id == User.id)
+        .outerjoin(User, Event.owner_user_id == User.id)
         .outerjoin(EventTier, Event.id == EventTier.event_id)
         .order_by(Event.created_at.desc())
         .all()
