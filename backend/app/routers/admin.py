@@ -10,6 +10,7 @@ import uuid
 from app.auth import get_current_user
 from app.database import get_db
 from app.models import User, Event, Image, Face, AuditLog
+from app.config import settings
 from app.storage import storage_service
 from app.queue import get_failed_jobs, retry_failed_job
 
@@ -123,6 +124,60 @@ async def update_user(
         "is_disabled": target_user.is_disabled,
         "message": "User updated successfully"
     }
+
+
+@router.delete("/users/{user_id}")
+async def delete_user(
+    user_id: str,
+    current_user: User = Depends(get_superadmin_user),
+    db: Session = Depends(get_db)
+):
+    """Permanently delete a user and all their data (events, photos, faces)."""
+    try:
+        target_uuid = uuid.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid user ID")
+
+    target_user = db.query(User).filter(User.id == target_uuid).first()
+    if not target_user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if target_user.id == current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete your own account"
+        )
+
+    # Clean up external resources for each event
+    user_events = db.query(Event).filter(Event.owner_user_id == target_uuid).all()
+    for event in user_events:
+        # Delete CompreFace subjects
+        if settings.compreface_api_key:
+            import httpx
+            event_faces = db.query(Face).filter(Face.event_id == event.id).all()
+            for face in event_faces:
+                if face.compreface_subject_id:
+                    try:
+                        httpx.delete(
+                            f"{settings.compreface_api_url}/api/v1/recognition/faces",
+                            headers={"x-api-key": settings.compreface_api_key},
+                            params={"subject": face.compreface_subject_id},
+                            timeout=5.0,
+                        )
+                    except Exception:
+                        pass
+
+        # Delete photos from MinIO
+        try:
+            storage_service.delete_event_photos(event.id)
+        except Exception:
+            pass
+
+    email = target_user.email
+    db.delete(target_user)
+    db.commit()
+
+    return {"message": f"User {email} and all their data deleted successfully"}
 
 
 @router.get("/stats")

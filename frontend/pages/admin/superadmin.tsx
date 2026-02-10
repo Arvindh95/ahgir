@@ -9,7 +9,7 @@ import { authService } from '@/lib/auth'
 import { useToast } from '@/hooks/useToast'
 import SuperadminSkeleton from '@/components/skeletons/SuperadminSkeleton'
 import GlobalAnalytics from '@/components/GlobalAnalytics'
-import { Shield, Users, Image as ImageIcon, Database, Ban, ShieldCheck, ShieldOff } from 'lucide-react'
+import { Shield, Users, Image as ImageIcon, Database, Ban, ShieldCheck, ShieldOff, Trash2 } from 'lucide-react'
 
 interface UserItem {
   user_id: string
@@ -30,7 +30,7 @@ interface PlatformStats {
 }
 
 interface ConfirmAction {
-  type: 'superadmin' | 'disabled'
+  type: 'superadmin' | 'disabled' | 'delete'
   userId: string
   email: string
   currentValue: boolean
@@ -44,6 +44,7 @@ export default function SuperadminPage() {
   const [loading, setLoading] = useState(true)
   const [updating, setUpdating] = useState<string | null>(null)
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null)
+  const [currentUserId, setCurrentUserId] = useState<string>('')
 
   useEffect(() => {
     checkAccess()
@@ -52,6 +53,7 @@ export default function SuperadminPage() {
   const checkAccess = async () => {
     try {
       const me = await authService.getMe()
+      setCurrentUserId(me.user_id)
       if (!me.is_superadmin) {
         router.push('/admin/events')
         return
@@ -79,7 +81,12 @@ export default function SuperadminPage() {
     const { type, userId, currentValue } = confirmAction
     setUpdating(userId)
     try {
-      if (type === 'superadmin') {
+      if (type === 'delete') {
+        await api.delete(`/admin/users/${userId}`)
+        setUsers(prev => prev.filter(u => u.user_id !== userId))
+        toast('User deleted permanently', 'success')
+        loadStats()
+      } else if (type === 'superadmin') {
         await api.patch(`/admin/users/${userId}`, { is_superadmin: !currentValue })
         setUsers(prev => prev.map(u =>
           u.user_id === userId ? { ...u, is_superadmin: !currentValue } : u
@@ -116,6 +123,13 @@ export default function SuperadminPage() {
   const getConfirmModalProps = () => {
     if (!confirmAction) return { title: '', message: '', variant: 'danger' as const }
     const { type, email, currentValue } = confirmAction
+    if (type === 'delete') {
+      return {
+        title: 'Delete User',
+        message: `Permanently delete ${email} and all their events, photos, and data? This cannot be undone.`,
+        variant: 'danger' as const,
+      }
+    }
     if (type === 'superadmin') {
       return {
         title: currentValue ? 'Revoke Superadmin' : 'Grant Superadmin',
@@ -260,6 +274,14 @@ export default function SuperadminPage() {
                             title={user.is_disabled ? 'Enable account' : 'Disable account'}
                           >
                             <Ban className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => setConfirmAction({ type: 'delete', userId: user.user_id, email: user.email, currentValue: false })}
+                            disabled={updating === user.user_id || user.user_id === currentUserId}
+                            className="p-1.5 rounded-lg transition-colors bg-white/5 text-gray-500 hover:bg-red-500/20 hover:text-red-400 disabled:opacity-30 disabled:cursor-not-allowed"
+                            title={user.user_id === currentUserId ? 'Cannot delete yourself' : 'Delete user permanently'}
+                          >
+                            <Trash2 className="w-4 h-4" />
                           </button>
                         </div>
                       </td>

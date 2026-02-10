@@ -201,13 +201,19 @@ export default function EventsPage() {
                   >
                     {/* Selection checkbox */}
                     <div
-                      className={`absolute top-4 left-4 w-6 h-6 rounded border-2 flex items-center justify-center cursor-pointer z-10 transition-all ${selectedEvents.has(event.event_id)
-                          ? 'bg-blue-600 border-blue-600'
-                          : 'bg-black/40 border-white/20 opacity-0 group-hover:opacity-100'
-                        }`}
+                      className="absolute top-2 left-2 p-2 z-10 cursor-pointer"
                       onClick={(e) => { e.stopPropagation(); toggleSelect(event.event_id) }}
                     >
-                      {selectedEvents.has(event.event_id) && <Check className="w-4 h-4 text-white" />}
+                      <div
+                        className={`w-6 h-6 rounded border-2 flex items-center justify-center transition-all ${selectedEvents.has(event.event_id)
+                            ? 'bg-blue-600 border-blue-600'
+                            : selectedEvents.size > 0
+                              ? 'bg-black/40 border-white/20 opacity-70 hover:opacity-100'
+                              : 'bg-black/40 border-white/20 opacity-0 group-hover:opacity-100'
+                          }`}
+                      >
+                        {selectedEvents.has(event.event_id) && <Check className="w-4 h-4 text-white" />}
+                      </div>
                     </div>
 
                     <div
