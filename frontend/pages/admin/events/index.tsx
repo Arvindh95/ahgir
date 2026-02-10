@@ -197,27 +197,28 @@ export default function EventsPage() {
                 {filteredEvents.map((event) => (
                   <div
                     key={event.event_id}
-                    className="glass-card p-6 rounded-2xl cursor-pointer hover:bg-white/10 transition-colors group relative overflow-hidden"
+                    className="glass-card rounded-2xl hover:bg-white/10 transition-colors group overflow-hidden flex"
                   >
-                    {/* Selection checkbox */}
+                    {/* Checkbox column — not clickable for navigation */}
                     <div
-                      className="absolute top-2 left-2 p-2 z-10 cursor-pointer"
-                      onClick={(e) => { e.stopPropagation(); toggleSelect(event.event_id) }}
+                      className={`flex items-start pt-6 pl-4 pr-1 cursor-pointer transition-all ${
+                        selectedEvents.size > 0 ? 'w-10' : 'w-0 opacity-0 group-hover:w-10 group-hover:opacity-100'
+                      }`}
+                      onClick={() => toggleSelect(event.event_id)}
                     >
                       <div
-                        className={`w-6 h-6 rounded border-2 flex items-center justify-center transition-all ${selectedEvents.has(event.event_id)
+                        className={`w-6 h-6 rounded border-2 flex items-center justify-center flex-shrink-0 transition-all ${selectedEvents.has(event.event_id)
                             ? 'bg-blue-600 border-blue-600'
-                            : selectedEvents.size > 0
-                              ? 'bg-black/40 border-white/20 opacity-70 hover:opacity-100'
-                              : 'bg-black/40 border-white/20 opacity-0 group-hover:opacity-100'
+                            : 'border-white/20 hover:border-white/40'
                           }`}
                       >
                         {selectedEvents.has(event.event_id) && <Check className="w-4 h-4 text-white" />}
                       </div>
                     </div>
 
+                    {/* Card content — clickable for navigation */}
                     <div
-                      className="relative z-10"
+                      className="flex-1 p-6 cursor-pointer"
                       onClick={() => router.push(`/admin/events/${event.event_id}`)}
                     >
                       <div className="flex justify-between items-start mb-4">
