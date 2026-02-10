@@ -465,7 +465,7 @@ export default function SuperadminPage() {
                           photoLimit: tier === 'custom' ? tierEdit.photoLimit : (defaults[tier] || tierEdit.photoLimit),
                         })
                       }}
-                      className="glass-input w-full px-3 py-2.5 rounded-xl text-sm"
+                      className="glass-input w-full px-3 py-2.5 rounded-xl text-sm [&>option]:bg-gray-900 [&>option]:text-white"
                     >
                       <option value="free">Free (25 photos)</option>
                       <option value="standard">Standard (1,000 photos)</option>
