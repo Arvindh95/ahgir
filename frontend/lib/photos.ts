@@ -6,6 +6,7 @@ export interface Photo {
   status: string
   face_count: number
   thumbnail_url: string
+  download_url: string
   uploaded_at: string
 }
 
@@ -70,5 +71,24 @@ export const photoService = {
 
   async deletePhoto(eventId: string, imageId: string): Promise<void> {
     await api.delete(`/events/${eventId}/photos/${imageId}`)
+  },
+
+  async bulkDeletePhotos(eventId: string, imageIds: string[]): Promise<{ deleted: number }> {
+    const response = await api.post(`/events/${eventId}/photos/bulk-delete`, { image_ids: imageIds })
+    return response.data
+  },
+
+  async downloadZip(eventId: string, imageIds: string[]): Promise<Blob> {
+    const response = await api.post(`/events/${eventId}/photos/download-zip`, { image_ids: imageIds }, {
+      responseType: 'blob',
+    })
+    return response.data
+  },
+
+  async downloadAllZip(eventId: string): Promise<Blob> {
+    const response = await api.post(`/events/${eventId}/photos/download-all-zip`, {}, {
+      responseType: 'blob',
+    })
+    return response.data
   },
 }

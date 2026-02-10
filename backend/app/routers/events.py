@@ -4,7 +4,7 @@ Event management router
 from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from pydantic import BaseModel
@@ -15,6 +15,9 @@ import secrets
 import string
 import hashlib
 import logging
+import zipfile
+import queue
+import threading
 from PIL import Image as PILImage
 
 logger = logging.getLogger(__name__)
@@ -524,6 +527,7 @@ class PhotoListItem(BaseModel):
     status: str
     face_count: int
     thumbnail_url: str
+    download_url: str
     uploaded_at: datetime
 
 class PhotoListResponse(BaseModel):
@@ -834,13 +838,17 @@ async def list_photos(
         thumbnail_url = storage_service.generate_url(
             event_id=event_uuid, image_id=image.id, photo_type='thumb'
         )
-        
+        download_url = storage_service.generate_url(
+            event_id=event_uuid, image_id=image.id, photo_type='original'
+        )
+
         photo_list.append(PhotoListItem(
             image_id=str(image.id),
             filename=image.filename,
             status=image.status,
             face_count=image.face_count,
             thumbnail_url=thumbnail_url,
+            download_url=download_url,
             uploaded_at=image.uploaded_at
         ))
     
@@ -964,6 +972,229 @@ async def delete_photo(
     return PhotoDeleteResponse(
         message="Photo deleted",
         image_id=str(image_uuid)
+    )
+
+
+class BulkPhotoRequest(BaseModel):
+    image_ids: List[str]
+
+
+@router.post("/{event_id}/photos/bulk-delete")
+async def bulk_delete_photos(
+    event_id: str,
+    request: BulkPhotoRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Delete multiple photos at once."""
+    try:
+        event_uuid = uuid.UUID(event_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid event ID")
+
+    event = db.query(Event).filter(Event.id == event_uuid).first()
+    if not event:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+    if not current_user.is_superadmin and event.owner_user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
+
+    if not request.image_ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No images specified")
+
+    image_uuids = []
+    for img_id in request.image_ids:
+        try:
+            image_uuids.append(uuid.UUID(img_id))
+        except ValueError:
+            pass
+
+    images = db.query(Image).filter(Image.event_id == event_uuid, Image.id.in_(image_uuids)).all()
+    deleted = 0
+    for image in images:
+        # Clean up CompreFace subjects
+        if settings.compreface_api_key:
+            faces = db.query(Face).filter(Face.image_id == image.id).all()
+            for face in faces:
+                if face.compreface_subject_id:
+                    try:
+                        httpx.delete(
+                            f"{settings.compreface_api_url}/api/v1/recognition/faces",
+                            headers={"x-api-key": settings.compreface_api_key},
+                            params={"subject": face.compreface_subject_id},
+                            timeout=5.0,
+                        )
+                    except Exception:
+                        pass
+
+        # Delete from MinIO
+        try:
+            storage_service.delete_photo(event_id=event_uuid, image_id=image.id)
+        except Exception as e:
+            logger.warning(f"Failed to delete MinIO objects for image {image.id}: {e}")
+
+        db.delete(image)
+        deleted += 1
+
+    db.commit()
+
+    log_action(
+        db=db,
+        event_id=event_uuid,
+        actor_type='admin',
+        actor_id=current_user.id,
+        action='delete',
+        metadata={'bulk_delete': True, 'count': deleted}
+    )
+
+    return {"message": f"Deleted {deleted} photos", "deleted": deleted}
+
+
+@router.post("/{event_id}/photos/download-zip")
+async def admin_download_zip(
+    event_id: str,
+    request: BulkPhotoRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Download selected photos as a ZIP file (admin)."""
+    try:
+        event_uuid = uuid.UUID(event_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid event ID")
+
+    event = db.query(Event).filter(Event.id == event_uuid).first()
+    if not event:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+    if not current_user.is_superadmin and event.owner_user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
+
+    if not request.image_ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No images specified")
+
+    image_uuids = []
+    for img_id in request.image_ids:
+        try:
+            image_uuids.append(uuid.UUID(img_id))
+        except ValueError:
+            pass
+
+    images = db.query(Image).filter(Image.event_id == event_uuid, Image.id.in_(image_uuids)).all()
+    if not images:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No valid images found")
+
+    def generate_zip():
+        data_queue = queue.Queue(maxsize=32)
+
+        class QueueWriter:
+            def write(self, data):
+                data_queue.put(data)
+                return len(data)
+            def flush(self):
+                pass
+            def close(self):
+                data_queue.put(None)
+
+        writer = QueueWriter()
+
+        def zip_worker():
+            try:
+                with zipfile.ZipFile(writer, 'w', zipfile.ZIP_STORED) as zf:
+                    for image in images:
+                        try:
+                            photo_bytes = storage_service.get_photo(event_uuid, image.id, "original")
+                            filename = image.filename or f"photo_{image.id}.jpg"
+                            zf.writestr(filename, photo_bytes)
+                        except Exception as e:
+                            logger.error(f"Failed to add image {image.id} to ZIP: {e}")
+                            continue
+            finally:
+                writer.close()
+
+        thread = threading.Thread(target=zip_worker, daemon=True)
+        thread.start()
+
+        while True:
+            chunk = data_queue.get()
+            if chunk is None:
+                break
+            yield chunk
+
+        thread.join(timeout=5)
+
+    safe_name = event.name.replace(' ', '_').replace('"', '')
+    return StreamingResponse(
+        generate_zip(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}_photos.zip"'}
+    )
+
+
+@router.post("/{event_id}/photos/download-all-zip")
+async def admin_download_all_zip(
+    event_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Download ALL photos for an event as a ZIP file (admin)."""
+    try:
+        event_uuid = uuid.UUID(event_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid event ID")
+
+    event = db.query(Event).filter(Event.id == event_uuid).first()
+    if not event:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+    if not current_user.is_superadmin and event.owner_user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
+
+    images = db.query(Image).filter(Image.event_id == event_uuid).all()
+    if not images:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No photos found")
+
+    def generate_zip():
+        data_queue = queue.Queue(maxsize=32)
+
+        class QueueWriter:
+            def write(self, data):
+                data_queue.put(data)
+                return len(data)
+            def flush(self):
+                pass
+            def close(self):
+                data_queue.put(None)
+
+        writer = QueueWriter()
+
+        def zip_worker():
+            try:
+                with zipfile.ZipFile(writer, 'w', zipfile.ZIP_STORED) as zf:
+                    for image in images:
+                        try:
+                            photo_bytes = storage_service.get_photo(event_uuid, image.id, "original")
+                            filename = image.filename or f"photo_{image.id}.jpg"
+                            zf.writestr(filename, photo_bytes)
+                        except Exception as e:
+                            logger.error(f"Failed to add image {image.id} to ZIP: {e}")
+                            continue
+            finally:
+                writer.close()
+
+        thread = threading.Thread(target=zip_worker, daemon=True)
+        thread.start()
+
+        while True:
+            chunk = data_queue.get()
+            if chunk is None:
+                break
+            yield chunk
+
+        thread.join(timeout=5)
+
+    safe_name = event.name.replace(' ', '_').replace('"', '')
+    return StreamingResponse(
+        generate_zip(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}_all_photos.zip"'}
     )
 
 
