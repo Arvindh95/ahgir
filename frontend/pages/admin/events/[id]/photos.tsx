@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/router'
 import Head from 'next/head'
 import ProtectedRoute from '@/components/ProtectedRoute'
@@ -11,7 +11,7 @@ import PhotoGridSkeleton from '@/components/skeletons/PhotoGridSkeleton'
 import Breadcrumbs from '@/components/Breadcrumbs'
 import { eventService } from '@/lib/events'
 import Image from 'next/image'
-import { Trash2, Filter, Image as ImageIcon, CheckCircle, AlertTriangle, Clock, XCircle, Download, Check, Loader2 } from 'lucide-react'
+import { Trash2, Filter, Image as ImageIcon, CheckCircle, AlertTriangle, Clock, XCircle, Download, Check, Loader2, X, ChevronLeft, ChevronRight } from 'lucide-react'
 
 export default function EventPhotosPage() {
   const router = useRouter()
@@ -29,6 +29,7 @@ export default function EventPhotosPage() {
   const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false)
   const [isBulkDeleting, setIsBulkDeleting] = useState(false)
   const [isDownloading, setIsDownloading] = useState(false)
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
 
   useEffect(() => {
     if (id && typeof id === 'string') {
@@ -138,6 +139,18 @@ export default function EventPhotosPage() {
       setIsDownloading(false)
     }
   }
+
+  // Lightbox keyboard navigation
+  useEffect(() => {
+    if (lightboxIndex === null) return
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setLightboxIndex(null)
+      else if (e.key === 'ArrowLeft') setLightboxIndex(i => i !== null && i > 0 ? i - 1 : i)
+      else if (e.key === 'ArrowRight') setLightboxIndex(i => i !== null && i < photos.length - 1 ? i + 1 : i)
+    }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [lightboxIndex, photos.length])
 
   const handleSingleDownload = (photo: Photo) => {
     const a = document.createElement('a')
@@ -317,21 +330,26 @@ export default function EventPhotosPage() {
                             {selectedPhotos.has(photo.image_id) && <Check className="w-4 h-4 text-white" />}
                           </div>
                         </div>
+                        {/* Click to view */}
+                        <div
+                          className="absolute inset-0 cursor-pointer"
+                          onClick={() => setLightboxIndex(photos.indexOf(photo))}
+                        />
                         {/* Hover actions */}
-                        <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                        <div className="absolute bottom-2 right-2 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity z-10">
                           <button
-                            onClick={() => handleSingleDownload(photo)}
-                            className="bg-blue-500 hover:bg-blue-600 text-white p-2 rounded-lg transition-colors"
+                            onClick={(e) => { e.stopPropagation(); handleSingleDownload(photo) }}
+                            className="bg-blue-500 hover:bg-blue-600 text-white p-1.5 rounded-lg transition-colors"
                             title="Download photo"
                           >
-                            <Download className="w-5 h-5" />
+                            <Download className="w-4 h-4" />
                           </button>
                           <button
-                            onClick={() => setDeleteTarget(photo.image_id)}
-                            className="bg-red-500 hover:bg-red-600 text-white p-2 rounded-lg transition-colors"
+                            onClick={(e) => { e.stopPropagation(); setDeleteTarget(photo.image_id) }}
+                            className="bg-red-500 hover:bg-red-600 text-white p-1.5 rounded-lg transition-colors"
                             title="Delete photo"
                           >
-                            <Trash2 className="w-5 h-5" />
+                            <Trash2 className="w-4 h-4" />
                           </button>
                         </div>
                       </div>
@@ -388,6 +406,74 @@ export default function EventPhotosPage() {
           onConfirm={handleDelete}
           onCancel={() => setDeleteTarget(null)}
         />
+
+        {/* Lightbox */}
+        {lightboxIndex !== null && photos[lightboxIndex] && (
+          <div
+            className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center"
+            onClick={() => setLightboxIndex(null)}
+          >
+            {/* Top bar */}
+            <div className="absolute top-0 left-0 right-0 flex items-center justify-between p-4 z-10">
+              <span className="text-white/70 text-sm truncate max-w-[60%]">
+                {photos[lightboxIndex].filename}
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={(e) => { e.stopPropagation(); handleSingleDownload(photos[lightboxIndex]) }}
+                  className="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors"
+                  title="Download"
+                >
+                  <Download className="w-5 h-5" />
+                </button>
+                <button
+                  onClick={() => setLightboxIndex(null)}
+                  className="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors"
+                  title="Close"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Previous button */}
+            {lightboxIndex > 0 && (
+              <button
+                className="absolute left-4 top-1/2 -translate-y-1/2 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors z-10"
+                onClick={(e) => { e.stopPropagation(); setLightboxIndex(lightboxIndex - 1) }}
+              >
+                <ChevronLeft className="w-6 h-6" />
+              </button>
+            )}
+
+            {/* Next button */}
+            {lightboxIndex < photos.length - 1 && (
+              <button
+                className="absolute right-4 top-1/2 -translate-y-1/2 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors z-10"
+                onClick={(e) => { e.stopPropagation(); setLightboxIndex(lightboxIndex + 1) }}
+              >
+                <ChevronRight className="w-6 h-6" />
+              </button>
+            )}
+
+            {/* Image */}
+            <div
+              className="max-w-[90vw] max-h-[85vh] relative"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <img
+                src={photos[lightboxIndex].download_url}
+                alt={photos[lightboxIndex].filename}
+                className="max-w-full max-h-[85vh] object-contain rounded-lg"
+              />
+            </div>
+
+            {/* Counter */}
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-white/50 text-sm">
+              {lightboxIndex + 1} / {photos.length}
+            </div>
+          </div>
+        )}
 
         <ConfirmModal
           open={showBulkDeleteConfirm}
