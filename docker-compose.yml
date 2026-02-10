@@ -60,7 +60,7 @@ services:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
       MINIO_ENDPOINT: minio:9000
-      MINIO_EXTERNAL_ENDPOINT: ahgir.com/storage
+      MINIO_EXTERNAL_ENDPOINT: picur.my/storage
       MINIO_EXTERNAL_SECURE: "true"
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
