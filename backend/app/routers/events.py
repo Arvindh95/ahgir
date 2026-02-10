@@ -18,7 +18,7 @@ import logging
 import zipfile
 import queue
 import threading
-from PIL import Image as PILImage
+from PIL import Image as PILImage, ImageOps
 
 logger = logging.getLogger(__name__)
 
@@ -436,6 +436,8 @@ async def upload_cover_image(
     # Read and process image
     image_bytes = await file.read()
     img = PILImage.open(BytesIO(image_bytes))
+    # Apply EXIF orientation (phones store rotation in metadata)
+    img = ImageOps.exif_transpose(img)
     if img.mode in ('RGBA', 'LA', 'P'):
         img = img.convert('RGB')
 
