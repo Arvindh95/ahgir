@@ -114,7 +114,10 @@ export default function Pricing() {
         </div>
 
         <p className="text-center text-gray-500 text-sm mt-12">
-          Need a custom plan? Contact us for enterprise pricing.
+          Need a custom plan? Contact us at{' '}
+          <a href="mailto:support@picur.my" className="text-gray-400 hover:text-white transition-colors underline">
+            support@picur.my
+          </a>
         </p>
       </div>
     </PublicLayout>

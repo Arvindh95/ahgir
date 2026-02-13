@@ -240,6 +240,12 @@ export default function Home() {
                 View full pricing details
                 <ArrowRight className="w-4 h-4" />
               </Link>
+              <p className="text-gray-500 text-sm mt-4">
+                Need a custom plan? Contact us at{' '}
+                <a href="mailto:support@picur.my" className="text-gray-400 hover:text-white transition-colors underline">
+                  support@picur.my
+                </a>
+              </p>
             </div>
           </FadeIn>
         </div>
