@@ -60,9 +60,9 @@ export default function UpgradeModal({ open, currentTier, onClose }: UpgradeModa
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/70 backdrop-blur-sm p-4" onClick={onClose}>
       <div
-        className="glass-card rounded-2xl p-8 max-w-2xl w-full mx-4 relative"
+        className="glass-card rounded-2xl p-8 max-w-2xl w-full my-auto relative"
         onClick={(e) => e.stopPropagation()}
       >
         <button
