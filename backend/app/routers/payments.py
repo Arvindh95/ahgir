@@ -1,19 +1,20 @@
-"""Payment and billing router for Stripe integration."""
+"""Payment and billing router for Stripe integration (user-level tiers)."""
 
 import stripe
 import logging
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from pydantic import BaseModel
 from typing import Optional
 import uuid
 
 from app.auth import get_current_user
 from app.database import get_db
-from app.models import User, Event, EventTier, Payment
+from app.models import User, Event, UserTier, Payment
 from app.config import settings
-from app.tiers import TIER_CONFIG
+from app.tiers import TIER_CONFIG, TIER_ORDER, get_upgrade_price
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/payments", tags=["payments"])
@@ -22,8 +23,7 @@ stripe.api_key = settings.stripe_secret_key
 
 
 class CreateCheckoutRequest(BaseModel):
-    event_id: str
-    tier_name: str  # "standard" or "premium"
+    tier_name: str  # "premium" or "premium_plus"
 
 
 class CheckoutResponse(BaseModel):
@@ -31,10 +31,11 @@ class CheckoutResponse(BaseModel):
     session_id: str
 
 
-class EventTierResponse(BaseModel):
-    event_id: str
+class MyTierResponse(BaseModel):
     tier_name: str
-    photo_limit: int
+    max_events: int
+    max_photos_per_event: int
+    events_used: int
     is_active: bool
     activated_at: Optional[str] = None
 
@@ -47,7 +48,8 @@ async def get_payment_config():
         "tiers": {
             k: {
                 "name": v["name"],
-                "photo_limit": v["photo_limit"],
+                "max_events": v["max_events"],
+                "max_photos_per_event": v["max_photos_per_event"],
                 "price_cents": v["price_cents"],
                 "currency": v["currency"],
             }
@@ -56,35 +58,74 @@ async def get_payment_config():
     }
 
 
+@router.get("/my-tier", response_model=MyTierResponse)
+async def get_my_tier(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get current user's tier and usage stats."""
+    user_tier = db.query(UserTier).filter(UserTier.user_id == current_user.id).first()
+
+    if not user_tier:
+        # Auto-create free tier
+        user_tier = UserTier(
+            user_id=current_user.id,
+            tier_name="free",
+            max_events=1,
+            max_photos_per_event=50,
+            price_cents=0,
+            is_active=True,
+            activated_at=datetime.utcnow(),
+        )
+        db.add(user_tier)
+        db.commit()
+        db.refresh(user_tier)
+
+    events_used = db.query(func.count(Event.id)).filter(
+        Event.owner_user_id == current_user.id
+    ).scalar() or 0
+
+    return MyTierResponse(
+        tier_name=user_tier.tier_name,
+        max_events=user_tier.max_events,
+        max_photos_per_event=user_tier.max_photos_per_event,
+        events_used=events_used,
+        is_active=user_tier.is_active,
+        activated_at=user_tier.activated_at.isoformat() if user_tier.activated_at else None,
+    )
+
+
 @router.post("/checkout", response_model=CheckoutResponse)
 async def create_checkout_session(
     req: CreateCheckoutRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Create a Stripe Checkout Session to upgrade an event tier."""
-    # Validate event ownership
-    try:
-        event_uuid = uuid.UUID(req.event_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid event ID")
-
-    event = db.query(Event).filter(Event.id == event_uuid).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
-    if not current_user.is_superadmin and event.owner_user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not your event")
-
+    """Create a Stripe Checkout Session to upgrade user tier."""
     # Validate tier
     if req.tier_name not in TIER_CONFIG or req.tier_name == "free":
         raise HTTPException(status_code=400, detail="Invalid tier for purchase")
 
-    tier_config = TIER_CONFIG[req.tier_name]
+    if req.tier_name not in TIER_ORDER:
+        raise HTTPException(status_code=400, detail="Cannot purchase custom tier")
 
-    # Check if event already has this tier or higher
-    event_tier = db.query(EventTier).filter(EventTier.event_id == event_uuid).first()
-    if event_tier and event_tier.tier_name == req.tier_name and event_tier.is_active:
-        raise HTTPException(status_code=400, detail="Event already on this tier")
+    # Get current user tier
+    user_tier = db.query(UserTier).filter(UserTier.user_id == current_user.id).first()
+    current_tier_name = user_tier.tier_name if user_tier else "free"
+
+    # Validate upgrade path
+    if current_tier_name not in TIER_ORDER:
+        raise HTTPException(status_code=400, detail="Cannot upgrade from custom tier via checkout")
+
+    current_idx = TIER_ORDER.index(current_tier_name)
+    target_idx = TIER_ORDER.index(req.tier_name)
+
+    if target_idx <= current_idx:
+        raise HTTPException(status_code=400, detail="Target tier must be higher than current tier")
+
+    # Calculate price (upgrade difference)
+    price_cents = get_upgrade_price(current_tier_name, req.tier_name)
+    tier_config = TIER_CONFIG[req.tier_name]
 
     # Create Stripe Checkout Session
     try:
@@ -95,21 +136,21 @@ async def create_checkout_session(
                     "price_data": {
                         "currency": tier_config["currency"],
                         "product_data": {
-                            "name": f"PicUr {tier_config['name']} - {event.name}",
-                            "description": f"Up to {tier_config['photo_limit']} photos for your event",
+                            "name": f"PicUr {tier_config['name']}",
+                            "description": f"Up to {tier_config['max_events']} events, {tier_config['max_photos_per_event']} photos per event",
                         },
-                        "unit_amount": tier_config["price_cents"],
+                        "unit_amount": price_cents,
                     },
                     "quantity": 1,
                 }
             ],
             mode="payment",
-            success_url=f"{settings.frontend_url}/admin/events/{req.event_id}?payment=success",
-            cancel_url=f"{settings.frontend_url}/admin/events/{req.event_id}?payment=cancelled",
+            success_url=f"{settings.frontend_url}/admin/events?payment=success",
+            cancel_url=f"{settings.frontend_url}/admin/events?payment=cancelled",
             metadata={
-                "event_id": str(event_uuid),
                 "tier_name": req.tier_name,
                 "user_id": str(current_user.id),
+                "previous_tier": current_tier_name,
             },
             customer_email=current_user.email,
         )
@@ -119,13 +160,13 @@ async def create_checkout_session(
 
     # Create pending payment record
     payment = Payment(
-        event_tier_id=event_tier.id if event_tier else None,
         user_id=current_user.id,
+        tier_name=req.tier_name,
         stripe_checkout_session_id=session.id,
-        amount_cents=tier_config["price_cents"],
+        amount_cents=price_cents,
         currency=tier_config["currency"],
         status="pending",
-        metadata_={"tier_name": req.tier_name, "event_id": str(event_uuid)},
+        metadata_={"tier_name": req.tier_name, "previous_tier": current_tier_name},
     )
     db.add(payment)
     db.commit()
@@ -163,10 +204,10 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
 
 
 def _handle_checkout_completed(session: dict, db: Session):
-    """Activate the event tier after successful payment."""
+    """Activate/upgrade user tier after successful payment."""
     checkout_session_id = session["id"]
 
-    # Idempotency: check if already processed
+    # Idempotency check
     payment = (
         db.query(Payment)
         .filter(Payment.stripe_checkout_session_id == checkout_session_id)
@@ -183,37 +224,37 @@ def _handle_checkout_completed(session: dict, db: Session):
 
     # Extract metadata
     metadata = session.get("metadata", {})
-    event_id = uuid.UUID(metadata["event_id"])
+    user_id = uuid.UUID(metadata["user_id"])
     tier_name = metadata["tier_name"]
     tier_config = TIER_CONFIG[tier_name]
 
-    # Update or create EventTier
-    event_tier = db.query(EventTier).filter(EventTier.event_id == event_id).first()
-    if event_tier:
-        event_tier.tier_name = tier_name
-        event_tier.photo_limit = tier_config["photo_limit"]
-        event_tier.price_cents = tier_config["price_cents"]
-        event_tier.is_active = True
-        event_tier.activated_at = datetime.utcnow()
+    # Update or create UserTier
+    user_tier = db.query(UserTier).filter(UserTier.user_id == user_id).first()
+    if user_tier:
+        user_tier.tier_name = tier_name
+        user_tier.max_events = tier_config["max_events"]
+        user_tier.max_photos_per_event = tier_config["max_photos_per_event"]
+        user_tier.price_cents = tier_config["price_cents"]
+        user_tier.is_active = True
+        user_tier.activated_at = datetime.utcnow()
     else:
-        event_tier = EventTier(
-            event_id=event_id,
+        user_tier = UserTier(
+            user_id=user_id,
             tier_name=tier_name,
-            photo_limit=tier_config["photo_limit"],
+            max_events=tier_config["max_events"],
+            max_photos_per_event=tier_config["max_photos_per_event"],
             price_cents=tier_config["price_cents"],
             is_active=True,
             activated_at=datetime.utcnow(),
         )
-        db.add(event_tier)
-        db.flush()
+        db.add(user_tier)
 
     # Update payment record
     payment.status = "completed"
     payment.stripe_payment_intent_id = session.get("payment_intent")
-    payment.event_tier_id = event_tier.id
 
     db.commit()
-    logger.info(f"Event {event_id} upgraded to {tier_name} tier")
+    logger.info(f"User {user_id} upgraded to {tier_name} tier")
 
 
 def _handle_checkout_expired(session: dict, db: Session):
@@ -226,42 +267,3 @@ def _handle_checkout_expired(session: dict, db: Session):
     if payment and payment.status == "pending":
         payment.status = "failed"
         db.commit()
-
-
-@router.get("/event/{event_id}/tier", response_model=EventTierResponse)
-async def get_event_tier(
-    event_id: str,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Get current tier info for an event."""
-    try:
-        event_uuid = uuid.UUID(event_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid event ID")
-
-    event = db.query(Event).filter(Event.id == event_uuid).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
-    if not current_user.is_superadmin and event.owner_user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not your event")
-
-    event_tier = db.query(EventTier).filter(EventTier.event_id == event_uuid).first()
-    if not event_tier:
-        return EventTierResponse(
-            event_id=event_id,
-            tier_name="free",
-            photo_limit=25,
-            is_active=True,
-            activated_at=None,
-        )
-
-    return EventTierResponse(
-        event_id=event_id,
-        tier_name=event_tier.tier_name,
-        photo_limit=event_tier.photo_limit,
-        is_active=event_tier.is_active,
-        activated_at=event_tier.activated_at.isoformat()
-        if event_tier.activated_at
-        else None,
-    )

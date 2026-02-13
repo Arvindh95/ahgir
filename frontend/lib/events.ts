@@ -35,9 +35,18 @@ export interface EventTierInfo {
   is_active: boolean
 }
 
+export interface UserTierInfo {
+  tier_name: string
+  max_events: number
+  max_photos_per_event: number
+  events_used: number
+  is_active: boolean
+}
+
 export interface EventDetails extends Event {
   status: EventStatus
   tier?: EventTierInfo
+  user_tier?: UserTierInfo
 }
 
 export interface CreateEventRequest {

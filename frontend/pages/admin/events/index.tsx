@@ -4,10 +4,12 @@ import Head from 'next/head'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import AdminLayout from '@/components/AdminLayout'
 import ConfirmModal from '@/components/ConfirmModal'
+import UpgradeModal from '@/components/UpgradeModal'
 import { eventService, Event } from '@/lib/events'
+import { paymentService, UserTierInfo } from '@/lib/payments'
 import { useToast } from '@/hooks/useToast'
 import { getErrorMessage } from '@/lib/errors'
-import { Plus, Calendar, Image as ImageIcon, Users, ScanFace, ArrowRight, Search, Check, Trash2 } from 'lucide-react'
+import { Plus, Calendar, Image as ImageIcon, Users, ScanFace, ArrowRight, Search, Check, Trash2, Zap } from 'lucide-react'
 import EventCardSkeletonGrid from '@/components/skeletons/EventCardSkeleton'
 
 type SortOption = 'newest' | 'oldest' | 'photos' | 'name'
@@ -23,10 +25,32 @@ export default function EventsPage() {
   const [selectedEvents, setSelectedEvents] = useState<Set<string>>(new Set())
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [userTier, setUserTier] = useState<UserTierInfo | null>(null)
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false)
 
   useEffect(() => {
     loadEvents()
+    loadTier()
   }, [])
+
+  useEffect(() => {
+    const { payment } = router.query
+    if (payment === 'success') {
+      toast('Payment successful! Your account has been upgraded.', 'success')
+      router.replace('/admin/events', undefined, { shallow: true })
+      loadTier()
+    } else if (payment === 'cancelled') {
+      toast('Payment was cancelled.', 'error')
+      router.replace('/admin/events', undefined, { shallow: true })
+    }
+  }, [router.query.payment])
+
+  const loadTier = async () => {
+    try {
+      const tier = await paymentService.getMyTier()
+      setUserTier(tier)
+    } catch { }
+  }
 
   const loadEvents = async () => {
     try {
@@ -116,14 +140,46 @@ export default function EventsPage() {
       <AdminLayout>
         <div className="max-w-7xl mx-auto">
           <div className="flex justify-between items-center mb-6">
-            <h1 className="text-3xl font-bold">My Events</h1>
-            <button
-              onClick={() => router.push('/admin/events/create')}
-              className="flex items-center gap-2 bg-white text-black px-4 py-2 rounded-lg font-semibold hover:bg-gray-200 transition-colors"
-            >
-              <Plus className="w-5 h-5" />
-              Create Event
-            </button>
+            <div>
+              <h1 className="text-3xl font-bold">My Events</h1>
+              {userTier && (
+                <p className="text-sm text-gray-400 mt-1">
+                  {userTier.events_used} / {userTier.max_events} events used
+                  <span className={`ml-2 px-2 py-0.5 rounded text-xs font-bold uppercase ${
+                    userTier.tier_name === 'free' ? 'bg-gray-500/20 text-gray-400' :
+                    userTier.tier_name === 'premium' ? 'bg-blue-500/20 text-blue-400' :
+                    userTier.tier_name === 'premium_plus' ? 'bg-purple-500/20 text-purple-400' :
+                    'bg-yellow-500/20 text-yellow-400'
+                  }`}>
+                    {userTier.tier_name === 'premium_plus' ? 'Premium+' : userTier.tier_name}
+                  </span>
+                </p>
+              )}
+            </div>
+            <div className="flex gap-2">
+              {userTier && userTier.events_used >= userTier.max_events && userTier.tier_name !== 'premium_plus' && userTier.tier_name !== 'custom' && (
+                <button
+                  onClick={() => setShowUpgradeModal(true)}
+                  className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-blue-700 transition-colors"
+                >
+                  <Zap className="w-5 h-5" />
+                  Upgrade
+                </button>
+              )}
+              <button
+                onClick={() => {
+                  if (userTier && userTier.events_used >= userTier.max_events) {
+                    setShowUpgradeModal(true)
+                  } else {
+                    router.push('/admin/events/create')
+                  }
+                }}
+                className="flex items-center gap-2 bg-white text-black px-4 py-2 rounded-lg font-semibold hover:bg-gray-200 transition-colors"
+              >
+                <Plus className="w-5 h-5" />
+                Create Event
+              </button>
+            </div>
           </div>
 
           {error && (
@@ -275,6 +331,12 @@ export default function EventsPage() {
           loading={isDeleting}
           onConfirm={handleBulkDelete}
           onCancel={() => setShowDeleteConfirm(false)}
+        />
+
+        <UpgradeModal
+          open={showUpgradeModal}
+          currentTier={userTier?.tier_name || 'free'}
+          onClose={() => setShowUpgradeModal(false)}
         />
       </AdminLayout>
     </ProtectedRoute>

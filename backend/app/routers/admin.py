@@ -1,5 +1,6 @@
 """Superadmin management router."""
 
+from datetime import datetime
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -9,7 +10,7 @@ import uuid
 
 from app.auth import get_current_user
 from app.database import get_db
-from app.models import User, Event, Image, Face, AuditLog, EventTier, Payment
+from app.models import User, Event, Image, Face, AuditLog, EventTier, UserTier, Payment
 from app.config import settings, get_compreface_url
 from app.storage import storage_service
 from app.queue import get_failed_jobs, retry_failed_job
@@ -36,12 +37,21 @@ class UserListItem(BaseModel):
     is_superadmin: bool
     is_disabled: bool
     event_count: int
+    tier_name: str
+    max_events: int
+    max_photos_per_event: int
     created_at: str
 
 
 class UserUpdateRequest(BaseModel):
     is_superadmin: Optional[bool] = None
     is_disabled: Optional[bool] = None
+
+
+class UserTierUpdateRequest(BaseModel):
+    tier_name: str  # free, premium, premium_plus, custom
+    max_events: Optional[int] = None
+    max_photos_per_event: Optional[int] = None
 
 
 class PlatformStats(BaseModel):
@@ -58,22 +68,33 @@ async def list_users(
     current_user: User = Depends(get_superadmin_user),
     db: Session = Depends(get_db)
 ):
-    """List all users with event counts."""
+    """List all users with event counts and tier info."""
     users = db.query(User).order_by(User.created_at.desc()).all()
+
+    # Batch load user tiers and event counts
+    user_tiers = {
+        ut.user_id: ut
+        for ut in db.query(UserTier).all()
+    }
+    event_counts = dict(
+        db.query(Event.owner_user_id, func.count(Event.id))
+        .group_by(Event.owner_user_id)
+        .all()
+    )
 
     result = []
     for user in users:
-        event_count = db.query(func.count(Event.id)).filter(
-            Event.owner_user_id == user.id
-        ).scalar() or 0
-
+        tier = user_tiers.get(user.id)
         result.append(UserListItem(
             user_id=str(user.id),
             email=user.email,
             is_verified=user.is_verified,
             is_superadmin=user.is_superadmin,
             is_disabled=user.is_disabled,
-            event_count=event_count,
+            event_count=event_counts.get(user.id, 0),
+            tier_name=tier.tier_name if tier else "free",
+            max_events=tier.max_events if tier else 1,
+            max_photos_per_event=tier.max_photos_per_event if tier else 50,
             created_at=user.created_at.isoformat()
         ))
 
@@ -97,14 +118,12 @@ async def update_user(
     if not target_user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-    # Prevent disabling yourself
     if target_user.id == current_user.id and update.is_disabled:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot disable your own account"
         )
 
-    # Prevent removing your own superadmin
     if target_user.id == current_user.id and update.is_superadmin is False:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -124,6 +143,73 @@ async def update_user(
         "is_superadmin": target_user.is_superadmin,
         "is_disabled": target_user.is_disabled,
         "message": "User updated successfully"
+    }
+
+
+@router.patch("/users/{user_id}/tier")
+async def update_user_tier(
+    user_id: str,
+    update: UserTierUpdateRequest,
+    current_user: User = Depends(get_superadmin_user),
+    db: Session = Depends(get_db)
+):
+    """Override user tier (superadmin only). Used for custom deals."""
+    from app.tiers import TIER_CONFIG
+
+    try:
+        target_uuid = uuid.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid user ID")
+
+    target_user = db.query(User).filter(User.id == target_uuid).first()
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    valid_tiers = list(TIER_CONFIG.keys()) + ["custom"]
+    if update.tier_name not in valid_tiers:
+        raise HTTPException(status_code=400, detail=f"Invalid tier. Must be one of: {valid_tiers}")
+
+    # Determine limits
+    if update.tier_name == "custom":
+        if not update.max_events or not update.max_photos_per_event:
+            raise HTTPException(status_code=400, detail="max_events and max_photos_per_event are required for custom tier")
+        max_events = update.max_events
+        max_photos = update.max_photos_per_event
+        price_cents = 0
+    else:
+        tier_config = TIER_CONFIG[update.tier_name]
+        max_events = update.max_events or tier_config["max_events"]
+        max_photos = update.max_photos_per_event or tier_config["max_photos_per_event"]
+        price_cents = tier_config["price_cents"]
+
+    user_tier = db.query(UserTier).filter(UserTier.user_id == target_uuid).first()
+    if user_tier:
+        user_tier.tier_name = update.tier_name
+        user_tier.max_events = max_events
+        user_tier.max_photos_per_event = max_photos
+        user_tier.price_cents = price_cents
+        user_tier.is_active = True
+        user_tier.activated_at = datetime.utcnow()
+    else:
+        user_tier = UserTier(
+            user_id=target_uuid,
+            tier_name=update.tier_name,
+            max_events=max_events,
+            max_photos_per_event=max_photos,
+            price_cents=price_cents,
+            is_active=True,
+            activated_at=datetime.utcnow(),
+        )
+        db.add(user_tier)
+
+    db.commit()
+
+    return {
+        "message": f"User tier updated to {update.tier_name}",
+        "user_id": user_id,
+        "tier_name": user_tier.tier_name,
+        "max_events": user_tier.max_events,
+        "max_photos_per_event": user_tier.max_photos_per_event,
     }
 
 
@@ -152,7 +238,6 @@ async def delete_user(
     # Clean up external resources for each event
     user_events = db.query(Event).filter(Event.owner_user_id == target_uuid).all()
     for event in user_events:
-        # Delete CompreFace subjects
         if settings.compreface_api_key:
             import httpx
             event_faces = db.query(Face).filter(Face.event_id == event.id).all()
@@ -168,7 +253,6 @@ async def delete_user(
                     except Exception:
                         pass
 
-        # Delete photos from MinIO
         try:
             storage_service.delete_event_photos(event.id)
         except Exception:
@@ -226,7 +310,6 @@ async def get_global_analytics(
         AuditLog.action == 'gallery_view'
     ).scalar() or 0
 
-    # Top events by scan count
     top_events_raw = db.query(
         Event.name,
         func.count(AuditLog.id).label('scan_count'),
@@ -242,7 +325,6 @@ async def get_global_analytics(
         for row in top_events_raw
     ]
 
-    # Scans by day (last 30 days)
     scans_by_day_raw = db.query(
         func.date_trunc('day', AuditLog.timestamp).label('date'),
         func.count(AuditLog.id).label('count')
@@ -274,11 +356,10 @@ async def admin_list_events(
     current_user: User = Depends(get_superadmin_user),
     db: Session = Depends(get_db),
 ):
-    """List all events with tier info (superadmin only)."""
+    """List all events with owner tier info (superadmin only)."""
     events = (
-        db.query(Event, User.email, EventTier)
+        db.query(Event, User.email)
         .outerjoin(User, Event.owner_user_id == User.id)
-        .outerjoin(EventTier, Event.id == EventTier.event_id)
         .order_by(Event.created_at.desc())
         .all()
     )
@@ -289,6 +370,10 @@ async def admin_list_events(
         .all()
     )
 
+    # Load user tiers and event-level overrides
+    user_tiers = {ut.user_id: ut for ut in db.query(UserTier).all()}
+    event_tiers = {et.event_id: et for et in db.query(EventTier).all()}
+
     return {
         "events": [
             {
@@ -297,11 +382,16 @@ async def admin_list_events(
                 "date": event.date.isoformat() if event.date else None,
                 "owner_email": email,
                 "photo_count": photo_counts.get(event.id, 0),
-                "tier_name": tier.tier_name if tier else "free",
-                "photo_limit": tier.photo_limit if tier else 25,
+                "user_tier": user_tiers[event.owner_user_id].tier_name if event.owner_user_id in user_tiers else "free",
+                "photo_limit": (
+                    event_tiers[event.id].photo_limit
+                    if event.id in event_tiers
+                    else (user_tiers[event.owner_user_id].max_photos_per_event if event.owner_user_id in user_tiers else 50)
+                ),
+                "has_override": event.id in event_tiers,
                 "created_at": event.created_at.isoformat(),
             }
-            for event, email, tier in events
+            for event, email in events
         ]
     }
 
@@ -322,16 +412,86 @@ async def admin_delete_event(
     if not event:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
 
-    # Delete photos from storage
     try:
         storage_service.delete_event_photos(event_uuid)
     except Exception:
-        pass  # Continue with DB deletion
+        pass
 
     db.delete(event)
     db.commit()
 
     return {"message": "Event deleted successfully", "event_id": str(event_uuid)}
+
+
+# --- Per-Event Photo Override ---
+
+class EventPhotoOverrideRequest(BaseModel):
+    photo_limit: int
+
+
+@router.patch("/events/{event_id}/photo-override")
+async def set_event_photo_override(
+    event_id: str,
+    req: EventPhotoOverrideRequest,
+    current_user: User = Depends(get_superadmin_user),
+    db: Session = Depends(get_db),
+):
+    """Set a per-event photo limit override (superadmin only)."""
+    try:
+        event_uuid = uuid.UUID(event_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid event ID")
+
+    event = db.query(Event).filter(Event.id == event_uuid).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    event_tier = db.query(EventTier).filter(EventTier.event_id == event_uuid).first()
+    if event_tier:
+        event_tier.photo_limit = req.photo_limit
+        event_tier.tier_name = "custom"
+        event_tier.is_active = True
+        event_tier.activated_at = datetime.utcnow()
+    else:
+        event_tier = EventTier(
+            event_id=event_uuid,
+            tier_name="custom",
+            photo_limit=req.photo_limit,
+            price_cents=0,
+            is_active=True,
+            activated_at=datetime.utcnow(),
+        )
+        db.add(event_tier)
+
+    db.commit()
+
+    return {
+        "message": f"Photo limit for event set to {req.photo_limit}",
+        "event_id": event_id,
+        "photo_limit": req.photo_limit,
+    }
+
+
+@router.delete("/events/{event_id}/photo-override")
+async def remove_event_photo_override(
+    event_id: str,
+    current_user: User = Depends(get_superadmin_user),
+    db: Session = Depends(get_db),
+):
+    """Remove per-event photo override, reverting to user tier limit."""
+    try:
+        event_uuid = uuid.UUID(event_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid event ID")
+
+    event_tier = db.query(EventTier).filter(EventTier.event_id == event_uuid).first()
+    if not event_tier:
+        raise HTTPException(status_code=404, detail="No override exists for this event")
+
+    db.delete(event_tier)
+    db.commit()
+
+    return {"message": "Photo override removed", "event_id": event_id}
 
 
 @router.get("/failed-jobs")
@@ -359,127 +519,6 @@ async def retry_job(
         )
 
 
-# --- Tier Management ---
-
-class AdminTierUpdate(BaseModel):
-    tier_name: str  # free, standard, premium, custom
-    photo_limit: Optional[int] = None  # required for custom
-    price_cents: Optional[int] = None
-
-
-@router.get("/events/{event_id}/tier")
-async def admin_get_event_tier(
-    event_id: str,
-    current_user: User = Depends(get_superadmin_user),
-    db: Session = Depends(get_db),
-):
-    """Get tier details and payment history for any event (superadmin only)."""
-    try:
-        event_uuid = uuid.UUID(event_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid event ID")
-
-    event = db.query(Event).filter(Event.id == event_uuid).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
-
-    event_tier = db.query(EventTier).filter(EventTier.event_id == event_uuid).first()
-    tier_data = None
-    payments_data = []
-
-    if event_tier:
-        tier_data = {
-            "tier_name": event_tier.tier_name,
-            "photo_limit": event_tier.photo_limit,
-            "price_cents": event_tier.price_cents,
-            "is_active": event_tier.is_active,
-            "activated_at": event_tier.activated_at.isoformat() if event_tier.activated_at else None,
-        }
-        payments = db.query(Payment).filter(Payment.event_tier_id == event_tier.id).order_by(Payment.created_at.desc()).all()
-        payments_data = [
-            {
-                "payment_id": str(p.id),
-                "amount_cents": p.amount_cents,
-                "currency": p.currency,
-                "status": p.status,
-                "created_at": p.created_at.isoformat(),
-            }
-            for p in payments
-        ]
-
-    return {
-        "event_id": event_id,
-        "event_name": event.name,
-        "tier": tier_data,
-        "payments": payments_data,
-    }
-
-
-@router.patch("/events/{event_id}/tier")
-async def admin_update_event_tier(
-    event_id: str,
-    update: AdminTierUpdate,
-    current_user: User = Depends(get_superadmin_user),
-    db: Session = Depends(get_db),
-):
-    """Override tier for any event (superadmin only). Used for custom deals."""
-    from datetime import datetime
-    from app.tiers import TIER_CONFIG
-
-    try:
-        event_uuid = uuid.UUID(event_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid event ID")
-
-    event = db.query(Event).filter(Event.id == event_uuid).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
-
-    valid_tiers = list(TIER_CONFIG.keys()) + ["custom"]
-    if update.tier_name not in valid_tiers:
-        raise HTTPException(status_code=400, detail=f"Invalid tier. Must be one of: {valid_tiers}")
-
-    if update.tier_name == "custom" and not update.photo_limit:
-        raise HTTPException(status_code=400, detail="photo_limit is required for custom tier")
-
-    # Determine photo_limit and price
-    if update.tier_name == "custom":
-        photo_limit = update.photo_limit
-        price_cents = update.price_cents or 0
-    else:
-        tier_config = TIER_CONFIG[update.tier_name]
-        photo_limit = update.photo_limit or tier_config["photo_limit"]
-        price_cents = update.price_cents if update.price_cents is not None else tier_config["price_cents"]
-
-    event_tier = db.query(EventTier).filter(EventTier.event_id == event_uuid).first()
-    if event_tier:
-        event_tier.tier_name = update.tier_name
-        event_tier.photo_limit = photo_limit
-        event_tier.price_cents = price_cents
-        event_tier.is_active = True
-        event_tier.activated_at = datetime.utcnow()
-    else:
-        event_tier = EventTier(
-            event_id=event_uuid,
-            tier_name=update.tier_name,
-            photo_limit=photo_limit,
-            price_cents=price_cents,
-            is_active=True,
-            activated_at=datetime.utcnow(),
-        )
-        db.add(event_tier)
-
-    db.commit()
-
-    return {
-        "message": f"Event tier updated to {update.tier_name}",
-        "event_id": event_id,
-        "tier_name": event_tier.tier_name,
-        "photo_limit": event_tier.photo_limit,
-        "price_cents": event_tier.price_cents,
-    }
-
-
 @router.get("/payments")
 async def admin_list_payments(
     current_user: User = Depends(get_superadmin_user),
@@ -487,10 +526,8 @@ async def admin_list_payments(
 ):
     """List all payments platform-wide."""
     payments = (
-        db.query(Payment, User.email, Event.name, EventTier.tier_name)
+        db.query(Payment, User.email)
         .outerjoin(User, Payment.user_id == User.id)
-        .outerjoin(EventTier, Payment.event_tier_id == EventTier.id)
-        .outerjoin(Event, EventTier.event_id == Event.id)
         .order_by(Payment.created_at.desc())
         .limit(100)
         .all()
@@ -508,14 +545,13 @@ async def admin_list_payments(
             {
                 "payment_id": str(p.id),
                 "user_email": email,
-                "event_name": event_name,
-                "tier_name": tier_name or "unknown",
+                "tier_name": p.tier_name or "unknown",
                 "amount_cents": p.amount_cents,
                 "currency": p.currency,
                 "status": p.status,
                 "created_at": p.created_at.isoformat(),
             }
-            for p, email, event_name, tier_name in payments
+            for p, email in payments
         ],
         "total_revenue_cents": total_revenue,
         "total_revenue_display": f"RM {total_revenue / 100:.2f}",

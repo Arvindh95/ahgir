@@ -2,7 +2,8 @@ import api from './api'
 
 export interface TierConfig {
   name: string
-  photo_limit: number
+  max_events: number
+  max_photos_per_event: number
   price_cents: number
   currency: string
 }
@@ -12,10 +13,11 @@ export interface PaymentConfig {
   tiers: Record<string, TierConfig>
 }
 
-export interface EventTierInfo {
-  event_id: string
+export interface UserTierInfo {
   tier_name: string
-  photo_limit: number
+  max_events: number
+  max_photos_per_event: number
+  events_used: number
   is_active: boolean
   activated_at: string | null
 }
@@ -31,16 +33,15 @@ export const paymentService = {
     return response.data
   },
 
-  async createCheckout(eventId: string, tierName: string): Promise<CheckoutResponse> {
-    const response = await api.post('/payments/checkout', {
-      event_id: eventId,
-      tier_name: tierName,
-    })
+  async getMyTier(): Promise<UserTierInfo> {
+    const response = await api.get('/payments/my-tier')
     return response.data
   },
 
-  async getEventTier(eventId: string): Promise<EventTierInfo> {
-    const response = await api.get(`/payments/event/${eventId}/tier`)
+  async createCheckout(tierName: string): Promise<CheckoutResponse> {
+    const response = await api.post('/payments/checkout', {
+      tier_name: tierName,
+    })
     return response.data
   },
 }
