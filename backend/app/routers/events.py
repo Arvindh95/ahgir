@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 from app.auth import get_current_user, hash_password
 from app.database import get_db
-from app.models import User, Event, Image, Face, AuditLog, EventTier
+from app.models import User, Event, Image, Face, AuditLog, EventTier, UserTier
 from app.storage import storage_service
 from app.queue import enqueue_face_indexing
 from app.audit import log_action
@@ -83,6 +83,13 @@ class EventTierInfo(BaseModel):
     photo_limit: int
     is_active: bool
 
+class UserTierInfo(BaseModel):
+    tier_name: str
+    max_events: int
+    max_photos_per_event: int
+    events_used: int
+    is_active: bool
+
 class EventDetailResponse(BaseModel):
     event_id: str
     slug: str
@@ -96,6 +103,7 @@ class EventDetailResponse(BaseModel):
     retention_days: int
     status: EventStatusResponse
     tier: Optional[EventTierInfo] = None
+    user_tier: Optional[UserTierInfo] = None
     created_at: datetime
 
 # Helper functions
@@ -193,14 +201,47 @@ async def create_event(
     
     Returns the created event with guest link and QR code URL
     """
+    # Event creation limit (superadmin bypasses)
+    if not current_user.is_superadmin:
+        user_tier = db.query(UserTier).filter(UserTier.user_id == current_user.id).first()
+        if not user_tier:
+            # Auto-create free tier for user
+            user_tier = UserTier(
+                user_id=current_user.id,
+                tier_name="free",
+                max_events=1,
+                max_photos_per_event=50,
+                price_cents=0,
+                is_active=True,
+                activated_at=datetime.utcnow()
+            )
+            db.add(user_tier)
+            db.commit()
+
+        current_event_count = db.query(func.count(Event.id)).filter(
+            Event.owner_user_id == current_user.id
+        ).scalar() or 0
+
+        if current_event_count >= user_tier.max_events:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "EVENT_LIMIT_REACHED",
+                    "message": f"You have reached the maximum of {user_tier.max_events} event(s) on the {user_tier.tier_name} tier. Upgrade to create more events.",
+                    "current_count": current_event_count,
+                    "max_events": user_tier.max_events,
+                    "tier": user_tier.tier_name,
+                }
+            )
+
     # Generate unique slug
     slug = generate_slug(event_data.name, db)
-    
+
     # Hash passcode if provided
     passcode_hash = None
     if event_data.passcode:
         passcode_hash = hash_password(event_data.passcode)
-    
+
     # Parse date if provided
     event_date = None
     if event_data.date:
@@ -211,7 +252,7 @@ async def create_event(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid date format. Use ISO format (YYYY-MM-DD)"
             )
-    
+
     # Create event
     new_event = Event(
         owner_user_id=current_user.id,
@@ -224,22 +265,10 @@ async def create_event(
         allow_downloads=event_data.allow_downloads,
         retention_days=event_data.retention_days
     )
-    
+
     db.add(new_event)
     db.commit()
     db.refresh(new_event)
-
-    # Create default free tier
-    event_tier = EventTier(
-        event_id=new_event.id,
-        tier_name="free",
-        photo_limit=25,
-        price_cents=0,
-        is_active=True,
-        activated_at=datetime.utcnow()
-    )
-    db.add(event_tier)
-    db.commit()
 
     # Log event creation
     log_action(
@@ -368,7 +397,7 @@ async def get_event(
         timestamp = int(datetime.utcnow().timestamp())
         cover_image_url = f"{_protocol}://{settings.minio_external_endpoint}/{settings.minio_bucket}/{event.cover_image}?v={timestamp}"
 
-    # Get tier info
+    # Get per-event tier override info
     tier_info = None
     event_tier = db.query(EventTier).filter(EventTier.event_id == event.id).first()
     if event_tier:
@@ -376,6 +405,21 @@ async def get_event(
             tier_name=event_tier.tier_name,
             photo_limit=event_tier.photo_limit,
             is_active=event_tier.is_active,
+        )
+
+    # Get user tier info
+    user_tier_info = None
+    user_tier = db.query(UserTier).filter(UserTier.user_id == event.owner_user_id).first()
+    if user_tier:
+        events_used = db.query(func.count(Event.id)).filter(
+            Event.owner_user_id == event.owner_user_id
+        ).scalar() or 0
+        user_tier_info = UserTierInfo(
+            tier_name=user_tier.tier_name,
+            max_events=user_tier.max_events,
+            max_photos_per_event=user_tier.max_photos_per_event,
+            events_used=events_used,
+            is_active=user_tier.is_active,
         )
 
     return EventDetailResponse(
@@ -391,6 +435,7 @@ async def get_event(
         retention_days=event.retention_days,
         status=status_info,
         tier=tier_info,
+        user_tier=user_tier_info,
         created_at=event.created_at
     )
 
@@ -696,35 +741,42 @@ async def upload_photos(
 
     # Quota enforcement (superadmin bypasses)
     if not current_user.is_superadmin:
+        # Determine effective photo limit: EventTier override > UserTier > default 50
         event_tier = db.query(EventTier).filter(EventTier.event_id == event_uuid).first()
-        if not event_tier:
-            # Auto-create free tier for legacy events
-            event_tier = EventTier(
-                event_id=event_uuid,
+        user_tier = db.query(UserTier).filter(UserTier.user_id == current_user.id).first()
+
+        if not user_tier:
+            user_tier = UserTier(
+                user_id=current_user.id,
                 tier_name="free",
-                photo_limit=25,
+                max_events=1,
+                max_photos_per_event=50,
                 price_cents=0,
                 is_active=True,
                 activated_at=datetime.utcnow()
             )
-            db.add(event_tier)
+            db.add(user_tier)
             db.commit()
+
+        # Per-event override takes priority, otherwise use user tier limit
+        effective_limit = event_tier.photo_limit if event_tier else user_tier.max_photos_per_event
+        tier_label = event_tier.tier_name if event_tier else user_tier.tier_name
 
         current_photo_count = db.query(func.count(Image.id)).filter(
             Image.event_id == event_uuid
         ).scalar() or 0
 
         incoming_count = len(files)
-        if current_photo_count + incoming_count > event_tier.photo_limit:
-            remaining = max(0, event_tier.photo_limit - current_photo_count)
+        if current_photo_count + incoming_count > effective_limit:
+            remaining = max(0, effective_limit - current_photo_count)
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail={
                     "code": "PHOTO_LIMIT_EXCEEDED",
-                    "message": f"Photo limit reached. You have {remaining} upload(s) remaining on the {event_tier.tier_name} tier ({current_photo_count}/{event_tier.photo_limit}).",
+                    "message": f"Photo limit reached. You have {remaining} upload(s) remaining ({current_photo_count}/{effective_limit}).",
                     "current_count": current_photo_count,
-                    "photo_limit": event_tier.photo_limit,
-                    "tier": event_tier.tier_name,
+                    "photo_limit": effective_limit,
+                    "tier": tier_label,
                     "remaining": remaining,
                 }
             )

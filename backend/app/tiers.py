@@ -1,27 +1,33 @@
-"""Tier configuration for event billing."""
+"""Tier configuration for user-level billing."""
 
 from typing import Dict, Any, Optional
 
 TIER_CONFIG: Dict[str, Dict[str, Any]] = {
     "free": {
         "name": "Free",
-        "photo_limit": 25,
+        "max_events": 1,
+        "max_photos_per_event": 50,
         "price_cents": 0,
-        "currency": "myr",
-    },
-    "standard": {
-        "name": "Standard",
-        "photo_limit": 1000,
-        "price_cents": 50000,  # RM 500
         "currency": "myr",
     },
     "premium": {
         "name": "Premium",
-        "photo_limit": 2000,
-        "price_cents": 80000,  # RM 800
+        "max_events": 3,
+        "max_photos_per_event": 300,
+        "price_cents": 5000,  # RM 50
+        "currency": "myr",
+    },
+    "premium_plus": {
+        "name": "Premium+",
+        "max_events": 10,
+        "max_photos_per_event": 500,
+        "price_cents": 10000,  # RM 100
         "currency": "myr",
     },
 }
+
+# Ordered list for upgrade path
+TIER_ORDER = ["free", "premium", "premium_plus"]
 
 
 def get_tier_config(tier_name: str) -> Dict[str, Any]:
@@ -31,10 +37,14 @@ def get_tier_config(tier_name: str) -> Dict[str, Any]:
     return TIER_CONFIG[tier_name]
 
 
-def get_photo_limit(tier_name: str, custom_limit: Optional[int] = None) -> int:
-    """Return the photo limit for a tier. For custom tiers, custom_limit is required."""
-    if tier_name == "custom":
-        if custom_limit is None:
-            raise ValueError("custom_limit required for custom tier")
-        return custom_limit
-    return TIER_CONFIG[tier_name]["photo_limit"]
+def get_upgrade_price(current_tier: str, target_tier: str) -> int:
+    """Return the price in cents for upgrading between tiers."""
+    if current_tier not in TIER_ORDER or target_tier not in TIER_ORDER:
+        raise ValueError("Invalid tier for upgrade calculation")
+    current_idx = TIER_ORDER.index(current_tier)
+    target_idx = TIER_ORDER.index(target_tier)
+    if target_idx <= current_idx:
+        raise ValueError("Target tier must be higher than current tier")
+    current_price = TIER_CONFIG[current_tier]["price_cents"]
+    target_price = TIER_CONFIG[target_tier]["price_cents"]
+    return target_price - current_price

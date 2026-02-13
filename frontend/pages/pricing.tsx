@@ -10,26 +10,11 @@ const tiers = [
     period: '',
     description: 'Perfect for trying out PicUr',
     features: [
-      'Up to 25 photos per event',
+      '1 event',
+      'Up to 50 photos per event',
       'Face recognition',
       'Guest scanning',
       'Photo downloads',
-    ],
-    cta: 'Get Started',
-    href: '/admin/register',
-    highlighted: false,
-  },
-  {
-    name: 'Standard',
-    price: 'RM 500',
-    period: 'per event',
-    description: 'For small events like birthdays or corporate events',
-    features: [
-      'Up to 1,000 photos per event',
-      'Face recognition',
-      'Guest scanning',
-      'Photo downloads',
-      'Priority support',
     ],
     cta: 'Get Started',
     href: '/admin/register',
@@ -37,19 +22,35 @@ const tiers = [
   },
   {
     name: 'Premium',
-    price: 'RM 800',
-    period: 'per event',
-    description: 'For large events like weddings or festivals',
+    price: 'RM 50',
+    period: 'one-time',
+    description: 'For photographers managing multiple events',
     features: [
-      'Up to 2,000 photos per event',
+      'Up to 3 events',
+      'Up to 300 photos per event',
       'Face recognition',
       'Guest scanning',
       'Photo downloads',
-      'Priority support',
     ],
     cta: 'Get Started',
     href: '/admin/register',
     highlighted: true,
+  },
+  {
+    name: 'Premium+',
+    price: 'RM 100',
+    period: 'one-time',
+    description: 'For pros managing many events',
+    features: [
+      'Up to 10 events',
+      'Up to 500 photos per event',
+      'Face recognition',
+      'Guest scanning',
+      'Photo downloads',
+    ],
+    cta: 'Get Started',
+    href: '/admin/register',
+    highlighted: false,
   },
 ]
 
@@ -64,7 +65,7 @@ export default function Pricing() {
         <div className="text-center mb-16">
           <h1 className="text-3xl md:text-4xl font-bold mb-4">Simple, transparent pricing</h1>
           <p className="text-gray-400 text-lg max-w-xl mx-auto">
-            Start free, upgrade per event when you need more photos.
+            Start free, upgrade your account when you need more events and photos.
           </p>
         </div>
 
@@ -113,7 +114,7 @@ export default function Pricing() {
         </div>
 
         <p className="text-center text-gray-500 text-sm mt-12">
-          Need more than 2,000 photos? Contact us for a custom plan.
+          Need a custom plan? Contact us for enterprise pricing.
         </p>
       </div>
     </PublicLayout>

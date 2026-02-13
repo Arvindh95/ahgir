@@ -190,7 +190,7 @@ export default function Home() {
             <div className="text-center mb-24">
               <h2 className="text-4xl md:text-6xl font-bold mb-6 tracking-tight">Simple pricing</h2>
               <p className="text-gray-400 text-xl max-w-2xl mx-auto font-light">
-                Start free, upgrade per event when you need more.
+                Start free, upgrade your account when you need more.
               </p>
             </div>
           </FadeIn>
@@ -198,9 +198,9 @@ export default function Home() {
           <FadeInStagger>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8 max-w-5xl mx-auto">
               {[
-                { name: 'Free', price: 'RM 0', period: '', photos: '25 photos', highlighted: false },
-                { name: 'Standard', price: 'RM 500', period: 'per event', photos: '1,000 photos', highlighted: false },
-                { name: 'Premium', price: 'RM 800', period: 'per event', photos: '2,000 photos', highlighted: true },
+                { name: 'Free', price: 'RM 0', period: '', desc: '1 event, 50 photos', highlighted: false },
+                { name: 'Premium', price: 'RM 50', period: 'one-time', desc: '3 events, 300 photos each', highlighted: true },
+                { name: 'Premium+', price: 'RM 100', period: 'one-time', desc: '10 events, 500 photos each', highlighted: false },
               ].map((tier) => (
                 <FadeIn key={tier.name}>
                   <div className={`rounded-2xl p-8 flex flex-col text-center ${
@@ -216,7 +216,7 @@ export default function Home() {
                       <span className="text-3xl font-bold">{tier.price}</span>
                       {tier.period && <span className="text-gray-400 text-sm">{tier.period}</span>}
                     </div>
-                    <p className="text-gray-400 text-sm mb-6">Up to {tier.photos} per event</p>
+                    <p className="text-gray-400 text-sm mb-6">{tier.desc}</p>
                     <ul className="space-y-2 mb-6 text-left">
                       {['Face recognition', 'Guest scanning', 'Photo downloads'].map((f) => (
                         <li key={f} className="flex items-center gap-2 text-sm text-gray-300">

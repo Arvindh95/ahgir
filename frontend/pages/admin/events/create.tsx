@@ -50,7 +50,12 @@ export default function CreateEventPage() {
       })
       router.push(`/admin/events/${event.event_id}`)
     } catch (err: any) {
-      setError(err.response?.data?.error?.message || 'Failed to create event')
+      const detail = err.response?.data?.detail
+      if (typeof detail === 'object' && detail?.code === 'EVENT_LIMIT_REACHED') {
+        setError(detail.message)
+      } else {
+        setError(typeof detail === 'string' ? detail : err.response?.data?.error?.message || 'Failed to create event')
+      }
     } finally {
       setIsLoading(false)
     }

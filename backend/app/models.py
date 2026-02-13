@@ -21,6 +21,7 @@ class User(Base):
     
     # Relationships
     events = relationship("Event", back_populates="owner", cascade="all, delete-orphan")
+    user_tier = relationship("UserTier", back_populates="user", uselist=False, cascade="all, delete-orphan")
 
 class Event(Base):
     __tablename__ = "events"
@@ -125,14 +126,39 @@ class AuditLog(Base):
         {"schema": None}
     )
 
+class UserTier(Base):
+    __tablename__ = "user_tiers"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
+    tier_name = Column(String(50), nullable=False, default="free")  # free, premium, premium_plus, custom
+    max_events = Column(Integer, nullable=False, default=1)
+    max_photos_per_event = Column(Integer, nullable=False, default=50)
+    price_cents = Column(Integer, nullable=False, default=0)
+    currency = Column(String(3), nullable=False, default="myr")
+    is_active = Column(Boolean, default=True, nullable=False)
+    activated_at = Column(TIMESTAMP, nullable=True)
+    created_at = Column(TIMESTAMP, server_default=func.now(), nullable=False)
+    updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    # Relationships
+    user = relationship("User", back_populates="user_tier")
+
+    __table_args__ = (
+        CheckConstraint("tier_name IN ('free', 'premium', 'premium_plus', 'custom')", name="valid_user_tier_name"),
+        {"schema": None}
+    )
+
+
 class EventTier(Base):
+    """Per-event photo limit override (superadmin only)."""
     __tablename__ = "event_tiers"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     event_id = Column(UUID(as_uuid=True), ForeignKey("events.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
-    tier_name = Column(String(50), nullable=False, default="free")  # free, standard, premium, custom
-    photo_limit = Column(Integer, nullable=False, default=25)
-    price_cents = Column(Integer, nullable=False, default=0)  # Price in sen (MYR cents). 50000 = RM500
+    tier_name = Column(String(50), nullable=False, default="free")  # kept for backward compat
+    photo_limit = Column(Integer, nullable=False, default=50)
+    price_cents = Column(Integer, nullable=False, default=0)
     currency = Column(String(3), nullable=False, default="myr")
     is_active = Column(Boolean, default=True, nullable=False)
     activated_at = Column(TIMESTAMP, nullable=True)
@@ -141,10 +167,9 @@ class EventTier(Base):
 
     # Relationships
     event = relationship("Event", back_populates="tier")
-    payments = relationship("Payment", back_populates="event_tier", cascade="all, delete-orphan")
 
     __table_args__ = (
-        CheckConstraint("tier_name IN ('free', 'standard', 'premium', 'custom')", name="valid_tier_name"),
+        CheckConstraint("tier_name IN ('free', 'standard', 'premium', 'premium_plus', 'custom')", name="valid_tier_name"),
         {"schema": None}
     )
 
@@ -153,8 +178,8 @@ class Payment(Base):
     __tablename__ = "payments"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    event_tier_id = Column(UUID(as_uuid=True), ForeignKey("event_tiers.id", ondelete="CASCADE"), nullable=True, index=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    tier_name = Column(String(50), nullable=True)  # what tier was purchased
     stripe_checkout_session_id = Column(String(255), unique=True, nullable=False, index=True)
     stripe_payment_intent_id = Column(String(255), unique=True, nullable=True, index=True)
     amount_cents = Column(Integer, nullable=False)
@@ -165,7 +190,6 @@ class Payment(Base):
     updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now(), nullable=False)
 
     # Relationships
-    event_tier = relationship("EventTier", back_populates="payments")
     user = relationship("User")
 
     __table_args__ = (

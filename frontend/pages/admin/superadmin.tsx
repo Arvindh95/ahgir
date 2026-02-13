@@ -9,7 +9,7 @@ import { authService } from '@/lib/auth'
 import { useToast } from '@/hooks/useToast'
 import SuperadminSkeleton from '@/components/skeletons/SuperadminSkeleton'
 import GlobalAnalytics from '@/components/GlobalAnalytics'
-import { Shield, Users, Image as ImageIcon, Database, Ban, ShieldCheck, ShieldOff, Trash2, DollarSign, CreditCard, Settings, Loader2, Search } from 'lucide-react'
+import { Shield, Users, Image as ImageIcon, Database, Ban, ShieldCheck, ShieldOff, Trash2, DollarSign, CreditCard, Settings, Loader2, Search, Zap } from 'lucide-react'
 
 interface UserItem {
   user_id: string
@@ -18,6 +18,9 @@ interface UserItem {
   is_superadmin: boolean
   is_disabled: boolean
   event_count: number
+  tier_name: string
+  max_events: number
+  max_photos_per_event: number
   created_at: string
 }
 
@@ -32,7 +35,6 @@ interface PlatformStats {
 
 interface PaymentItem {
   payment_id: string
-  event_name: string
   user_email: string
   tier_name: string
   amount_cents: number
@@ -47,17 +49,24 @@ interface EventItem {
   date: string | null
   owner_email: string
   photo_count: number
-  tier_name: string
+  user_tier: string
   photo_limit: number
+  has_override: boolean
   created_at: string
 }
 
-interface TierEditState {
+interface UserTierEditState {
+  userId: string
+  email: string
+  tierName: string
+  maxEvents: string
+  maxPhotos: string
+}
+
+interface EventOverrideState {
   eventId: string
   eventName: string
-  tierName: string
   photoLimit: string
-  priceCents: string
 }
 
 interface ConfirmAction {
@@ -79,8 +88,11 @@ export default function SuperadminPage() {
   const [payments, setPayments] = useState<PaymentItem[]>([])
   const [events, setEvents] = useState<EventItem[]>([])
   const [eventSearch, setEventSearch] = useState('')
-  const [tierEdit, setTierEdit] = useState<TierEditState | null>(null)
+  const [userSearch, setUserSearch] = useState('')
+  const [tierEdit, setTierEdit] = useState<UserTierEditState | null>(null)
   const [savingTier, setSavingTier] = useState(false)
+  const [overrideEdit, setOverrideEdit] = useState<EventOverrideState | null>(null)
+  const [savingOverride, setSavingOverride] = useState(false)
 
   useEffect(() => {
     checkAccess()
@@ -116,18 +128,14 @@ export default function SuperadminPage() {
     try {
       const response = await api.get('/admin/payments')
       setPayments(response.data.payments || [])
-    } catch {
-      // payments endpoint may not exist on older backends
-    }
+    } catch { }
   }
 
   const loadEvents = async () => {
     try {
       const response = await api.get('/admin/events')
       setEvents(response.data.events || [])
-    } catch {
-      // endpoint may not exist on older backends
-    }
+    } catch { }
   }
 
   const handleTierSave = async () => {
@@ -135,16 +143,43 @@ export default function SuperadminPage() {
     setSavingTier(true)
     try {
       const body: any = { tier_name: tierEdit.tierName }
-      if (tierEdit.photoLimit) body.photo_limit = parseInt(tierEdit.photoLimit)
-      if (tierEdit.priceCents) body.price_cents = parseInt(tierEdit.priceCents)
-      await api.patch(`/admin/events/${tierEdit.eventId}/tier`, body)
-      toast(`Tier updated to ${tierEdit.tierName} for "${tierEdit.eventName}"`, 'success')
+      if (tierEdit.maxEvents) body.max_events = parseInt(tierEdit.maxEvents)
+      if (tierEdit.maxPhotos) body.max_photos_per_event = parseInt(tierEdit.maxPhotos)
+      await api.patch(`/admin/users/${tierEdit.userId}/tier`, body)
+      toast(`Tier updated to ${tierEdit.tierName} for "${tierEdit.email}"`, 'success')
       setTierEdit(null)
-      loadEvents()
+      loadUsers()
     } catch (err: any) {
       toast(err.response?.data?.detail || 'Failed to update tier', 'error')
     } finally {
       setSavingTier(false)
+    }
+  }
+
+  const handleOverrideSave = async () => {
+    if (!overrideEdit) return
+    setSavingOverride(true)
+    try {
+      await api.patch(`/admin/events/${overrideEdit.eventId}/photo-override`, {
+        photo_limit: parseInt(overrideEdit.photoLimit)
+      })
+      toast(`Photo limit set to ${overrideEdit.photoLimit} for "${overrideEdit.eventName}"`, 'success')
+      setOverrideEdit(null)
+      loadEvents()
+    } catch (err: any) {
+      toast(err.response?.data?.detail || 'Failed to set override', 'error')
+    } finally {
+      setSavingOverride(false)
+    }
+  }
+
+  const handleRemoveOverride = async (eventId: string, eventName: string) => {
+    try {
+      await api.delete(`/admin/events/${eventId}/photo-override`)
+      toast(`Override removed for "${eventName}"`, 'success')
+      loadEvents()
+    } catch (err: any) {
+      toast(err.response?.data?.detail || 'Failed to remove override', 'error')
     }
   }
 
@@ -232,6 +267,12 @@ export default function SuperadminPage() {
 
   const modalProps = getConfirmModalProps()
 
+  const tierDefaults: Record<string, { events: string; photos: string }> = {
+    free: { events: '1', photos: '50' },
+    premium: { events: '3', photos: '300' },
+    premium_plus: { events: '10', photos: '500' },
+  }
+
   return (
     <ProtectedRoute>
       <Head><title>Super Admin - PicUr</title></Head>
@@ -289,19 +330,34 @@ export default function SuperadminPage() {
               <Users className="w-5 h-5" /> User Management
             </h2>
 
+            <div className="relative mb-4">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+              <input
+                type="text"
+                placeholder="Search users by email..."
+                value={userSearch}
+                onChange={(e) => setUserSearch(e.target.value)}
+                className="glass-input w-full pl-10 pr-4 py-2.5 rounded-xl text-sm"
+              />
+            </div>
+
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead>
                   <tr className="border-b border-white/10 text-gray-400">
                     <th className="pb-3 pl-2 font-medium">Email</th>
+                    <th className="pb-3 font-medium">Tier</th>
                     <th className="pb-3 font-medium">Events</th>
+                    <th className="pb-3 font-medium">Photos/Event</th>
                     <th className="pb-3 font-medium">Status</th>
                     <th className="pb-3 font-medium">Created</th>
                     <th className="pb-3 font-medium text-right pr-2">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
-                  {users.map((user) => (
+                  {users
+                    .filter(u => !userSearch || u.email.toLowerCase().includes(userSearch.toLowerCase()))
+                    .map((user) => (
                     <tr
                       key={user.user_id}
                       className={`hover:bg-white/5 transition-colors ${user.is_disabled ? 'opacity-50' : ''}`}
@@ -316,7 +372,18 @@ export default function SuperadminPage() {
                           )}
                         </div>
                       </td>
-                      <td className="py-3">{user.event_count}</td>
+                      <td className="py-3">
+                        <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase ${
+                          user.tier_name === 'free' ? 'bg-gray-500/20 text-gray-400' :
+                          user.tier_name === 'premium' ? 'bg-blue-500/20 text-blue-400' :
+                          user.tier_name === 'premium_plus' ? 'bg-purple-500/20 text-purple-400' :
+                          'bg-yellow-500/20 text-yellow-400'
+                        }`}>
+                          {user.tier_name === 'premium_plus' ? 'Premium+' : user.tier_name}
+                        </span>
+                      </td>
+                      <td className="py-3">{user.event_count}/{user.max_events}</td>
+                      <td className="py-3">{user.max_photos_per_event}</td>
                       <td className="py-3">
                         <div className="flex items-center gap-2">
                           {user.is_disabled ? (
@@ -331,6 +398,19 @@ export default function SuperadminPage() {
                       <td className="py-3 text-gray-400">{formatDate(user.created_at)}</td>
                       <td className="py-3 pr-2">
                         <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => setTierEdit({
+                              userId: user.user_id,
+                              email: user.email,
+                              tierName: user.tier_name,
+                              maxEvents: String(user.max_events),
+                              maxPhotos: String(user.max_photos_per_event),
+                            })}
+                            className="p-1.5 rounded-lg transition-colors bg-white/5 text-gray-500 hover:bg-white/10 hover:text-yellow-400"
+                            title="Edit tier"
+                          >
+                            <Zap className="w-4 h-4" />
+                          </button>
                           <button
                             onClick={() => setConfirmAction({ type: 'superadmin', userId: user.user_id, email: user.email, currentValue: user.is_superadmin })}
                             disabled={updating === user.user_id}
@@ -370,86 +450,12 @@ export default function SuperadminPage() {
             </div>
           </div>
 
-          {/* Event Tier Management */}
-          <div className="glass-card p-6 rounded-2xl mt-8">
-            <h2 className="text-xl font-bold mb-6 flex items-center gap-2">
-              <Settings className="w-5 h-5" /> Event Tier Management
-            </h2>
-
-            <div className="relative mb-4">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
-              <input
-                type="text"
-                placeholder="Search events by name or owner email..."
-                value={eventSearch}
-                onChange={(e) => setEventSearch(e.target.value)}
-                className="glass-input w-full pl-10 pr-4 py-2.5 rounded-xl text-sm"
-              />
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead>
-                  <tr className="border-b border-white/10 text-gray-400">
-                    <th className="pb-3 pl-2 font-medium">Event</th>
-                    <th className="pb-3 font-medium">Owner</th>
-                    <th className="pb-3 font-medium">Photos</th>
-                    <th className="pb-3 font-medium">Current Tier</th>
-                    <th className="pb-3 font-medium">Limit</th>
-                    <th className="pb-3 font-medium text-right pr-2">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                  {events
-                    .filter((e) => {
-                      if (!eventSearch) return true
-                      const q = eventSearch.toLowerCase()
-                      return e.name.toLowerCase().includes(q) || e.owner_email?.toLowerCase().includes(q)
-                    })
-                    .slice(0, 20)
-                    .map((event) => (
-                      <tr key={event.event_id} className="hover:bg-white/5 transition-colors">
-                        <td className="py-3 pl-2 font-medium">{event.name}</td>
-                        <td className="py-3 text-gray-400 text-xs">{event.owner_email}</td>
-                        <td className="py-3">{event.photo_count}</td>
-                        <td className="py-3">
-                          <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase ${
-                            event.tier_name === 'free' ? 'bg-gray-500/20 text-gray-400' :
-                            event.tier_name === 'standard' ? 'bg-blue-500/20 text-blue-400' :
-                            event.tier_name === 'premium' ? 'bg-purple-500/20 text-purple-400' :
-                            'bg-yellow-500/20 text-yellow-400'
-                          }`}>
-                            {event.tier_name}
-                          </span>
-                        </td>
-                        <td className="py-3">{event.photo_limit.toLocaleString()}</td>
-                        <td className="py-3 pr-2 text-right">
-                          <button
-                            onClick={() => setTierEdit({
-                              eventId: event.event_id,
-                              eventName: event.name,
-                              tierName: event.tier_name,
-                              photoLimit: String(event.photo_limit),
-                              priceCents: '',
-                            })}
-                            className="px-3 py-1 rounded-lg text-xs font-medium bg-white/5 text-gray-400 hover:bg-white/10 hover:text-white transition-colors"
-                          >
-                            Edit Tier
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Tier Edit Modal */}
+          {/* User Tier Edit Modal */}
           {tierEdit && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={() => setTierEdit(null)}>
               <div className="glass-card rounded-2xl p-8 max-w-md w-full mx-4" onClick={(e) => e.stopPropagation()}>
-                <h3 className="text-lg font-bold mb-1">Edit Tier</h3>
-                <p className="text-sm text-gray-400 mb-6">{tierEdit.eventName}</p>
+                <h3 className="text-lg font-bold mb-1">Edit User Tier</h3>
+                <p className="text-sm text-gray-400 mb-6">{tierEdit.email}</p>
 
                 <div className="space-y-4">
                   <div>
@@ -458,45 +464,44 @@ export default function SuperadminPage() {
                       value={tierEdit.tierName}
                       onChange={(e) => {
                         const tier = e.target.value
-                        const defaults: Record<string, string> = { free: '25', standard: '1000', premium: '2000' }
+                        const defaults = tierDefaults[tier]
                         setTierEdit({
                           ...tierEdit,
                           tierName: tier,
-                          photoLimit: tier === 'custom' ? tierEdit.photoLimit : (defaults[tier] || tierEdit.photoLimit),
+                          maxEvents: tier === 'custom' ? tierEdit.maxEvents : (defaults?.events || tierEdit.maxEvents),
+                          maxPhotos: tier === 'custom' ? tierEdit.maxPhotos : (defaults?.photos || tierEdit.maxPhotos),
                         })
                       }}
                       className="glass-input w-full px-3 py-2.5 rounded-xl text-sm [&>option]:bg-gray-900 [&>option]:text-white"
                     >
-                      <option value="free">Free (25 photos)</option>
-                      <option value="standard">Standard (1,000 photos)</option>
-                      <option value="premium">Premium (2,000 photos)</option>
+                      <option value="free">Free (1 event, 50 photos)</option>
+                      <option value="premium">Premium (3 events, 300 photos)</option>
+                      <option value="premium_plus">Premium+ (10 events, 500 photos)</option>
                       <option value="custom">Custom</option>
                     </select>
                   </div>
 
                   <div>
-                    <label className="block text-sm text-gray-400 mb-1">Photo Limit</label>
+                    <label className="block text-sm text-gray-400 mb-1">Max Events</label>
                     <input
                       type="number"
-                      value={tierEdit.photoLimit}
-                      onChange={(e) => setTierEdit({ ...tierEdit, photoLimit: e.target.value })}
+                      value={tierEdit.maxEvents}
+                      onChange={(e) => setTierEdit({ ...tierEdit, maxEvents: e.target.value })}
                       className="glass-input w-full px-3 py-2.5 rounded-xl text-sm"
                       disabled={tierEdit.tierName !== 'custom'}
                     />
                   </div>
 
-                  {tierEdit.tierName === 'custom' && (
-                    <div>
-                      <label className="block text-sm text-gray-400 mb-1">Price (RM)</label>
-                      <input
-                        type="number"
-                        placeholder="e.g. 1500"
-                        value={tierEdit.priceCents ? String(Number(tierEdit.priceCents) / 100) : ''}
-                        onChange={(e) => setTierEdit({ ...tierEdit, priceCents: String(Number(e.target.value) * 100) })}
-                        className="glass-input w-full px-3 py-2.5 rounded-xl text-sm"
-                      />
-                    </div>
-                  )}
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-1">Max Photos per Event</label>
+                    <input
+                      type="number"
+                      value={tierEdit.maxPhotos}
+                      onChange={(e) => setTierEdit({ ...tierEdit, maxPhotos: e.target.value })}
+                      className="glass-input w-full px-3 py-2.5 rounded-xl text-sm"
+                      disabled={tierEdit.tierName !== 'custom'}
+                    />
+                  </div>
                 </div>
 
                 <div className="flex gap-3 mt-6">
@@ -518,6 +523,130 @@ export default function SuperadminPage() {
             </div>
           )}
 
+          {/* Per-Event Photo Override */}
+          <div className="glass-card p-6 rounded-2xl mt-8">
+            <h2 className="text-xl font-bold mb-6 flex items-center gap-2">
+              <Settings className="w-5 h-5" /> Per-Event Photo Override
+            </h2>
+
+            <div className="relative mb-4">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+              <input
+                type="text"
+                placeholder="Search events by name or owner email..."
+                value={eventSearch}
+                onChange={(e) => setEventSearch(e.target.value)}
+                className="glass-input w-full pl-10 pr-4 py-2.5 rounded-xl text-sm"
+              />
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-white/10 text-gray-400">
+                    <th className="pb-3 pl-2 font-medium">Event</th>
+                    <th className="pb-3 font-medium">Owner</th>
+                    <th className="pb-3 font-medium">Photos</th>
+                    <th className="pb-3 font-medium">User Tier</th>
+                    <th className="pb-3 font-medium">Photo Limit</th>
+                    <th className="pb-3 font-medium text-right pr-2">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {events
+                    .filter((e) => {
+                      if (!eventSearch) return true
+                      const q = eventSearch.toLowerCase()
+                      return e.name.toLowerCase().includes(q) || e.owner_email?.toLowerCase().includes(q)
+                    })
+                    .slice(0, 20)
+                    .map((event) => (
+                      <tr key={event.event_id} className="hover:bg-white/5 transition-colors">
+                        <td className="py-3 pl-2 font-medium">{event.name}</td>
+                        <td className="py-3 text-gray-400 text-xs">{event.owner_email}</td>
+                        <td className="py-3">{event.photo_count}</td>
+                        <td className="py-3">
+                          <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase ${
+                            event.user_tier === 'free' ? 'bg-gray-500/20 text-gray-400' :
+                            event.user_tier === 'premium' ? 'bg-blue-500/20 text-blue-400' :
+                            event.user_tier === 'premium_plus' ? 'bg-purple-500/20 text-purple-400' :
+                            'bg-yellow-500/20 text-yellow-400'
+                          }`}>
+                            {event.user_tier === 'premium_plus' ? 'P+' : event.user_tier}
+                          </span>
+                        </td>
+                        <td className="py-3">
+                          {event.photo_limit.toLocaleString()}
+                          {event.has_override && (
+                            <span className="ml-1 text-[10px] text-yellow-400 font-bold">(override)</span>
+                          )}
+                        </td>
+                        <td className="py-3 pr-2 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              onClick={() => setOverrideEdit({
+                                eventId: event.event_id,
+                                eventName: event.name,
+                                photoLimit: String(event.photo_limit),
+                              })}
+                              className="px-3 py-1 rounded-lg text-xs font-medium bg-white/5 text-gray-400 hover:bg-white/10 hover:text-white transition-colors"
+                            >
+                              Set Override
+                            </button>
+                            {event.has_override && (
+                              <button
+                                onClick={() => handleRemoveOverride(event.event_id, event.name)}
+                                className="px-3 py-1 rounded-lg text-xs font-medium bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
+                              >
+                                Remove
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Event Override Modal */}
+          {overrideEdit && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={() => setOverrideEdit(null)}>
+              <div className="glass-card rounded-2xl p-8 max-w-md w-full mx-4" onClick={(e) => e.stopPropagation()}>
+                <h3 className="text-lg font-bold mb-1">Set Photo Override</h3>
+                <p className="text-sm text-gray-400 mb-6">{overrideEdit.eventName}</p>
+
+                <div>
+                  <label className="block text-sm text-gray-400 mb-1">Photo Limit</label>
+                  <input
+                    type="number"
+                    value={overrideEdit.photoLimit}
+                    onChange={(e) => setOverrideEdit({ ...overrideEdit, photoLimit: e.target.value })}
+                    className="glass-input w-full px-3 py-2.5 rounded-xl text-sm"
+                    placeholder="e.g. 800"
+                  />
+                </div>
+
+                <div className="flex gap-3 mt-6">
+                  <button
+                    onClick={() => setOverrideEdit(null)}
+                    className="flex-1 py-2.5 rounded-xl text-sm font-medium bg-white/5 hover:bg-white/10 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleOverrideSave}
+                    disabled={savingOverride}
+                    className="flex-1 py-2.5 rounded-xl text-sm font-semibold bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {savingOverride ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving...</> : 'Save'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Recent Payments */}
           <div className="glass-card p-6 rounded-2xl mt-8">
             <h2 className="text-xl font-bold mb-6 flex items-center gap-2">
@@ -530,8 +659,7 @@ export default function SuperadminPage() {
                 <table className="w-full text-left text-sm">
                   <thead>
                     <tr className="border-b border-white/10 text-gray-400">
-                      <th className="pb-3 pl-2 font-medium">Event</th>
-                      <th className="pb-3 font-medium">User</th>
+                      <th className="pb-3 pl-2 font-medium">User</th>
                       <th className="pb-3 font-medium">Tier</th>
                       <th className="pb-3 font-medium">Amount</th>
                       <th className="pb-3 font-medium">Status</th>
@@ -541,15 +669,14 @@ export default function SuperadminPage() {
                   <tbody className="divide-y divide-white/5">
                     {payments.slice(0, 20).map((payment) => (
                       <tr key={payment.payment_id} className="hover:bg-white/5 transition-colors">
-                        <td className="py-3 pl-2 font-medium">{payment.event_name}</td>
-                        <td className="py-3 text-gray-400">{payment.user_email}</td>
+                        <td className="py-3 pl-2 font-medium">{payment.user_email}</td>
                         <td className="py-3">
                           <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase ${
-                            payment.tier_name === 'standard' ? 'bg-blue-500/20 text-blue-400' :
-                            payment.tier_name === 'premium' ? 'bg-purple-500/20 text-purple-400' :
+                            payment.tier_name === 'premium' ? 'bg-blue-500/20 text-blue-400' :
+                            payment.tier_name === 'premium_plus' ? 'bg-purple-500/20 text-purple-400' :
                             'bg-gray-500/20 text-gray-400'
                           }`}>
-                            {payment.tier_name}
+                            {payment.tier_name === 'premium_plus' ? 'Premium+' : payment.tier_name}
                           </span>
                         </td>
                         <td className="py-3 font-medium">RM {(payment.amount_cents / 100).toFixed(0)}</td>
