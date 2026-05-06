@@ -2,6 +2,9 @@ import itertools
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
+    # Environment
+    environment: str = "development"  # set to "production" in prod env
+
     # Database
     database_url: str = "postgresql://picur:picur@postgres:5432/picur"
     
@@ -53,15 +56,50 @@ class Settings(BaseSettings):
     scan_rate_window_hours: int = 1
     auth_rate_limit: int = 30
     auth_rate_window_hours: int = 1
+    # Per-event passcode brute-force limiter (defends against rotating-IP attackers).
+    event_passcode_rate_limit: int = 10
+    event_passcode_rate_window_hours: int = 1
     share_rate_limit: int = 60
     share_rate_window_hours: int = 1
     bulk_download_max_images: int = 100
     bulk_download_max_bytes: int = 500 * 1024 * 1024  # 500 MB
+    # Per-file upload cap (matches Caddy request_body max_size in prod).
+    max_upload_bytes: int = 25 * 1024 * 1024  # 25 MB
     
     class Config:
         env_file = ".env"
 
 settings = Settings()
+
+
+def validate_production_secrets():
+    """Fail fast if production is missing critical secrets or using dev defaults."""
+    if settings.environment.lower() != "production":
+        return
+
+    errors = []
+    if settings.jwt_secret_key in ("your-secret-key-change-in-production", "dev-only-not-for-prod", ""):
+        errors.append("JWT_SECRET_KEY is unset or using dev default")
+    if not settings.stripe_secret_key:
+        errors.append("STRIPE_SECRET_KEY is unset")
+    if not settings.stripe_webhook_secret:
+        errors.append("STRIPE_WEBHOOK_SECRET is unset")
+    if not settings.smtp_username or not settings.smtp_password:
+        errors.append("SMTP_USERNAME or SMTP_PASSWORD is unset")
+    if not settings.compreface_api_key:
+        errors.append("COMPREFACE_API_KEY is unset")
+    if settings.minio_secret_key in ("minioadmin", "minioadmin_dev_only", ""):
+        errors.append("MINIO_SECRET_KEY is unset or using dev default")
+    if "localhost" in settings.cors_origins.lower() or "127.0.0.1" in settings.cors_origins:
+        errors.append(f"CORS_ORIGINS contains localhost in production: {settings.cors_origins}")
+
+    if errors:
+        raise RuntimeError(
+            "Production startup blocked due to insecure config:\n  - " + "\n  - ".join(errors)
+        )
+
+
+validate_production_secrets()
 
 # Round-robin CompreFace URL selector (supports comma-separated URLs)
 _compreface_urls = [u.strip() for u in settings.compreface_api_url.split(",") if u.strip()]

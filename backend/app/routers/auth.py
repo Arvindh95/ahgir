@@ -1,5 +1,8 @@
+import logging
 from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+
+logger = logging.getLogger(__name__)
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -76,7 +79,7 @@ async def register(user_data: UserRegister, request: Request, db: Session = Depe
         enqueue_email(new_user.email, verify_url)
     except Exception as e:
         # Log but don't fail registration
-        print(f"Failed to enqueue verification email: {e}")
+        logger.error(f"Failed to enqueue verification email: {e}")
 
     return UserResponse(
         user_id=str(new_user.id),
@@ -174,7 +177,7 @@ async def resend_verification(request: ResendVerifyRequest, db: Session = Depend
     try:
         enqueue_email(user.email, verify_url)
     except Exception as e:
-        print(f"Failed to enqueue verification email: {e}")
+        logger.error(f"Failed to enqueue verification email: {e}")
 
     return MessageResponse(message="If the email is registered, a verification link has been sent")
 
@@ -196,7 +199,7 @@ async def forgot_password(request_data: ForgotPasswordRequest, request: Request,
         try:
             enqueue_password_reset_email(user.email, reset_url)
         except Exception as e:
-            print(f"Failed to enqueue password reset email: {e}")
+            logger.error(f"Failed to enqueue password reset email: {e}")
 
     return MessageResponse(message="If the email is registered, a password reset link has been sent")
 

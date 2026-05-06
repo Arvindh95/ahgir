@@ -25,11 +25,12 @@ logger = logging.getLogger(__name__)
 from app.auth import get_current_user, hash_password
 from app.database import get_db
 from app.models import User, Event, Image, Face, AuditLog, EventTier, UserTier
-from app.storage import storage_service
+from app.storage import storage_service, generate_signed_cover_url
 from app.queue import enqueue_face_indexing
 from app.audit import log_action
 from app.config import settings, get_compreface_url
 from app.cache import cache_delete_pattern
+from app.tiers import get_effective_limits
 import httpx
 
 router = APIRouter(prefix="/events", tags=["events"])
@@ -201,11 +202,16 @@ async def create_event(
     
     Returns the created event with guest link and QR code URL
     """
-    # Event creation limit (superadmin bypasses)
+    # Event creation limit (superadmin bypasses). Lock UserTier row to prevent
+    # two concurrent create_event calls from both passing the count check.
     if not current_user.is_superadmin:
-        user_tier = db.query(UserTier).filter(UserTier.user_id == current_user.id).first()
+        user_tier = (
+            db.query(UserTier)
+            .filter(UserTier.user_id == current_user.id)
+            .with_for_update()
+            .first()
+        )
         if not user_tier:
-            # Auto-create free tier for user
             user_tier = UserTier(
                 user_id=current_user.id,
                 tier_name="free",
@@ -217,20 +223,27 @@ async def create_event(
             )
             db.add(user_tier)
             db.commit()
+            user_tier = (
+                db.query(UserTier)
+                .filter(UserTier.user_id == current_user.id)
+                .with_for_update()
+                .first()
+            )
 
+        limits = get_effective_limits(user_tier)
         current_event_count = db.query(func.count(Event.id)).filter(
             Event.owner_user_id == current_user.id
         ).scalar() or 0
 
-        if current_event_count >= user_tier.max_events:
+        if current_event_count >= limits["max_events"]:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail={
                     "code": "EVENT_LIMIT_REACHED",
-                    "message": f"You have reached the maximum of {user_tier.max_events} event(s) on the {user_tier.tier_name} tier. Upgrade to create more events.",
+                    "message": f"You have reached the maximum of {limits['max_events']} event(s) on the {limits['tier_name']} tier. Upgrade to create more events.",
                     "current_count": current_event_count,
-                    "max_events": user_tier.max_events,
-                    "tier": user_tier.tier_name,
+                    "max_events": limits["max_events"],
+                    "tier": limits["tier_name"],
                 }
             )
 
@@ -390,12 +403,10 @@ async def get_event(
     # Generate guest link
     guest_link = f"{settings.frontend_url}/e/{event.slug}"
     
-    # Generate cover image URL if exists (with cache-buster since filename is always cover.jpg)
+    # Generate signed cover image URL if exists (15-min expiry)
     cover_image_url = None
     if event.cover_image:
-        _protocol = "https" if settings.minio_external_secure else "http"
-        timestamp = int(datetime.utcnow().timestamp())
-        cover_image_url = f"{_protocol}://{settings.minio_external_endpoint}/{settings.minio_bucket}/{event.cover_image}?v={timestamp}"
+        cover_image_url = generate_signed_cover_url(event.id)
 
     # Get per-event tier override info
     tier_info = None
@@ -407,17 +418,18 @@ async def get_event(
             is_active=event_tier.is_active,
         )
 
-    # Get user tier info
+    # Get user tier info (limits derived from config so tiers.py changes propagate)
     user_tier_info = None
     user_tier = db.query(UserTier).filter(UserTier.user_id == event.owner_user_id).first()
     if user_tier:
+        limits = get_effective_limits(user_tier)
         events_used = db.query(func.count(Event.id)).filter(
             Event.owner_user_id == event.owner_user_id
         ).scalar() or 0
         user_tier_info = UserTierInfo(
-            tier_name=user_tier.tier_name,
-            max_events=user_tier.max_events,
-            max_photos_per_event=user_tier.max_photos_per_event,
+            tier_name=limits["tier_name"],
+            max_events=limits["max_events"],
+            max_photos_per_event=limits["max_photos_per_event"],
             events_used=events_used,
             is_active=user_tier.is_active,
         )
@@ -507,8 +519,21 @@ async def upload_cover_image(
     if not file.content_type or not file.content_type.startswith('image/'):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File must be an image")
 
+    max_bytes = settings.max_upload_bytes
+    content_length = getattr(file, "size", None)
+    if content_length is not None and content_length > max_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Cover image exceeds {max_bytes // (1024*1024)}MB upload limit"
+        )
+
     # Read and process image
     image_bytes = await file.read()
+    if len(image_bytes) > max_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Cover image exceeds {max_bytes // (1024*1024)}MB upload limit"
+        )
     img = PILImage.open(BytesIO(image_bytes))
     # Apply EXIF orientation (phones store rotation in metadata)
     img = ImageOps.exif_transpose(img)
@@ -522,22 +547,9 @@ async def upload_cover_image(
     img.save(buffer, format='JPEG', quality=85)
     buffer.seek(0)
 
-    # Upload to MinIO
-    object_key = f"events/{event_uuid}/cover.jpg"
-    from minio import Minio
-    minio_client = Minio(
-        settings.minio_endpoint,
-        access_key=settings.minio_access_key,
-        secret_key=settings.minio_secret_key,
-        secure=settings.minio_secure
-    )
-    minio_client.put_object(
-        settings.minio_bucket,
-        object_key,
-        buffer,
-        length=buffer.getbuffer().nbytes,
-        content_type="image/jpeg"
-    )
+    # Upload via storage_service so retry/backoff applies consistently
+    cover_bytes = buffer.getvalue()
+    object_key = storage_service.upload_cover(event_uuid, cover_bytes)
 
     # Update event
     event.cover_image = object_key
@@ -546,9 +558,7 @@ async def upload_cover_image(
     # Invalidate event info cache so guest page picks up the new cover
     cache_delete_pattern(f"event_info:{event.slug}")
 
-    _protocol = "https" if settings.minio_external_secure else "http"
-    timestamp = int(datetime.utcnow().timestamp())
-    cover_url = f"{_protocol}://{settings.minio_external_endpoint}/{settings.minio_bucket}/{object_key}?v={timestamp}"
+    cover_url = generate_signed_cover_url(event_uuid)
     return {"message": "Cover image uploaded", "cover_image_url": cover_url}
 
 @router.get("/{event_id}/qr")
@@ -669,15 +679,18 @@ def validate_image_format(file_data: bytes, filename: str) -> bool:
 
 from app.utils.thumbnail import generate_thumbnail
 
+_GPS_IFD_TAG = 0x8825  # ExifTags.GPSInfo
+
+
 def extract_exif_data(file_data: bytes) -> dict:
-    """Extract EXIF metadata from image"""
+    """Extract EXIF metadata from image, stripping GPS to protect user privacy."""
     try:
         img = PILImage.open(BytesIO(file_data))
         exif_data = img.getexif()
-        
+
         if not exif_data:
             return {}
-        
+
         def make_json_safe(v):
             if isinstance(v, (bytes, bytearray)):
                 return str(v)
@@ -692,6 +705,8 @@ def extract_exif_data(file_data: bytes) -> dict:
 
         exif_dict = {}
         for tag_id, value in exif_data.items():
+            if tag_id == _GPS_IFD_TAG:
+                continue
             exif_dict[str(tag_id)] = make_json_safe(value)
 
         return exif_dict
@@ -739,11 +754,22 @@ async def upload_photos(
             detail="You do not have permission to upload photos to this event"
         )
 
-    # Quota enforcement (superadmin bypasses)
+    # Quota enforcement (superadmin bypasses).
+    # Lock UserTier (and EventTier override) rows so two concurrent uploads cannot
+    # both pass the limit check before either writes images.
     if not current_user.is_superadmin:
-        # Determine effective photo limit: EventTier override > UserTier > default 50
-        event_tier = db.query(EventTier).filter(EventTier.event_id == event_uuid).first()
-        user_tier = db.query(UserTier).filter(UserTier.user_id == current_user.id).first()
+        event_tier = (
+            db.query(EventTier)
+            .filter(EventTier.event_id == event_uuid)
+            .with_for_update()
+            .first()
+        )
+        user_tier = (
+            db.query(UserTier)
+            .filter(UserTier.user_id == current_user.id)
+            .with_for_update()
+            .first()
+        )
 
         if not user_tier:
             user_tier = UserTier(
@@ -757,10 +783,17 @@ async def upload_photos(
             )
             db.add(user_tier)
             db.commit()
+            # Re-lock after insert
+            user_tier = (
+                db.query(UserTier)
+                .filter(UserTier.user_id == current_user.id)
+                .with_for_update()
+                .first()
+            )
 
-        # Per-event override takes priority, otherwise use user tier limit
-        effective_limit = event_tier.photo_limit if event_tier else user_tier.max_photos_per_event
-        tier_label = event_tier.tier_name if event_tier else user_tier.tier_name
+        limits = get_effective_limits(user_tier)
+        effective_limit = event_tier.photo_limit if event_tier else limits["max_photos_per_event"]
+        tier_label = event_tier.tier_name if event_tier else limits["tier_name"]
 
         current_photo_count = db.query(func.count(Image.id)).filter(
             Image.event_id == event_uuid
@@ -784,11 +817,28 @@ async def upload_photos(
     uploaded = []
     duplicates = []
     
+    max_bytes = settings.max_upload_bytes
     for file in files:
         try:
+            # Reject oversized uploads before reading entire payload into memory.
+            # Prefer Content-Length when available; fall back to streaming with cap.
+            content_length = getattr(file, "size", None)
+            if content_length is not None and content_length > max_bytes:
+                duplicates.append(PhotoDuplicate(
+                    filename=file.filename,
+                    reason=f"File exceeds {max_bytes // (1024*1024)}MB upload limit"
+                ))
+                continue
+
             # Read file data
             file_data = await file.read()
-            
+            if len(file_data) > max_bytes:
+                duplicates.append(PhotoDuplicate(
+                    filename=file.filename,
+                    reason=f"File exceeds {max_bytes // (1024*1024)}MB upload limit"
+                ))
+                continue
+
             # Validate image format
             if not validate_image_format(file_data, file.filename):
                 logger.warning(f"Upload rejected - invalid format: {file.filename} (size={len(file_data)}, content_type={file.content_type})")
@@ -873,12 +923,28 @@ async def upload_photos(
                 }
             )
             
-            # Queue face indexing job
+            # Queue face indexing job. Failure here means the photo will sit at status='pending'
+            # forever unless an admin runs the reindex tooling, so we audit-log the failure
+            # for visibility instead of silently continuing.
             try:
                 enqueue_face_indexing(str(image_id))
             except Exception as e:
-                # Log error but don't fail the upload
-                print(f"Failed to queue face indexing job for {image_id}: {str(e)}")
+                logger.error(
+                    f"Failed to queue face indexing job for image {image_id}: {e}",
+                    exc_info=True,
+                )
+                log_action(
+                    db=db,
+                    event_id=event_uuid,
+                    actor_type='admin',
+                    actor_id=current_user.id,
+                    action='index_enqueue_failed',
+                    metadata={
+                        'image_id': str(image_id),
+                        'filename': file.filename,
+                        'error': str(e),
+                    }
+                )
             
             uploaded.append(PhotoUploadResult(
                 image_id=str(image_id),
@@ -1419,7 +1485,7 @@ async def reindex_event(
             queued_count += 1
         except Exception as e:
             # Log error but continue queuing other images
-            print(f"Failed to queue image {image.id} for reindexing: {str(e)}")
+            logger.error(f"Failed to queue image {image.id} for reindexing: {e}")
     
     # Log reindex action
     log_action(
@@ -1581,7 +1647,7 @@ async def delete_event(
         storage_service.delete_event_photos(event_uuid)
     except Exception as e:
         # Log error but continue with database deletion
-        print(f"Failed to delete photos from MinIO for event {event_uuid}: {str(e)}")
+        logger.error(f"Failed to delete photos from MinIO for event {event_uuid}: {e}")
     
     # Invalidate caches
     slug = event.slug

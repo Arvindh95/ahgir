@@ -1,3 +1,5 @@
+import base64
+import hashlib
 from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import Depends, HTTPException
@@ -55,20 +57,31 @@ class EventTokenPayload(BaseModel):
     event_id: str
     session_id: str
 
-# Helper functions
+# Bcrypt has a 72-byte input limit and silently truncates beyond that — two distinct
+# long passwords would hash identically. Pre-hashing with SHA256 (32 bytes) avoids the
+# truncation surprise entirely while keeping long passwords first-class.
+def _prehash_for_bcrypt(password: str) -> bytes:
+    digest = hashlib.sha256(password.encode("utf-8")).digest()
+    # base64 to keep bytes printable; output is 44 bytes (well under 72)
+    return base64.b64encode(digest)
+
+
 def hash_password(password: str) -> str:
-    """Hash a password using bcrypt"""
-    # Bcrypt has a 72-byte limit, truncate if necessary
-    password_bytes = password.encode('utf-8')[:72]
+    """Hash a password using bcrypt over a SHA256 pre-hash."""
     salt = bcrypt.gensalt()
-    hashed = bcrypt.hashpw(password_bytes, salt)
+    hashed = bcrypt.hashpw(_prehash_for_bcrypt(password), salt)
     return hashed.decode('utf-8')
 
+
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a password against a hash"""
-    password_bytes = plain_password.encode('utf-8')[:72]
+    """Verify a password. Falls back to legacy 72-byte truncated form for users who
+    registered before the pre-hash change so existing logins keep working."""
     hashed_bytes = hashed_password.encode('utf-8')
-    return bcrypt.checkpw(password_bytes, hashed_bytes)
+    if bcrypt.checkpw(_prehash_for_bcrypt(plain_password), hashed_bytes):
+        return True
+    # Legacy verification path — accept old truncated hashes
+    legacy_input = plain_password.encode('utf-8')[:72]
+    return bcrypt.checkpw(legacy_input, hashed_bytes)
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     """Create a JWT access token"""

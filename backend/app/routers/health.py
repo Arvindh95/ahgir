@@ -1,6 +1,6 @@
 """Health check endpoints for monitoring service status."""
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Depends, status
 from sqlalchemy import text
 from minio.error import S3Error
 import redis
@@ -10,6 +10,7 @@ from app.storage import storage_service
 from app.rate_limiter import redis_client
 from app.config import settings
 from app.compreface_client import CompreFaceClient
+from app.routers.admin import get_superadmin_user
 
 router = APIRouter(tags=["health"])
 
@@ -91,12 +92,18 @@ async def health_check():
     # Set overall status
     if not all_healthy:
         health_status["status"] = "unhealthy"
-    
+
+    # In production, strip raw error strings — they can leak internal hostnames,
+    # connection strings, or stack details. Status verdict alone is enough for LB probes.
+    if settings.environment.lower() == "production":
+        for svc in health_status["services"].values():
+            svc.pop("error", None)
+
     return health_status
 
 
 @router.get("/health/debug/event/{event_slug}", status_code=status.HTTP_200_OK)
-async def debug_event_faces(event_slug: str):
+async def debug_event_faces(event_slug: str, _superadmin=Depends(get_superadmin_user)):
     """
     Debug endpoint to check face indexing status for an event.
 
@@ -156,7 +163,7 @@ async def debug_event_faces(event_slug: str):
 
 
 @router.post("/health/debug/reindex/{event_slug}", status_code=status.HTTP_200_OK)
-async def reindex_event_images(event_slug: str, status_filter: str = "no_faces"):
+async def reindex_event_images(event_slug: str, status_filter: str = "no_faces", _superadmin=Depends(get_superadmin_user)):
     """
     Debug endpoint to re-trigger indexing for images in an event.
 

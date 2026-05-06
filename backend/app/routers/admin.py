@@ -14,6 +14,8 @@ from app.models import User, Event, Image, Face, AuditLog, EventTier, UserTier, 
 from app.config import settings, get_compreface_url
 from app.storage import storage_service
 from app.queue import get_failed_jobs, retry_failed_job
+from app.tiers import get_effective_limits
+from app.cache import cache_delete_pattern
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -85,6 +87,7 @@ async def list_users(
     result = []
     for user in users:
         tier = user_tiers.get(user.id)
+        limits = get_effective_limits(tier)
         result.append(UserListItem(
             user_id=str(user.id),
             email=user.email,
@@ -92,9 +95,9 @@ async def list_users(
             is_superadmin=user.is_superadmin,
             is_disabled=user.is_disabled,
             event_count=event_counts.get(user.id, 0),
-            tier_name=tier.tier_name if tier else "free",
-            max_events=tier.max_events if tier else 1,
-            max_photos_per_event=tier.max_photos_per_event if tier else 50,
+            tier_name=limits["tier_name"],
+            max_events=limits["max_events"],
+            max_photos_per_event=limits["max_photos_per_event"],
             created_at=user.created_at.isoformat()
         ))
 
@@ -169,7 +172,11 @@ async def update_user_tier(
     if update.tier_name not in valid_tiers:
         raise HTTPException(status_code=400, detail=f"Invalid tier. Must be one of: {valid_tiers}")
 
-    # Determine limits
+    # Determine limits.
+    # NOTE: Named tiers (free/premium/premium_plus) read limits from TIER_CONFIG at runtime
+    # (see tiers.get_effective_limits). Per-row overrides on named tiers are ignored on
+    # read, so reject them at write time to prevent silent no-ops. To customize a user's
+    # limits, set tier_name='custom'.
     if update.tier_name == "custom":
         if not update.max_events or not update.max_photos_per_event:
             raise HTTPException(status_code=400, detail="max_events and max_photos_per_event are required for custom tier")
@@ -177,9 +184,15 @@ async def update_user_tier(
         max_photos = update.max_photos_per_event
         price_cents = 0
     else:
+        if update.max_events is not None or update.max_photos_per_event is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="max_events / max_photos_per_event overrides are only allowed for tier_name='custom'. "
+                       "For named tiers, edit tiers.py to change limits for all users.",
+            )
         tier_config = TIER_CONFIG[update.tier_name]
-        max_events = update.max_events or tier_config["max_events"]
-        max_photos = update.max_photos_per_event or tier_config["max_photos_per_event"]
+        max_events = tier_config["max_events"]
+        max_photos = tier_config["max_photos_per_event"]
         price_cents = tier_config["price_cents"]
 
     user_tier = db.query(UserTier).filter(UserTier.user_id == target_uuid).first()
@@ -250,13 +263,23 @@ async def delete_user(
                             params={"subject": face.compreface_subject_id},
                             timeout=5.0,
                         )
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        # Orphaned faces in CompreFace eventually leak storage there.
+                        # Log so admin can run a CompreFace cleanup script later.
+                        import logging
+                        logging.getLogger(__name__).error(
+                            f"CompreFace face deletion failed for subject={face.compreface_subject_id} "
+                            f"event={event.id}: {e}"
+                        )
 
         try:
             storage_service.delete_event_photos(event.id)
         except Exception:
             pass
+
+        cache_delete_pattern(f"event_info:{event.slug}")
+        cache_delete_pattern(f"gallery:{event.id}:*")
+        cache_delete_pattern(f"share:{event.id}:*")
 
     email = target_user.email
     db.delete(target_user)
@@ -374,26 +397,23 @@ async def admin_list_events(
     user_tiers = {ut.user_id: ut for ut in db.query(UserTier).all()}
     event_tiers = {et.event_id: et for et in db.query(EventTier).all()}
 
-    return {
-        "events": [
-            {
-                "event_id": str(event.id),
-                "name": event.name,
-                "date": event.date.isoformat() if event.date else None,
-                "owner_email": email,
-                "photo_count": photo_counts.get(event.id, 0),
-                "user_tier": user_tiers[event.owner_user_id].tier_name if event.owner_user_id in user_tiers else "free",
-                "photo_limit": (
-                    event_tiers[event.id].photo_limit
-                    if event.id in event_tiers
-                    else (user_tiers[event.owner_user_id].max_photos_per_event if event.owner_user_id in user_tiers else 50)
-                ),
-                "has_override": event.id in event_tiers,
-                "created_at": event.created_at.isoformat(),
-            }
-            for event, email in events
-        ]
-    }
+    def _row(event, email):
+        ut = user_tiers.get(event.owner_user_id)
+        limits = get_effective_limits(ut)
+        et = event_tiers.get(event.id)
+        return {
+            "event_id": str(event.id),
+            "name": event.name,
+            "date": event.date.isoformat() if event.date else None,
+            "owner_email": email,
+            "photo_count": photo_counts.get(event.id, 0),
+            "user_tier": limits["tier_name"],
+            "photo_limit": et.photo_limit if et else limits["max_photos_per_event"],
+            "has_override": et is not None,
+            "created_at": event.created_at.isoformat(),
+        }
+
+    return {"events": [_row(event, email) for event, email in events]}
 
 
 @router.delete("/events/{event_id}")
@@ -416,6 +436,10 @@ async def admin_delete_event(
         storage_service.delete_event_photos(event_uuid)
     except Exception:
         pass
+
+    cache_delete_pattern(f"event_info:{event.slug}")
+    cache_delete_pattern(f"gallery:{event_uuid}:*")
+    cache_delete_pattern(f"share:{event_uuid}:*")
 
     db.delete(event)
     db.commit()

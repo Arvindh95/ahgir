@@ -7,4 +7,7 @@ __pycache__/
 *.pyc
 .hypothesis/
 DEPLOYMENT.md
-.claude/settings.local.json
+.claude/
+LOCAL_DEV_CREDS.md
+graphify-out/
+.graphify_python

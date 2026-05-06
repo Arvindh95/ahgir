@@ -6,6 +6,7 @@ Implements a sliding window algorithm to enforce scan rate limits per guest sess
 
 from datetime import datetime, timedelta
 from typing import Optional
+import uuid
 import redis
 from fastapi import HTTPException, status
 from app.config import settings
@@ -82,8 +83,11 @@ class RateLimiter:
         
         # Check if under limit
         if current_count < self.limit:
-            # Add current timestamp
-            self.redis.zadd(key, {now.isoformat(): now.timestamp()})
+            # Add current timestamp. Member must be unique even at sub-millisecond
+            # collision; ZSET overwrites duplicate members which would silently drop
+            # a request from the count.
+            member = f"{now.timestamp()}-{uuid.uuid4().hex}"
+            self.redis.zadd(key, {member: now.timestamp()})
             
             # Set expiry on key (window + buffer)
             self.redis.expire(key, self.window_seconds + 3600)
@@ -165,3 +169,4 @@ class RateLimiter:
 rate_limiter = RateLimiter(redis_client)
 auth_rate_limiter = RateLimiter(redis_client, limit=settings.auth_rate_limit, window_hours=settings.auth_rate_window_hours)
 share_rate_limiter = RateLimiter(redis_client, limit=settings.share_rate_limit, window_hours=settings.share_rate_window_hours)
+event_passcode_rate_limiter = RateLimiter(redis_client, limit=settings.event_passcode_rate_limit, window_hours=settings.event_passcode_rate_window_hours)

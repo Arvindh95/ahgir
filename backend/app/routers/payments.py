@@ -14,7 +14,7 @@ from app.auth import get_current_user
 from app.database import get_db
 from app.models import User, Event, UserTier, Payment
 from app.config import settings
-from app.tiers import TIER_CONFIG, TIER_ORDER, get_upgrade_price
+from app.tiers import TIER_CONFIG, TIER_ORDER, get_upgrade_price, get_effective_limits
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/payments", tags=["payments"])
@@ -85,10 +85,11 @@ async def get_my_tier(
         Event.owner_user_id == current_user.id
     ).scalar() or 0
 
+    limits = get_effective_limits(user_tier)
     return MyTierResponse(
-        tier_name=user_tier.tier_name,
-        max_events=user_tier.max_events,
-        max_photos_per_event=user_tier.max_photos_per_event,
+        tier_name=limits["tier_name"],
+        max_events=limits["max_events"],
+        max_photos_per_event=limits["max_photos_per_event"],
         events_used=events_used,
         is_active=user_tier.is_active,
         activated_at=user_tier.activated_at.isoformat() if user_tier.activated_at else None,
@@ -204,13 +205,18 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
 
 
 def _handle_checkout_completed(session: dict, db: Session):
-    """Activate/upgrade user tier after successful payment."""
+    """Activate/upgrade user tier after successful payment.
+
+    Idempotency: lock the Payment row before checking status so two concurrent webhook
+    deliveries from Stripe (it retries on timeout) cannot both pass the "pending" check
+    and double-apply the tier upgrade.
+    """
     checkout_session_id = session["id"]
 
-    # Idempotency check
     payment = (
         db.query(Payment)
         .filter(Payment.stripe_checkout_session_id == checkout_session_id)
+        .with_for_update()
         .first()
     )
 
@@ -218,18 +224,22 @@ def _handle_checkout_completed(session: dict, db: Session):
         logger.warning(f"Payment record not found for session {checkout_session_id}")
         return
 
-    if payment.status == "completed":
-        logger.info(f"Payment {checkout_session_id} already processed (idempotent)")
+    if payment.status != "pending":
+        logger.info(f"Payment {checkout_session_id} status={payment.status}, skip (idempotent)")
         return
 
-    # Extract metadata
     metadata = session.get("metadata", {})
     user_id = uuid.UUID(metadata["user_id"])
     tier_name = metadata["tier_name"]
     tier_config = TIER_CONFIG[tier_name]
 
-    # Update or create UserTier
-    user_tier = db.query(UserTier).filter(UserTier.user_id == user_id).first()
+    # Lock UserTier row too — same row may be racing with admin tier override
+    user_tier = (
+        db.query(UserTier)
+        .filter(UserTier.user_id == user_id)
+        .with_for_update()
+        .first()
+    )
     if user_tier:
         user_tier.tier_name = tier_name
         user_tier.max_events = tier_config["max_events"]
@@ -249,7 +259,6 @@ def _handle_checkout_completed(session: dict, db: Session):
         )
         db.add(user_tier)
 
-    # Update payment record
     payment.status = "completed"
     payment.stripe_payment_intent_id = session.get("payment_intent")
 
@@ -258,10 +267,11 @@ def _handle_checkout_completed(session: dict, db: Session):
 
 
 def _handle_checkout_expired(session: dict, db: Session):
-    """Mark payment as failed when checkout session expires."""
+    """Mark payment as failed when checkout session expires (locked for safety)."""
     payment = (
         db.query(Payment)
         .filter(Payment.stripe_checkout_session_id == session["id"])
+        .with_for_update()
         .first()
     )
     if payment and payment.status == "pending":

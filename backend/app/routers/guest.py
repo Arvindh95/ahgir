@@ -16,8 +16,8 @@ from io import BytesIO
 from app.auth import verify_password, create_event_token, get_event_from_token, EventTokenPayload
 from app.database import get_db
 from app.models import Event, GuestSession, Face, Image
-from app.storage import storage_service
-from app.rate_limiter import rate_limiter, auth_rate_limiter, share_rate_limiter
+from app.storage import storage_service, generate_signed_cover_url
+from app.rate_limiter import rate_limiter, auth_rate_limiter, share_rate_limiter, event_passcode_rate_limiter
 from app.audit import log_action
 from app.config import settings, get_compreface_url
 from app.cache import cache_get, cache_set
@@ -104,10 +104,7 @@ async def get_event_by_slug(slug: str, db: Session = Depends(get_db)):
 
     cover_image_url = None
     if event.cover_image:
-        from app.config import settings as _settings
-        _protocol = "https" if _settings.minio_external_secure else "http"
-        timestamp = int(datetime.utcnow().timestamp())
-        cover_image_url = f"{_protocol}://{_settings.minio_external_endpoint}/{_settings.minio_bucket}/{event.cover_image}?v={timestamp}"
+        cover_image_url = generate_signed_cover_url(event.id)
 
     result = EventInfoResponse(
         event_id=str(event.id),
@@ -138,16 +135,19 @@ async def authenticate_guest(
     """
     client_ip = request.client.host if request.client else "unknown"
     auth_rate_limiter.enforce_rate_limit(client_ip, action="guest_auth")
+    # Per-event passcode limiter: caps guesses per slug regardless of source IP, so a
+    # rotating-IP attacker cannot brute-force a weak passcode.
+    event_passcode_rate_limiter.enforce_rate_limit(slug, action="event_passcode")
 
     # Find event by slug
     event = db.query(Event).filter(Event.slug == slug).first()
-    
+
     if not event:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Event not found"
         )
-    
+
     # Verify passcode if required
     if event.passcode_hash:
         if not passcode_data.passcode:
@@ -155,7 +155,7 @@ async def authenticate_guest(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Passcode required"
             )
-        
+
         if not verify_password(passcode_data.passcode, event.passcode_hash):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -595,11 +595,12 @@ async def get_gallery(
     event_id = uuid.UUID(event_token.event_id)
     session_id = uuid.UUID(event_token.session_id)
 
-    # Check cache first
+    # NOTE: allow_downloads is immutable today (no PATCH endpoint touches it). If a
+    # future endpoint adds a toggle, it MUST cache_delete_pattern(f"gallery:{event_id}:*")
+    # to avoid stale download_url in cached payloads.
     cache_key = f"gallery:{event_token.event_id}:p{page}:l{limit}"
     cached = cache_get(cache_key)
     if cached:
-        # Still log gallery views even on cache hits (first page only)
         if page == 1:
             event = db.query(Event).filter(Event.id == event_id).first()
             if event:
@@ -608,7 +609,7 @@ async def get_gallery(
                            metadata={'total_photos': cached.get('total', 0)})
         return GalleryResponse(**cached)
 
-    # Verify event exists
+    # Verify event exists (cache miss path)
     event = db.query(Event).filter(Event.id == event_id).first()
     if not event:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
@@ -731,7 +732,7 @@ async def get_share_info(
         thumbnail_url=thumbnail_url,
         event_slug=event.slug
     )
-    cache_set(cache_key, result.model_dump(), ttl_seconds=600)
+    cache_set(cache_key, result.model_dump(), ttl_seconds=60)
     return result
 
 

@@ -1,7 +1,17 @@
 services:
+  postgres:
+    ports: !reset []  # do not publish; access only via internal docker network
+
+  minio:
+    ports: !reset []  # do not publish; access only via Caddy /storage proxy
+
+  redis:
+    ports: !reset []  # do not publish
+
   backend:
     volumes: !reset []
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+    ports: !reset []  # do not publish; Caddy proxies /api → backend:8000
     environment:
       COMPREFACE_API_URL: "http://compreface-api:8080,http://compreface-api-2:8080"
     depends_on:
@@ -24,15 +34,18 @@ services:
         BUILD_ENV: production
         NEXT_PUBLIC_API_URL: /api
     volumes: !reset []
+    ports: !reset []  # do not publish; Caddy proxies /* → frontend:3000
     command: ["npm", "start"]
 
-  # Disable CompreFace admin in production (saves ~660MB RAM)
+  # CompreFace admin disabled in prod (saves ~660MB RAM); also no port pub
   compreface-admin:
+    ports: !reset []
     deploy:
       replicas: 0
 
-  # Tune CompreFace API memory (8g -> 2g)
+  # Tune CompreFace API memory (8g -> 2g) and unpublish port (internal-only in prod)
   compreface-api:
+    ports: !reset []
     environment:
       API_JAVA_OPTS: "-Xmx2g"
 
@@ -42,7 +55,7 @@ services:
     container_name: compreface-api-2
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${COMPREFACE_DB_PASSWORD:-postgres}
       POSTGRES_URL: jdbc:postgresql://compreface-postgres-db:5432/frs
       SPRING_PROFILES_ACTIVE: dev
       API_JAVA_OPTS: "-Xmx2g"

@@ -1,20 +1,17 @@
-version: '3.8'
-
 services:
   postgres:
     image: pgvector/pgvector:pg16
     container_name: picur-postgres
     environment:
-      POSTGRES_USER: picur
-      POSTGRES_PASSWORD: picur
-      POSTGRES_DB: picur
-      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_USER: ${POSTGRES_USER:-picur}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-picur_dev_only}
+      POSTGRES_DB: ${POSTGRES_DB:-picur}
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U picur"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-picur}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -24,11 +21,11 @@ services:
     container_name: picur-minio
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin_dev_only}
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     volumes:
       - minio_data:/data
     healthcheck:
@@ -56,19 +53,21 @@ services:
       dockerfile: Dockerfile
     container_name: picur-backend
     environment:
-      DATABASE_URL: postgresql://picur:picur@postgres:5432/picur
+      DATABASE_URL: postgresql://${POSTGRES_USER:-picur}:${POSTGRES_PASSWORD:-picur_dev_only}@postgres:5432/${POSTGRES_DB:-picur}
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
       MINIO_ENDPOINT: minio:9000
-      MINIO_EXTERNAL_ENDPOINT: picur.my/storage
-      MINIO_EXTERNAL_SECURE: "true"
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
+      MINIO_EXTERNAL_ENDPOINT: ${MINIO_EXTERNAL_ENDPOINT:-localhost:9000}
+      MINIO_EXTERNAL_SECURE: ${MINIO_EXTERNAL_SECURE:-false}
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin_dev_only}
       REDIS_URL: redis://redis:6379/0
       COMPREFACE_API_URL: http://compreface-api:8080
-      COMPREFACE_API_KEY: "00000000-0000-0000-0000-000000000002"
-      COMPREFACE_DETECTION_API_KEY: "00000000-0000-0000-0000-000000000003"
-      FRONTEND_URL: https://picur.my
+      COMPREFACE_API_KEY: ${COMPREFACE_API_KEY:-}
+      COMPREFACE_DETECTION_API_KEY: ${COMPREFACE_DETECTION_API_KEY:-}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-only-not-for-prod}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
       SMTP_HOST: ${SMTP_HOST:-smtp-relay.brevo.com}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USERNAME: ${SMTP_USERNAME}
@@ -77,7 +76,7 @@ services:
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY:-}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
-      CORS_ORIGINS: "http://localhost:3000"
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
     ports:
       - "8000:8000"
     volumes:
@@ -95,26 +94,54 @@ services:
       - seccomp:unconfined
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
+  # Daily retention cron: enqueues an RQ job that the regular worker drains.
+  # Uses tianon/true-style sleep loop so we don't depend on a separate cron sidecar image.
+  retention-scheduler:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: picur-retention-scheduler
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-picur}:${POSTGRES_PASSWORD:-picur_dev_only}@postgres:5432/${POSTGRES_DB:-picur}
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+    volumes:
+      - ./backend:/app
+    depends_on:
+      redis:
+        condition: service_healthy
+    working_dir: /app
+    # 86400s = 24h. First run delayed 60s so the worker is up.
+    command: >
+      /bin/sh -c "sleep 60;
+      while true; do
+        PYTHONPATH=/app python scripts/run_retention.py || echo 'retention enqueue failed';
+        sleep 86400;
+      done"
+    restart: unless-stopped
+
   worker:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: picur-worker
     environment:
-      DATABASE_URL: postgresql://picur:picur@postgres:5432/picur
+      DATABASE_URL: postgresql://${POSTGRES_USER:-picur}:${POSTGRES_PASSWORD:-picur_dev_only}@postgres:5432/${POSTGRES_DB:-picur}
       MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin_dev_only}
       REDIS_URL: redis://redis:6379/0
       COMPREFACE_API_URL: http://compreface-api:8080
-      COMPREFACE_API_KEY: "00000000-0000-0000-0000-000000000002"
-      COMPREFACE_DETECTION_API_KEY: "00000000-0000-0000-0000-000000000003"
+      COMPREFACE_API_KEY: ${COMPREFACE_API_KEY:-}
+      COMPREFACE_DETECTION_API_KEY: ${COMPREFACE_DETECTION_API_KEY:-}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-only-not-for-prod}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
       SMTP_HOST: ${SMTP_HOST:-smtp-relay.brevo.com}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USERNAME: ${SMTP_USERNAME}
       SMTP_PASSWORD: ${SMTP_PASSWORD}
       SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL}
-      FRONTEND_URL: https://picur.my
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
     volumes:
       - ./backend:/app
     depends_on:
@@ -164,7 +191,7 @@ services:
     container_name: compreface-postgres-db
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${COMPREFACE_DB_PASSWORD:-postgres}
       POSTGRES_DB: frs
     volumes:
       - compreface_postgres_data:/var/lib/postgresql/data
@@ -179,7 +206,7 @@ services:
     container_name: compreface-admin
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${COMPREFACE_DB_PASSWORD:-postgres}
       POSTGRES_URL: jdbc:postgresql://compreface-postgres-db:5432/frs
       SPRING_PROFILES_ACTIVE: dev
       ENABLE_EMAIL_SERVER: "false"
@@ -199,7 +226,7 @@ services:
     container_name: compreface-api
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${COMPREFACE_DB_PASSWORD:-postgres}
       POSTGRES_URL: jdbc:postgresql://compreface-postgres-db:5432/frs
       SPRING_PROFILES_ACTIVE: dev
       API_JAVA_OPTS: "-Xmx8g"

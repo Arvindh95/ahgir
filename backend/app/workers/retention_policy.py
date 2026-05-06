@@ -1,6 +1,7 @@
 """
 Retention policy background job for cleaning up expired events
 """
+import logging
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import func, text
@@ -9,6 +10,8 @@ from app.database import SessionLocal
 from app.models import Event, Image
 from app.storage import storage_service
 from app.audit import log_action
+
+logger = logging.getLogger(__name__)
 
 
 def check_and_delete_expired_events(db: Session = None):
@@ -71,7 +74,7 @@ def check_and_delete_expired_events(db: Session = None):
                     storage_service.delete_event_photos(event.id)
                 except Exception as e:
                     # Log error but continue with database deletion
-                    print(f"Failed to delete photos from MinIO for event {event.id}: {str(e)}")
+                    logger.error(f"Failed to delete photos from MinIO for event {event.id}: {e}")
                 
                 # Delete event from database (cascades to all related records)
                 db.delete(event)
@@ -83,21 +86,21 @@ def check_and_delete_expired_events(db: Session = None):
                     db.flush()
                 
                 deleted_count += 1
-                print(f"Deleted expired event: {event.name} (ID: {event.id})")
+                logger.info(f"Deleted expired event: {event.name} (ID: {event.id})")
                 
             except Exception as e:
                 if not db_provided:
                     db.rollback()
-                print(f"Failed to delete event {event.id}: {str(e)}")
+                logger.error(f"Failed to delete event {event.id}: {e}")
                 continue
         
-        print(f"Retention policy job completed. Deleted {deleted_count} expired events.")
+        logger.info(f"Retention policy job completed. Deleted {deleted_count} expired events.")
         return deleted_count
         
     except Exception as e:
         if not db_provided:
             db.rollback()
-        print(f"Retention policy job failed: {str(e)}")
+        logger.error(f"Retention policy job failed: {e}")
         raise
     finally:
         if not db_provided:

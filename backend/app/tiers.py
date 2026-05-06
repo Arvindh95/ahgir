@@ -37,6 +37,37 @@ def get_tier_config(tier_name: str) -> Dict[str, Any]:
     return TIER_CONFIG[tier_name]
 
 
+def get_effective_limits(user_tier) -> dict:
+    """Return the live tier limits for a UserTier row.
+
+    For named tiers (free/premium/premium_plus) we always read from TIER_CONFIG so a config
+    change immediately reflects for all users. For 'custom' tiers we honor the per-row
+    overrides written by superadmin. Falls back to free-tier config if user_tier is None.
+    """
+    if user_tier is None:
+        cfg = TIER_CONFIG["free"]
+        return {
+            "tier_name": "free",
+            "max_events": cfg["max_events"],
+            "max_photos_per_event": cfg["max_photos_per_event"],
+            "price_cents": cfg["price_cents"],
+        }
+    if user_tier.tier_name == "custom":
+        return {
+            "tier_name": "custom",
+            "max_events": user_tier.max_events,
+            "max_photos_per_event": user_tier.max_photos_per_event,
+            "price_cents": user_tier.price_cents,
+        }
+    cfg = TIER_CONFIG.get(user_tier.tier_name, TIER_CONFIG["free"])
+    return {
+        "tier_name": user_tier.tier_name,
+        "max_events": cfg["max_events"],
+        "max_photos_per_event": cfg["max_photos_per_event"],
+        "price_cents": cfg["price_cents"],
+    }
+
+
 def get_upgrade_price(current_tier: str, target_tier: str) -> int:
     """Return the price in cents for upgrading between tiers."""
     if current_tier not in TIER_ORDER or target_tier not in TIER_ORDER:
