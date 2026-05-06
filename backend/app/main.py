@@ -5,7 +5,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from app.routers import admin, auth, events, guest, health, payments, photos
 from app.error_handler import register_error_handlers
-from app.config import settings
+from app.config import settings, validate_production_secrets
+
+# Run prod-secret validation only in the API process (workers import config but
+# don't need Stripe/CORS). Raises RuntimeError on insecure config.
+validate_production_secrets()
 
 logger = logging.getLogger(__name__)
 

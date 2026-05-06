@@ -99,7 +99,9 @@ def validate_production_secrets():
         )
 
 
-validate_production_secrets()
+# NOTE: don't call validate_production_secrets() at module import — it would block the
+# worker (which imports config.py for DB/Redis/MinIO settings but doesn't need Stripe
+# or CORS). main.py calls it from FastAPI startup so only the backend validates.
 
 # Round-robin CompreFace URL selector (supports comma-separated URLs)
 _compreface_urls = [u.strip() for u in settings.compreface_api_url.split(",") if u.strip()]
