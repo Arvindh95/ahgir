@@ -10,8 +10,8 @@ const tiers = [
   {
     key: 'free',
     name: 'Free',
-    monthlyRM: 0,
-    yearlyRM: 0,
+    monthlyUSD: 0,
+    yearlyUSD: 0,
     description: 'Try PicUr with one event',
     features: [
       '1 active event',
@@ -28,8 +28,8 @@ const tiers = [
   {
     key: 'starter',
     name: 'Starter',
-    monthlyRM: 39,
-    yearlyRM: 390,
+    monthlyUSD: 9,
+    yearlyUSD: 90,
     description: 'For photographers running a few events at a time',
     features: [
       '5 active events',
@@ -46,8 +46,8 @@ const tiers = [
   {
     key: 'pro',
     name: 'Pro',
-    monthlyRM: 99,
-    yearlyRM: 990,
+    monthlyUSD: 29,
+    yearlyUSD: 290,
     description: 'For studios managing many events year-round',
     features: [
       '20 active events',
@@ -68,8 +68,8 @@ export default function Pricing() {
   const [interval, setInterval] = useState<Interval>('month')
 
   const formatPrice = (tier: typeof tiers[0]) => {
-    if (tier.key === 'free') return 'RM 0'
-    return interval === 'year' ? `RM ${tier.yearlyRM}` : `RM ${tier.monthlyRM}`
+    if (tier.key === 'free') return '$0'
+    return interval === 'year' ? `$${tier.yearlyUSD}` : `$${tier.monthlyUSD}`
   }
 
   const formatPeriod = (tier: typeof tiers[0]) => {
@@ -155,6 +155,25 @@ export default function Pricing() {
               </Link>
             </div>
           ))}
+        </div>
+
+        <div className="max-w-3xl mx-auto mt-16">
+          <div className="glass-card rounded-2xl p-8 text-center">
+            <div className="text-xs font-bold text-blue-400 mb-3 tracking-wider">SHOOTING ONE EVENT?</div>
+            <h2 className="text-2xl font-bold mb-3">One-time event packages</h2>
+            <p className="text-gray-400 mb-6 max-w-xl mx-auto">
+              Photographing a single wedding and don&apos;t need a recurring subscription?
+              We offer one-time event packages tailored to your photo count and retention needs.
+              Contact us with your event details and we&apos;ll send a custom quote.
+            </p>
+            <a
+              href="mailto:support@picur.my?subject=One-time%20event%20package&body=Hi%2C%20I'd%20like%20a%20quote%20for%20a%20one-time%20event.%0A%0AEvent%20date%3A%0AEstimated%20guest%20count%3A%0AEstimated%20photo%20count%3A%0AAccess%20duration%20needed%3A"
+              className="inline-flex items-center gap-2 bg-white text-black px-6 py-3 rounded-xl font-semibold text-sm hover:bg-gray-100 transition-colors"
+            >
+              Request a quote
+              <ArrowRight className="w-4 h-4" />
+            </a>
+          </div>
         </div>
 
         <p className="text-center text-gray-500 text-sm mt-12">

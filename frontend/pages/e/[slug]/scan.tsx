@@ -41,6 +41,9 @@ export default function FaceScanner() {
   const faceApiRef = useRef<any>(null)
   const detectionIntervalRef = useRef<number | null>(null)
   const lastDetectionRef = useRef<any>(null)
+  // Live head-yaw estimate: -1 (turned to one side) ... 0 (straight) ... +1 (other side).
+  // Computed each detection tick from the 68-point face landmarks.
+  const yawRef = useRef<number>(0)
 
   const [stream, setStream] = useState<MediaStream | null>(null)
   const [scanning, setScanning] = useState(false)
@@ -56,6 +59,7 @@ export default function FaceScanner() {
   const [fileSelected, setFileSelected] = useState(false)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [scanPhase, setScanPhase] = useState<string | null>(null) // guided capture phase text
+  const [poseProgress, setPoseProgress] = useState<{ side: 'straight' | 'left' | 'right' | null; hit: boolean }>({ side: null, hit: false })
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Load face-api.js models
@@ -71,6 +75,7 @@ export default function FaceScanner() {
 
         await Promise.all([
           faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+          faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_URL),
         ])
 
         setModelsLoaded(true)
@@ -143,40 +148,57 @@ export default function FaceScanner() {
 
     updateCanvasSize()
 
-    // Detection loop
+    // Detection loop. Runs face detection + 68-point landmarks so we can
+    // estimate head yaw (rotation left/right) for pose-gated capture.
     const detect = async () => {
       if (!video || video.paused || video.ended) return
 
       try {
-        const detections = await faceapi.detectAllFaces(
-          video,
-          new faceapi.TinyFaceDetectorOptions({
-            inputSize: 320,
-            scoreThreshold: 0.5
-          })
-        )
+        const result = await faceapi
+          .detectSingleFace(
+            video,
+            new faceapi.TinyFaceDetectorOptions({
+              inputSize: 320,
+              scoreThreshold: 0.5,
+            })
+          )
+          .withFaceLandmarks(true) // tiny landmark model
 
-        // Draw on overlay canvas
         const ctx = overlayCanvas.getContext('2d')
-        if (ctx) {
-          ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height)
+        if (ctx) ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height)
 
-          if (detections.length > 0) {
-            setFaceDetected(true)
-            // Store the first detected face for cropping later
-            lastDetectionRef.current = detections[0]
+        if (result) {
+          setFaceDetected(true)
+          lastDetectionRef.current = result.detection
 
-            // Draw green box around detected face
-            // detections.forEach((detection: any) => {
-            //   const box = detection.box
-            //   ctx.strokeStyle = '#00ff00'
-            //   ctx.lineWidth = 3
-            //   ctx.strokeRect(box.x, box.y, box.width, box.height)
-            // })
-          } else {
-            setFaceDetected(false)
-            lastDetectionRef.current = null
+          // Yaw heuristic from 68-point landmarks:
+          //   point 30  = nose tip
+          //   point 0   = left jaw corner
+          //   point 16  = right jaw corner
+          // When the head turns, the nose tip drifts toward one jaw corner.
+          // yaw_score = (right_dist - left_dist) / face_width
+          //   ~0      → looking straight ahead
+          //   negative → turned toward one side
+          //   positive → turned toward the other side
+          // We don't label "left" vs "right" semantically because the camera
+          // is mirrored on most devices; what matters is the SIGN to ensure
+          // the second and third frames are on opposite sides.
+          try {
+            const lm = result.landmarks.positions
+            const nose = lm[30]
+            const leftJaw = lm[0]
+            const rightJaw = lm[16]
+            const leftDist = Math.abs(nose.x - leftJaw.x)
+            const rightDist = Math.abs(nose.x - rightJaw.x)
+            const faceWidth = Math.abs(rightJaw.x - leftJaw.x) || 1
+            yawRef.current = (rightDist - leftDist) / faceWidth
+          } catch {
+            yawRef.current = 0
           }
+        } else {
+          setFaceDetected(false)
+          lastDetectionRef.current = null
+          yawRef.current = 0
         }
       } catch (err) {
         console.error('Face detection error:', err)
@@ -290,21 +312,86 @@ export default function FaceScanner() {
           reader.readAsDataURL(file)
         })
       } else {
-        // Guided multi-angle capture
-        const phases = [
-          { label: 'Look straight ahead', delay: 800 },
-          { label: 'Turn slightly left', delay: 1200 },
-          { label: 'Turn slightly right', delay: 1200 },
-        ]
+        // Pose-gated multi-angle capture: wait for the user to actually
+        // hit each pose target before snapping. Falls back to capturing
+        // whatever pose they're in after a per-phase timeout, so users
+        // who can't or won't turn still get something usable.
+        //
+        // Yaw thresholds:
+        //   |yaw| < STRAIGHT_THRESH → looking ahead
+        //   yaw  >  TURN_THRESH     → turned toward "+" side
+        //   yaw  < -TURN_THRESH     → turned toward "-" side
+        const STRAIGHT_THRESH = 0.10
+        const TURN_THRESH = 0.18
+        const HOLD_TICKS = 3 // require 3 consecutive ticks (=300ms) within target to avoid jitter capture
+        const MAX_WAIT_MS = 6000
+        const POLL_MS = 100
+
+        const waitForPose = async (
+          test: (yaw: number) => boolean,
+          label: string,
+          side: 'straight' | 'left' | 'right',
+        ): Promise<void> => {
+          setScanPhase(label)
+          setPoseProgress({ side, hit: false })
+          const start = Date.now()
+          let consecutive = 0
+          while (Date.now() - start < MAX_WAIT_MS) {
+            // Use the ref, not the React state — closures over `faceDetected`
+            // would freeze at the value at handleScan invocation time.
+            if (lastDetectionRef.current) {
+              if (test(yawRef.current)) {
+                consecutive += 1
+                if (consecutive >= HOLD_TICKS) {
+                  setPoseProgress({ side, hit: true })
+                  // Brief flash so the user sees the check before we snap.
+                  await new Promise(r => setTimeout(r, 150))
+                  return
+                }
+              } else {
+                consecutive = 0
+              }
+            }
+            await new Promise(r => setTimeout(r, POLL_MS))
+          }
+          // Timeout — capture whatever we have.
+          setPoseProgress({ side, hit: false })
+        }
 
         const frames: string[] = []
-        for (const phase of phases) {
-          setScanPhase(phase.label)
-          await new Promise(resolve => setTimeout(resolve, phase.delay))
-          const frame = captureFrame()
-          if (frame) frames.push(frame)
-        }
+        // 1. Straight on
+        await waitForPose(y => Math.abs(y) < STRAIGHT_THRESH, 'Look straight ahead', 'straight')
+        let f = captureFrame()
+        if (f) frames.push(f)
+
+        // 2. First side — whichever direction the user naturally turns first
+        let firstSideSign = 0
+        await waitForPose(
+          y => {
+            if (Math.abs(y) > TURN_THRESH) {
+              firstSideSign = y > 0 ? 1 : -1
+              return true
+            }
+            return false
+          },
+          'Turn your head slowly to one side',
+          'right',
+        )
+        f = captureFrame()
+        if (f) frames.push(f)
+
+        // 3. Opposite side — whatever the OTHER direction is
+        const otherSign = firstSideSign === 0 ? -1 : -firstSideSign
+        await waitForPose(
+          y => Math.abs(y) > TURN_THRESH && Math.sign(y) === otherSign,
+          'Now turn the other way',
+          'left',
+        )
+        f = captureFrame()
+        if (f) frames.push(f)
+
         setScanPhase('Matching...')
+        setPoseProgress({ side: null, hit: false })
 
         if (frames.length === 0) {
           setError('Failed to capture frames from camera')
@@ -475,11 +562,18 @@ export default function FaceScanner() {
               />
               <canvas ref={canvasRef} style={{ display: 'none' }} />
 
-              {/* Guided scan phase overlay */}
+              {/* Guided scan phase overlay (pose-gated) */}
               {scanPhase && scanning && (
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
-                  <div className="px-6 py-3 rounded-2xl backdrop-blur-md bg-blue-600/80 border border-blue-400/50 text-white font-bold text-lg shadow-lg animate-pulse">
-                    {scanPhase}
+                  <div
+                    className={`px-6 py-3 rounded-2xl backdrop-blur-md border text-white font-bold text-lg shadow-lg flex items-center gap-2 transition-colors ${
+                      poseProgress.hit
+                        ? 'bg-green-600/85 border-green-400/60'
+                        : 'bg-blue-600/80 border-blue-400/50 animate-pulse'
+                    }`}
+                  >
+                    {poseProgress.hit ? <span className="text-2xl leading-none">✓</span> : null}
+                    <span>{scanPhase}</span>
                   </div>
                 </div>
               )}
