@@ -680,10 +680,16 @@ export default function FaceScanner() {
               <ScanFace className="w-5 h-5 text-blue-400" /> How to scan
             </h2>
             <ol className="list-decimal list-inside space-y-2 text-gray-300 ml-2">
-              <li>Position your face clearly in the frame</li>
-              <li>Wait for the green border around the video</li>
-              <li>Click &quot;Scan My Face&quot; and follow the on-screen prompts</li>
-              <li><span className="text-white font-medium">Turning your head slightly when prompted improves accuracy</span> — the scan will still work if you don&apos;t, but turning helps find more of your photos</li>
+              <li>Position your face clearly in the frame and wait for the green border</li>
+              <li>Click <span className="text-white font-medium">&quot;Scan My Face&quot;</span></li>
+              <li>The app will guide you through three quick captures:
+                <ul className="list-disc list-inside ml-5 mt-1 space-y-1 text-gray-400">
+                  <li><span className="text-white">Look straight ahead</span> — hold for a moment</li>
+                  <li><span className="text-white">Turn your head slowly to one side</span></li>
+                  <li><span className="text-white">Turn the other way</span></li>
+                </ul>
+              </li>
+              <li className="text-gray-400">If you can&apos;t turn, just hold still — the scan still works with one angle, you&apos;ll just match fewer photos.</li>
             </ol>
           </div>
 
