@@ -3,5 +3,6 @@ Allow: /
 Disallow: /admin/
 Disallow: /api/
 Disallow: /e/
+Disallow: /share/
 
 Sitemap: https://picur.my/sitemap.xml

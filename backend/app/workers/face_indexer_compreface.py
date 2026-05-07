@@ -15,6 +15,7 @@ from app.models import Image, Face
 from app.storage import storage_service
 from app.config import settings, get_compreface_url
 from app.utils.thumbnail import generate_thumbnail
+from app.utils.image_safety import safe_open as safe_open_image
 
 logger = logging.getLogger(__name__)
 
@@ -193,7 +194,7 @@ def index_photo_compreface(image_id: str, api_key: str, db_session: Optional[Ses
             pass  # Thumbnail exists or other error, continue
 
         # Apply EXIF orientation so face detection works on upright images
-        pil_img = PILImage.open(io.BytesIO(photo_bytes))
+        pil_img = safe_open_image(photo_bytes)
         pil_img = ImageOps.exif_transpose(pil_img)
         if pil_img.mode in ('RGBA', 'LA', 'P'):
             pil_img = pil_img.convert('RGB')

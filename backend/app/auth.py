@@ -188,22 +188,49 @@ async def get_current_user(
 
 # Dependency for validating event tokens
 async def get_event_from_token(
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db),
 ) -> EventTokenPayload:
-    """Extract and validate Event_Token, return event_id and session_id"""
+    """Extract and validate Event_Token. Verifies the JWT signature/expiry AND
+    looks up the GuestSession row so a deleted session or DB-side expiry takes
+    effect immediately, rather than waiting for the JWT to expire on its own.
+    """
     from app.exceptions import InvalidTokenError
-    
+    from app.models import GuestSession
+    from datetime import datetime
+    import uuid as _uuid
+
     token = credentials.credentials
-    
+
     try:
         payload = decode_token(token)
         event_id: str = payload.get("event_id")
         session_id: str = payload.get("session_id")
-        
+
         if event_id is None or session_id is None:
             raise InvalidTokenError()
-        
-        return EventTokenPayload(event_id=event_id, session_id=session_id)
     except JWTError:
         raise InvalidTokenError()
+
+    # Validate the session row exists, belongs to the claimed event, and
+    # hasn't been revoked/expired in the database.
+    try:
+        session_uuid = _uuid.UUID(session_id)
+        event_uuid = _uuid.UUID(event_id)
+    except ValueError:
+        raise InvalidTokenError()
+
+    session = (
+        db.query(GuestSession)
+        .filter(GuestSession.id == session_uuid)
+        .first()
+    )
+    if session is None:
+        raise InvalidTokenError()
+    if session.event_id != event_uuid:
+        raise InvalidTokenError()
+    if session.expires_at and session.expires_at < datetime.utcnow():
+        raise InvalidTokenError()
+
+    return EventTokenPayload(event_id=event_id, session_id=session_id)
 

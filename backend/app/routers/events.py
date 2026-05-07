@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import uuid
 import qrcode
 from io import BytesIO
@@ -17,6 +17,7 @@ import hashlib
 import logging
 import zipfile
 from app.utils.filename import safe_zip_filename
+from app.utils.image_safety import safe_open as safe_open_image
 import queue
 import threading
 from PIL import Image as PILImage, ImageOps
@@ -38,13 +39,15 @@ router = APIRouter(prefix="/events", tags=["events"])
 
 # Pydantic models
 class EventCreate(BaseModel):
-    name: str
+    name: str = Field(..., min_length=1, max_length=255)
     date: Optional[str] = None  # ISO date string
     passcode: Optional[str] = None
-    location: Optional[str] = None
-    description: Optional[str] = None
+    location: Optional[str] = Field(default=None, max_length=500)
+    description: Optional[str] = Field(default=None, max_length=2000)
     allow_downloads: bool = True
-    retention_days: int = 90
+    # Reject zero/negative (would auto-expire on next cleanup) and absurd
+    # upper bounds. Tier ceiling is still enforced server-side after this.
+    retention_days: int = Field(default=90, ge=1, le=3650)
 
 class EventResponse(BaseModel):
     event_id: str
@@ -548,7 +551,7 @@ async def upload_cover_image(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=f"Cover image exceeds {max_bytes // (1024*1024)}MB upload limit"
         )
-    img = PILImage.open(BytesIO(image_bytes))
+    img = safe_open_image(image_bytes)
     # Apply EXIF orientation (phones store rotation in metadata)
     img = ImageOps.exif_transpose(img)
     if img.mode in ('RGBA', 'LA', 'P'):
@@ -677,16 +680,20 @@ def compute_file_hash(file_data: bytes) -> str:
     return hashlib.sha256(file_data).hexdigest()
 
 def validate_image_format(file_data: bytes, filename: str) -> bool:
-    """Validate that file is a valid JPEG, PNG, or MPO image"""
+    """Validate that file is a valid JPEG, PNG, or MPO image and not a
+    decompression bomb. Returns False (logs reason) for any rejection so the
+    caller can produce a single 400 response with the failed filenames.
+    """
     try:
-        img = PILImage.open(BytesIO(file_data))
+        img = safe_open_image(file_data)
         # Check format - MPO is multi-picture JPEG used by Samsung and other phones
         if img.format not in ['JPEG', 'PNG', 'MPO']:
             logger.warning(f"Rejected {filename}: format is '{img.format}', expected JPEG/PNG/MPO")
             return False
-        # Verify it's a valid image by trying to load it
-        img.verify()
         return True
+    except HTTPException as e:
+        logger.warning(f"Rejected {filename}: {e.detail}")
+        return False
     except Exception as e:
         logger.warning(f"Rejected {filename}: validation error: {e}")
         return False
@@ -699,7 +706,7 @@ _GPS_IFD_TAG = 0x8825  # ExifTags.GPSInfo
 def extract_exif_data(file_data: bytes) -> dict:
     """Extract EXIF metadata from image, stripping GPS to protect user privacy."""
     try:
-        img = PILImage.open(BytesIO(file_data))
+        img = safe_open_image(file_data)
         exif_data = img.getexif()
 
         if not exif_data:
@@ -891,8 +898,8 @@ async def upload_photos(
                 ))
                 continue
             
-            # Get image dimensions
-            img = PILImage.open(BytesIO(file_data))
+            # Get image dimensions (with decompression-bomb guard)
+            img = safe_open_image(file_data)
             width, height = img.size
             
             # Extract EXIF data

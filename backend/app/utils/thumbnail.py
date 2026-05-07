@@ -3,10 +3,12 @@
 from io import BytesIO
 from PIL import Image as PILImage, ImageOps
 
+from app.utils.image_safety import safe_open
+
 
 def generate_thumbnail(file_data: bytes, target_width: int = 512) -> bytes:
     """Generate thumbnail with specified width, maintaining aspect ratio"""
-    img = PILImage.open(BytesIO(file_data))
+    img = safe_open(file_data)
 
     # Apply EXIF orientation (phone cameras store rotation in metadata)
     img = ImageOps.exif_transpose(img)
