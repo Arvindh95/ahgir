@@ -68,12 +68,79 @@ const features = [
   },
 ]
 
+// JSON-LD structured data — Organization + SoftwareApplication.
+// Helps Google show rich snippets (rating, price, etc.) in search results.
+const STRUCTURED_DATA = {
+  '@context': 'https://schema.org',
+  '@graph': [
+    {
+      '@type': 'Organization',
+      '@id': 'https://picur.my/#org',
+      name: 'PicUr',
+      url: 'https://picur.my',
+      logo: 'https://picur.my/web-app-manifest-512x512.png',
+      sameAs: [],
+    },
+    {
+      '@type': 'SoftwareApplication',
+      '@id': 'https://picur.my/#app',
+      name: 'PicUr',
+      description:
+        'AI-powered face recognition photo sharing platform for event photographers. Guests find their photos using just a selfie.',
+      applicationCategory: 'PhotographyApplication',
+      operatingSystem: 'Web',
+      offers: [
+        {
+          '@type': 'Offer',
+          name: 'Free',
+          price: '0',
+          priceCurrency: 'USD',
+        },
+        {
+          '@type': 'Offer',
+          name: 'Starter',
+          price: '9',
+          priceCurrency: 'USD',
+          priceSpecification: {
+            '@type': 'UnitPriceSpecification',
+            price: '9',
+            priceCurrency: 'USD',
+            unitText: 'MONTH',
+          },
+        },
+        {
+          '@type': 'Offer',
+          name: 'Pro',
+          price: '29',
+          priceCurrency: 'USD',
+          priceSpecification: {
+            '@type': 'UnitPriceSpecification',
+            price: '29',
+            priceCurrency: 'USD',
+            unitText: 'MONTH',
+          },
+        },
+      ],
+      featureList: [
+        'Face recognition photo matching',
+        'Multi-angle scan capture',
+        'Guest selfie scanning',
+        'Bulk photo download',
+        'Custom event retention',
+      ],
+    },
+  ],
+}
+
 export default function Home() {
   return (
     <PublicLayout>
       <Head>
-        <title>Picur - AI Face Recognition for Event Photos</title>
-        <meta name="description" content="AI-powered face recognition photo sharing for events. Upload photos, share a link, and let guests find themselves with just a selfie." />
+        {/* Title / description / OG / canonical handled by _app.tsx */}
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(STRUCTURED_DATA) }}
+        />
       </Head>
 
       {/* Hero Section */}

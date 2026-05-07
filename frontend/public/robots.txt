@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /admin/
+Disallow: /api/
+Disallow: /e/
+
+Sitemap: https://picur.my/sitemap.xml
