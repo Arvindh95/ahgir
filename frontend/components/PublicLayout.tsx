@@ -15,15 +15,6 @@ export default function PublicLayout({ children }: PublicLayoutProps) {
 
   return (
     <div className="min-h-screen bg-black text-white flex flex-col overflow-x-clip">
-      {/* Beta banner */}
-      <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white text-center py-2 px-4 text-xs sm:text-sm font-medium">
-        <span className="font-bold mr-1">BETA</span>
-        — free tailor-made event packages while we test capacity.
-        <Link href="/contact" className="underline ml-1 hover:text-white/80 font-semibold">
-          Get yours
-        </Link>
-      </div>
-
       {/* Navbar */}
       <nav className="border-b border-white/10 bg-black/50 backdrop-blur-xl sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
