@@ -414,25 +414,31 @@ def _handle_subscription_upsert(subscription: dict, db: Session) -> None:
     customer_id = subscription["customer"]
     sub_status = subscription["status"]
     cancel_at_period_end = bool(_g(subscription, "cancel_at_period_end", False))
-    current_period_end = _g(subscription, "current_period_end")
+
+    # Stripe API 2024+ moved current_period_end onto SubscriptionItem.
+    # Read from items[0] first, fall back to top-level for older API versions.
+    items_obj = _g(subscription, "items") or {}
+    items = _g(items_obj, "data") or []
+    current_period_end = None
+    if items:
+        current_period_end = _g(items[0], "current_period_end")
+    if current_period_end is None:
+        current_period_end = _g(subscription, "current_period_end")
 
     metadata = _g(subscription, "metadata") or {}
     tier_name = _g(metadata, "tier_name")
     interval = _g(metadata, "interval")
 
     # Fall back to deriving tier_name from the price ID if metadata missing
-    if not tier_name:
-        items_obj = _g(subscription, "items") or {}
-        items = _g(items_obj, "data") or []
-        if items:
-            price_obj = _g(items[0], "price") or {}
-            price_id = _g(price_obj, "id")
-            for tn in PURCHASABLE_TIERS:
-                cfg = TIER_CONFIG[tn]
-                if price_id in (cfg["stripe_price_monthly"], cfg["stripe_price_yearly"]):
-                    tier_name = tn
-                    interval = "month" if price_id == cfg["stripe_price_monthly"] else "year"
-                    break
+    if not tier_name and items:
+        price_obj = _g(items[0], "price") or {}
+        price_id = _g(price_obj, "id")
+        for tn in PURCHASABLE_TIERS:
+            cfg = TIER_CONFIG[tn]
+            if price_id in (cfg["stripe_price_monthly"], cfg["stripe_price_yearly"]):
+                tier_name = tn
+                interval = "month" if price_id == cfg["stripe_price_monthly"] else "year"
+                break
 
     if not tier_name:
         logger.warning(f"Cannot resolve tier_name for subscription {sub_id}")

@@ -252,6 +252,12 @@ async def create_event(
                 }
             )
 
+        # Clamp per-event retention to tier ceiling. Photographer can set a
+        # shorter retention but cannot exceed the tier's limit.
+        tier_retention = limits.get("retention_days") or 30
+        if event_data.retention_days > tier_retention:
+            event_data.retention_days = tier_retention
+
     # Generate unique slug
     slug = generate_slug(event_data.name, db)
 
