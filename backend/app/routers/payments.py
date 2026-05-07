@@ -12,6 +12,7 @@ from sqlalchemy import func, desc, asc
 from pydantic import BaseModel
 
 from app.auth import get_current_user
+from app.cache import cache_delete_pattern
 from app.database import get_db
 from app.models import User, Event, UserTier, Payment
 from app.config import settings
@@ -157,8 +158,10 @@ def _rebalance_event_status(user_id: uuid.UUID, max_active: int, db: Session) ->
 
     if active_count > max_active:
         excess = active_count - max_active
-        for ev in active_events[:excess]:
+        flipped = active_events[:excess]
+        for ev in flipped:
             ev.status = 'frozen'
+        _invalidate_event_public_caches(flipped)
         logger.info(f"Froze {excess} oldest events for user {user_id} (cap dropped to {max_active})")
         return
 
@@ -176,7 +179,23 @@ def _rebalance_event_status(user_id: uuid.UUID, max_active: int, db: Session) ->
     for ev in frozen_events:
         ev.status = 'active'
     if frozen_events:
+        _invalidate_event_public_caches(frozen_events)
         logger.info(f"Unfroze {len(frozen_events)} events for user {user_id} (cap raised to {max_active})")
+
+
+def _invalidate_event_public_caches(events) -> None:
+    """Drop guest-facing caches for events whose status just changed.
+
+    Without this, /e/{slug} keeps serving the cached event_info payload (and
+    /share/{event_id}/{image_id} keeps serving cached signed URLs) for up to
+    five minutes after a freeze/unfreeze, which is long enough for guests to
+    keep browsing or downloading from a frozen event.
+    """
+    for ev in events:
+        if ev.slug:
+            cache_delete_pattern(f"event_info:{ev.slug}")
+        cache_delete_pattern(f"share:{ev.id}:*")
+        cache_delete_pattern(f"gallery:{ev.id}:*")
 
 
 def _downgrade_to_free(user_tier: UserTier, db: Session) -> None:

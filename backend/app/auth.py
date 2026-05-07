@@ -19,9 +19,22 @@ from app.models import User
 security = HTTPBearer()
 
 # Pydantic models
+def _normalize_email(v: str) -> str:
+    """Lowercase + strip the email at the schema boundary so User@x and user@x
+    cannot create duplicate accounts and so login/reset/verify lookups don't
+    mismatch on casing. Most mail providers treat the local-part as
+    case-insensitive in practice, so this matches user expectation."""
+    return v.strip().lower()
+
+
 class UserRegister(BaseModel):
     email: EmailStr
     password: str
+
+    @field_validator("email", mode="after")
+    @classmethod
+    def _normalize_email(cls, v: str) -> str:
+        return _normalize_email(v)
 
     @field_validator("password")
     @classmethod
@@ -41,6 +54,11 @@ class UserRegister(BaseModel):
 class UserLogin(BaseModel):
     email: EmailStr
     password: str
+
+    @field_validator("email", mode="after")
+    @classmethod
+    def _normalize_email(cls, v: str) -> str:
+        return _normalize_email(v)
 
 class TokenResponse(BaseModel):
     access_token: str

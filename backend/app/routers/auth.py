@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 logger = logging.getLogger(__name__)
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
@@ -26,12 +26,26 @@ class VerifyRequest(BaseModel):
     token: str
 
 
+def _normalize_email(v: str) -> str:
+    return v.strip().lower()
+
+
 class ResendVerifyRequest(BaseModel):
     email: EmailStr
+
+    @field_validator("email", mode="after")
+    @classmethod
+    def _norm(cls, v: str) -> str:
+        return _normalize_email(v)
 
 
 class ForgotPasswordRequest(BaseModel):
     email: EmailStr
+
+    @field_validator("email", mode="after")
+    @classmethod
+    def _norm(cls, v: str) -> str:
+        return _normalize_email(v)
 
 
 class ResetPasswordRequest(BaseModel):

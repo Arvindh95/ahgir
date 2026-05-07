@@ -3,7 +3,7 @@ Event management router
 """
 from datetime import datetime
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile, File
 from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -1015,8 +1015,8 @@ async def upload_photos(
 @router.get("/{event_id}/photos", response_model=PhotoListResponse)
 async def list_photos(
     event_id: str,
-    page: int = 1,
-    limit: int = 50,
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
     status_filter: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -1331,6 +1331,35 @@ async def admin_download_zip(
     if not images:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No valid images found")
 
+    # Same caps as download-all-zip — a hand-crafted image_ids list with
+    # thousands of UUIDs would otherwise tie up MinIO + a worker for minutes.
+    total_bytes = sum((img.size_bytes or 0) for img in images)
+    max_bytes = settings.bulk_download_max_bytes
+    if total_bytes > max_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail={
+                "code": "DOWNLOAD_TOO_LARGE",
+                "message": (
+                    f"Total download size {total_bytes // (1024*1024)} MB exceeds "
+                    f"{max_bytes // (1024*1024)} MB limit. Download in smaller batches."
+                ),
+                "total_bytes": total_bytes,
+                "max_bytes": max_bytes,
+                "image_count": len(images),
+            },
+        )
+    if len(images) > settings.bulk_download_max_images:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail={
+                "code": "TOO_MANY_IMAGES",
+                "message": f"Cannot bulk-download more than {settings.bulk_download_max_images} images at once.",
+                "image_count": len(images),
+                "max_images": settings.bulk_download_max_images,
+            },
+        )
+
     def generate_zip():
         data_queue = queue.Queue(maxsize=32)
 
@@ -1587,8 +1616,8 @@ async def reindex_event(
 @router.get("/{event_id}/logs", response_model=AuditLogListResponse)
 async def get_audit_logs(
     event_id: str,
-    page: int = 1,
-    limit: int = 50,
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
     action: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
