@@ -1,5 +1,9 @@
 """Health check endpoints for monitoring service status."""
 
+import os
+import time
+from datetime import datetime, timedelta
+
 from fastapi import APIRouter, Depends, status
 from sqlalchemy import text
 from minio.error import S3Error
@@ -100,6 +104,155 @@ async def health_check():
             svc.pop("error", None)
 
     return health_status
+
+
+@router.get("/health/load", status_code=status.HTTP_200_OK)
+async def load_metrics(_superadmin=Depends(get_superadmin_user)):
+    """Operator-only load snapshot: queue depth, backlog, latency, system load.
+
+    Use this to spot capacity pressure before users feel it. Returns a 0-100
+    load_score so you can graph one number; sub-fields explain *why* the score
+    is what it is.
+
+    Score thresholds (rule of thumb):
+      <30  green    — comfortably idle
+      30-60 yellow  — warm, watch trending
+      60-85 orange  — under pressure, consider scaling
+      >85  red      — degraded, scale immediately
+
+    Compose of score:
+      queue depth >50         → +30
+      oldest pending >10 min  → +25
+      CompreFace p95 >500ms   → +20
+      load_avg >0.7*cores     → +25
+    """
+    from app.queue import face_indexing_queue, retention_queue, default_queue
+
+    out = {
+        "checked_at": datetime.utcnow().isoformat() + "Z",
+        "queues": {},
+        "indexing_backlog": {},
+        "compreface": {},
+        "redis": {},
+        "system": {},
+        "scan_rate": {},
+        "load_score": 0,
+        "verdict": "green",
+    }
+
+    score = 0
+
+    # 1. RQ queue depths
+    try:
+        q_face = face_indexing_queue.count
+        q_retention = retention_queue.count
+        q_default = default_queue.count
+        out["queues"] = {
+            "face_indexing": q_face,
+            "retention": q_retention,
+            "default": q_default,
+        }
+        if q_face > 50:
+            score += 30
+        elif q_face > 20:
+            score += 15
+    except Exception as e:
+        out["queues"]["error"] = str(e)
+
+    # 2. Image indexing backlog (pending + how stale)
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(text("""
+                SELECT
+                    COUNT(*) FILTER (WHERE status = 'pending')                AS pending,
+                    COUNT(*) FILTER (WHERE status = 'failed')                 AS failed,
+                    EXTRACT(EPOCH FROM (NOW() - MIN(uploaded_at))) FILTER
+                        (WHERE status = 'pending')                            AS oldest_pending_age_seconds
+                FROM images
+            """)).fetchone()
+            pending = int(row.pending or 0)
+            failed = int(row.failed or 0)
+            oldest_age = float(row.oldest_pending_age_seconds or 0)
+            out["indexing_backlog"] = {
+                "pending": pending,
+                "failed": failed,
+                "oldest_pending_age_minutes": round(oldest_age / 60, 1),
+            }
+            if oldest_age > 600:  # 10 min
+                score += 25
+            elif oldest_age > 300:  # 5 min
+                score += 12
+    except Exception as e:
+        out["indexing_backlog"]["error"] = str(e)
+
+    # 3. CompreFace ping latency
+    try:
+        t0 = time.perf_counter()
+        client = CompreFaceClient()
+        is_healthy = await client.health_check()
+        latency_ms = round((time.perf_counter() - t0) * 1000, 1)
+        out["compreface"] = {"healthy": is_healthy, "ping_ms": latency_ms}
+        if latency_ms > 500:
+            score += 20
+        elif latency_ms > 200:
+            score += 10
+    except Exception as e:
+        out["compreface"]["error"] = str(e)
+
+    # 4. Redis info
+    try:
+        info = redis_client.info(section="memory")
+        clients_info = redis_client.info(section="clients")
+        out["redis"] = {
+            "used_memory_mb": round(info.get("used_memory", 0) / 1024 / 1024, 1),
+            "connected_clients": clients_info.get("connected_clients", 0),
+        }
+    except Exception as e:
+        out["redis"]["error"] = str(e)
+
+    # 5. System load average + cores
+    try:
+        load1, load5, load15 = os.getloadavg()
+        cores = os.cpu_count() or 1
+        out["system"] = {
+            "load_avg_1m": round(load1, 2),
+            "load_avg_5m": round(load5, 2),
+            "load_avg_15m": round(load15, 2),
+            "cpu_cores": cores,
+            "load_per_core_1m": round(load1 / cores, 2),
+        }
+        if load1 > cores * 0.85:
+            score += 25
+        elif load1 > cores * 0.65:
+            score += 12
+    except Exception as e:
+        out["system"]["error"] = str(e)
+
+    # 6. Recent scan rate (5 min window)
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(text("""
+                SELECT COUNT(*) AS scans
+                FROM audit_logs
+                WHERE action = 'scan'
+                  AND timestamp > NOW() - INTERVAL '5 minutes'
+            """)).fetchone()
+            out["scan_rate"] = {"scans_last_5min": int(row.scans or 0)}
+    except Exception as e:
+        out["scan_rate"]["error"] = str(e)
+
+    # Final score + verdict
+    out["load_score"] = min(100, score)
+    if score < 30:
+        out["verdict"] = "green"
+    elif score < 60:
+        out["verdict"] = "yellow"
+    elif score < 85:
+        out["verdict"] = "orange"
+    else:
+        out["verdict"] = "red"
+
+    return out
 
 
 @router.get("/health/debug/event/{event_slug}", status_code=status.HTTP_200_OK)
