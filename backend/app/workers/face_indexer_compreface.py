@@ -217,15 +217,27 @@ def index_photo_compreface(image_id: str, api_key: str, db_session: Optional[Ses
         img = pil_img
 
         face_count = 0
+        skipped_low_quality = 0
         for idx, face_data in enumerate(faces):
             box = face_data.get("box", {})
             probability = face_data.get("probability", 0)
 
-            # Crop face from image with padding
             x_min = int(box.get("x_min", 0))
             y_min = int(box.get("y_min", 0))
             x_max = int(box.get("x_max", 0))
             y_max = int(box.get("y_max", 0))
+
+            face_w = x_max - x_min
+            face_h = y_max - y_min
+            min_side = min(face_w, face_h)
+            if probability < settings.face_min_detection_probability or min_side < settings.face_min_crop_pixels:
+                skipped_low_quality += 1
+                logger.info(
+                    f"Skipping face {idx} in image {image_id}: "
+                    f"prob={probability:.2f} (min {settings.face_min_detection_probability}), "
+                    f"size={face_w}x{face_h} (min {settings.face_min_crop_pixels}px)"
+                )
+                continue
 
             # Add 20% padding around face
             width = x_max - x_min
@@ -298,7 +310,9 @@ def index_photo_compreface(image_id: str, api_key: str, db_session: Optional[Ses
             else:
                 logger.warning(f"Failed to add face {idx} to CompreFace: {result.get('error')}")
 
-        # Update image status
+        if skipped_low_quality:
+            logger.info(f"Skipped {skipped_low_quality} low-quality faces in image {image_id}")
+
         if face_count > 0:
             image.status = 'indexed'
             image.face_count = face_count

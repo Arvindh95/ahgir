@@ -6,10 +6,13 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import func, text
 
+import httpx
+
 from app.database import SessionLocal
-from app.models import Event, Image
+from app.models import Event, Image, Face
 from app.storage import storage_service
 from app.audit import log_action
+from app.config import settings, get_compreface_url
 
 logger = logging.getLogger(__name__)
 
@@ -69,13 +72,36 @@ def check_and_delete_expired_events(db: Session = None):
                     }
                 )
                 
+                # Delete CompreFace subjects for all faces in this event
+                if settings.compreface_api_key:
+                    subject_ids = [
+                        sid for (sid,) in db.query(Face.compreface_subject_id)
+                        .filter(Face.event_id == event.id, Face.compreface_subject_id.isnot(None))
+                        .all()
+                    ]
+                    cf_deleted = 0
+                    cf_failed = 0
+                    for sid in subject_ids:
+                        try:
+                            httpx.delete(
+                                f"{get_compreface_url()}/api/v1/recognition/faces",
+                                params={"subject": sid},
+                                headers={"x-api-key": settings.compreface_api_key},
+                                timeout=10.0,
+                            )
+                            cf_deleted += 1
+                        except Exception as e:
+                            cf_failed += 1
+                            logger.warning(f"Failed to delete CompreFace subject {sid} for event {event.id}: {e}")
+                    logger.info(f"Event {event.id}: deleted {cf_deleted}/{len(subject_ids)} CompreFace subjects ({cf_failed} failures)")
+
                 # Delete all photos from MinIO
                 try:
                     storage_service.delete_event_photos(event.id)
                 except Exception as e:
                     # Log error but continue with database deletion
                     logger.error(f"Failed to delete photos from MinIO for event {event.id}: {e}")
-                
+
                 # Delete event from database (cascades to all related records)
                 db.delete(event)
                 
