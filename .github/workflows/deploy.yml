@@ -30,16 +30,19 @@ jobs:
 
             COMPOSE_FILES="-f docker-compose.yml -f docker-compose.vps.yml --env-file .env.production"
 
-            # Apply any pending alembic migrations against the running DB before
-            # rebuilding services. Uses the existing backend image so it works
-            # even on the very first deploy of a migration.
-            docker compose $COMPOSE_FILES run --rm --no-deps backend sh -c 'cd /app && alembic upgrade head'
-
-            # Build new images
+            # Build new images FIRST so the new migration files (and any new
+            # alembic revision IDs) are present in the image we use to run
+            # alembic upgrade head. Running migration against the prior image
+            # would silently no-op on this revision and only apply on the NEXT
+            # deploy, masking schema drift.
             docker compose $COMPOSE_FILES build backend worker frontend
 
-            # Recreate services with new images. Data services (postgres, minio,
-            # redis, compreface-*) intentionally NOT restarted — they're stateful
+            # Apply any pending alembic migrations against the running DB
+            # using the freshly built backend image.
+            docker compose $COMPOSE_FILES run --rm --no-deps backend sh -c 'cd /app && alembic upgrade head'
+
+            # Recreate services. Data services (postgres, minio, redis,
+            # compreface-*) intentionally NOT restarted — they're stateful
             # and don't change between deploys.
             docker compose $COMPOSE_FILES up -d --force-recreate backend worker frontend retention-scheduler
 
