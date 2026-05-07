@@ -9,6 +9,7 @@ from sqlalchemy import func, text
 import httpx
 
 from app.database import SessionLocal
+from app.event_status import invalidate_event_public_cache, rebalance_event_status
 from app.models import Event, Image, Face, UserTier
 from app.storage import storage_service
 from app.audit import log_action
@@ -103,6 +104,8 @@ def check_and_delete_expired_events(db: Session = None):
                     # Log error but continue with database deletion
                     logger.error(f"Failed to delete photos from MinIO for event {event.id}: {e}")
 
+                invalidate_event_public_cache(event)
+
                 # Delete event from database (cascades to all related records)
                 db.delete(event)
                 
@@ -176,24 +179,19 @@ def process_overdue_subscriptions(db: Session = None):
                 ut.current_period_end = None
                 ut.cancel_at_period_end = False
 
-                # Freeze excess active events down to free-tier cap
-                from sqlalchemy import asc
-                active = (
-                    db.query(Event)
-                    .filter(Event.owner_user_id == ut.user_id, Event.status == "active")
-                    .order_by(asc(Event.created_at))
-                    .all()
-                )
-                excess = max(0, len(active) - cfg["max_events"])
-                for ev in active[:excess]:
-                    ev.status = "frozen"
+                # Freeze excess active events down to free-tier cap and clear
+                # guest-facing caches for any event whose status changed.
+                rebalance = rebalance_event_status(ut.user_id, cfg["max_events"], db)
 
                 if not db_provided:
                     db.commit()
                 else:
                     db.flush()
                 downgraded += 1
-                logger.info(f"Subscription grace period exceeded - user {ut.user_id} downgraded to free, froze {excess} events")
+                logger.info(
+                    f"Subscription grace period exceeded - user {ut.user_id} "
+                    f"downgraded to free, froze {rebalance.frozen} events"
+                )
             except Exception as e:
                 if not db_provided:
                     db.rollback()

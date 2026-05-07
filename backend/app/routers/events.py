@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile
 from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 import uuid
 import qrcode
 from io import BytesIO
@@ -15,8 +15,10 @@ import secrets
 import string
 import hashlib
 import logging
+import re
+import unicodedata
 import zipfile
-from app.utils.filename import safe_zip_filename
+from app.utils.filename import attachment_content_disposition, safe_zip_filename
 from app.utils.image_safety import safe_open as safe_open_image
 import queue
 import threading
@@ -36,6 +38,36 @@ from app.tiers import get_effective_limits
 import httpx
 
 router = APIRouter(prefix="/events", tags=["events"])
+
+_SLUG_INVALID_RE = re.compile(r"[^a-z0-9]+")
+_SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+
+def normalize_public_slug(
+    value: str,
+    *,
+    fallback: Optional[str] = None,
+    max_length: int = 255,
+    truncate: bool = False,
+) -> str:
+    """Normalize text into the route-safe public slug format."""
+    raw = unicodedata.normalize("NFKD", value.strip().lower())
+    ascii_value = raw.encode("ascii", "ignore").decode("ascii")
+    slug = _SLUG_INVALID_RE.sub("-", ascii_value).strip("-")
+
+    if not slug:
+        if fallback is None:
+            raise ValueError("Slug must contain at least one letter or number")
+        slug = fallback
+
+    if len(slug) > max_length and not truncate:
+        raise ValueError(f"Slug must be {max_length} characters or fewer")
+    if len(slug) > max_length:
+        slug = slug[:max_length].rstrip("-")
+
+    if not _SLUG_PATTERN.fullmatch(slug):
+        raise ValueError("Slug must contain only lowercase letters, numbers, and single hyphens")
+    return slug
 
 # Pydantic models
 class EventCreate(BaseModel):
@@ -116,10 +148,8 @@ class EventDetailResponse(BaseModel):
 # Helper functions
 def generate_slug(name: str, db: Session) -> str:
     """Generate a unique slug for an event"""
-    # Create base slug from name
-    base_slug = name.lower()
-    base_slug = ''.join(c if c.isalnum() or c == ' ' else '' for c in base_slug)
-    base_slug = '-'.join(base_slug.split())
+    # Create route-safe base slug from name, leaving room for "-xxxxxx".
+    base_slug = normalize_public_slug(name, fallback="event", max_length=248, truncate=True)
     
     # Add random suffix to ensure uniqueness
     while True:
@@ -473,6 +503,13 @@ class EventUpdate(BaseModel):
     location: Optional[str] = None
     description: Optional[str] = None
 
+    @field_validator("slug")
+    @classmethod
+    def normalize_slug(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        return normalize_public_slug(v)
+
 @router.patch("/{event_id}")
 async def update_event(
     event_id: str,
@@ -791,10 +828,7 @@ async def upload_photos(
             }
         )
 
-    # Quota enforcement (superadmin bypasses).
-    # Lock UserTier (and EventTier override) rows so two concurrent uploads cannot
-    # both pass the limit check before either writes images.
-    if not current_user.is_superadmin:
+    def _lock_and_get_photo_capacity():
         event_tier = (
             db.query(EventTier)
             .filter(EventTier.event_id == event_uuid)
@@ -819,14 +853,7 @@ async def upload_photos(
                 activated_at=datetime.utcnow()
             )
             db.add(user_tier)
-            db.commit()
-            # Re-lock after insert
-            user_tier = (
-                db.query(UserTier)
-                .filter(UserTier.user_id == current_user.id)
-                .with_for_update()
-                .first()
-            )
+            db.flush()
 
         limits = get_effective_limits(user_tier)
         effective_limit = event_tier.photo_limit if event_tier else limits["max_photos_per_event"]
@@ -836,6 +863,13 @@ async def upload_photos(
             Image.event_id == event_uuid
         ).scalar() or 0
 
+        return current_photo_count, effective_limit, tier_label
+
+    # Quota enforcement (superadmin bypasses).
+    # Lock UserTier (and EventTier override) rows so two concurrent uploads cannot
+    # both pass the limit check before either writes images.
+    if not current_user.is_superadmin:
+        current_photo_count, effective_limit, tier_label = _lock_and_get_photo_capacity()
         incoming_count = len(files)
         if current_photo_count + incoming_count > effective_limit:
             remaining = max(0, effective_limit - current_photo_count)
@@ -912,6 +946,18 @@ async def upload_photos(
             
             # Extract EXIF data
             exif_data = extract_exif_data(file_data)
+
+            if not current_user.is_superadmin:
+                current_count, effective_limit, tier_label = _lock_and_get_photo_capacity()
+                if current_count >= effective_limit:
+                    remaining = max(0, effective_limit - current_count)
+                    db.rollback()
+                    failed.append(PhotoUploadFailure(
+                        filename=file.filename,
+                        reason=f"Photo limit reached. You have {remaining} upload(s) remaining ({current_count}/{effective_limit}).",
+                        category="upload_error",
+                    ))
+                    continue
             
             # Create image record
             image_id = uuid.uuid4()
@@ -1005,7 +1051,7 @@ async def upload_photos(
 
     # Invalidate gallery cache for this event
     if uploaded:
-        cache_delete_pattern(f"gallery:{event_id}:*")
+        cache_delete_pattern(f"gallery:{event_uuid}:*")
 
     return PhotoUploadResponse(
         uploaded=uploaded,
@@ -1212,8 +1258,9 @@ async def delete_photo(
         }
     )
     
-    # Invalidate gallery cache
-    cache_delete_pattern(f"gallery:{event_id}:*")
+    # Invalidate gallery and public share cache for this photo
+    cache_delete_pattern(f"gallery:{event_uuid}:*")
+    cache_delete_pattern(f"share:{event_uuid}:{image_uuid}")
 
     return PhotoDeleteResponse(
         message="Photo deleted",
@@ -1256,6 +1303,7 @@ async def bulk_delete_photos(
 
     images = db.query(Image).filter(Image.event_id == event_uuid, Image.id.in_(image_uuids)).all()
     deleted = 0
+    deleted_image_ids = []
     for image in images:
         # Clean up CompreFace subjects
         if settings.compreface_api_key:
@@ -1280,6 +1328,7 @@ async def bulk_delete_photos(
 
         db.delete(image)
         deleted += 1
+        deleted_image_ids.append(image.id)
 
     db.commit()
 
@@ -1292,8 +1341,10 @@ async def bulk_delete_photos(
         metadata={'bulk_delete': True, 'count': deleted}
     )
 
-    # Invalidate gallery cache
-    cache_delete_pattern(f"gallery:{event_id}:*")
+    # Invalidate gallery and public share caches for deleted photos
+    cache_delete_pattern(f"gallery:{event_uuid}:*")
+    for image_id in deleted_image_ids:
+        cache_delete_pattern(f"share:{event_uuid}:{image_id}")
 
     return {"message": f"Deleted {deleted} photos", "deleted": deleted}
 
@@ -1399,11 +1450,10 @@ async def admin_download_zip(
 
         thread.join(timeout=5)
 
-    safe_name = event.name.replace(' ', '_').replace('"', '')
     return StreamingResponse(
         generate_zip(),
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{safe_name}_photos.zip"'}
+        headers={"Content-Disposition": attachment_content_disposition(f"{event.name}_photos.zip", "photos.zip")}
     )
 
 
@@ -1498,11 +1548,10 @@ async def admin_download_all_zip(
 
         thread.join(timeout=5)
 
-    safe_name = event.name.replace(' ', '_').replace('"', '')
     return StreamingResponse(
         generate_zip(),
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{safe_name}_all_photos.zip"'}
+        headers={"Content-Disposition": attachment_content_disposition(f"{event.name}_all_photos.zip", "all_photos.zip")}
     )
 
 
@@ -1762,7 +1811,8 @@ async def delete_event(
     # Invalidate caches
     slug = event.slug
     cache_delete_pattern(f"event_info:{slug}")
-    cache_delete_pattern(f"gallery:{event_id}:*")
+    cache_delete_pattern(f"gallery:{event_uuid}:*")
+    cache_delete_pattern(f"share:{event_uuid}:*")
 
     # Delete event from database (cascades to images, faces, sessions, audit logs)
     db.delete(event)

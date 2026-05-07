@@ -12,6 +12,7 @@ from app.auth import get_current_user
 from app.database import get_db
 from app.models import User, Event, Image, Face, AuditLog, EventTier, UserTier, Payment
 from app.config import settings, get_compreface_url
+from app.event_status import rebalance_event_status
 from app.storage import storage_service
 from app.queue import get_failed_jobs, retry_failed_job
 from app.tiers import get_effective_limits
@@ -216,6 +217,20 @@ async def update_user_tier(
         )
         db.add(user_tier)
 
+    # This endpoint is an explicit superadmin override. Decouple entitlement
+    # from any existing Stripe subscription so a later webhook cannot silently
+    # reapply the old paid plan over the manual tier.
+    user_tier.stripe_subscription_id = None
+    user_tier.subscription_status = None
+    user_tier.billing_interval = None
+    user_tier.current_period_end = None
+    user_tier.cancel_at_period_end = False
+    user_tier.last_subscription_event_at = datetime.utcnow()
+    user_tier.last_subscription_event_id = None
+    user_tier.last_subscription_event_type = "manual_override"
+    user_tier.last_subscription_event_subscription_id = None
+
+    rebalance_event_status(target_uuid, max_events, db)
     db.commit()
 
     return {

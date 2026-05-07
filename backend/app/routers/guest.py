@@ -8,7 +8,7 @@ from pydantic import BaseModel
 import uuid
 import base64
 import logging
-from app.utils.filename import safe_zip_filename
+from app.utils.filename import attachment_content_disposition, safe_zip_filename
 import zipfile
 import queue
 import threading
@@ -224,6 +224,35 @@ class FaceScanResponse(BaseModel):
     total_matches: int
 
 
+def _guest_photo_urls(event_id: uuid.UUID, image_id: uuid.UUID, allow_downloads: bool) -> tuple[str, str, Optional[str]]:
+    """Return guest-safe URLs: original bytes are only signed when downloads are enabled."""
+    thumbnail_url = storage_service.generate_url(
+        event_id=event_id, image_id=image_id, photo_type="thumb"
+    )
+    if not allow_downloads:
+        return thumbnail_url, thumbnail_url, None
+
+    original_url = storage_service.generate_url(
+        event_id=event_id, image_id=image_id, photo_type="original"
+    )
+    return thumbnail_url, original_url, original_url
+
+
+def _scrub_gallery_payload(payload: dict) -> dict:
+    """Protect legacy cached gallery payloads that may contain original URLs."""
+    if payload.get("allow_downloads") is not False:
+        return payload
+    scrubbed = dict(payload)
+    scrubbed["photos"] = []
+    for photo in payload.get("photos", []):
+        safe_photo = dict(photo)
+        safe_photo["download_url"] = None
+        if safe_photo.get("thumbnail_url"):
+            safe_photo["original_url"] = safe_photo["thumbnail_url"]
+        scrubbed["photos"].append(safe_photo)
+    return scrubbed
+
+
 async def _recognize_single_frame(image_bytes: bytes, api_key: str) -> list:
     """Recognize faces in a single frame, using largest face only."""
     results = await recognize_with_compreface(image_bytes, api_key, det_prob_threshold=0.5)
@@ -333,15 +362,9 @@ async def _scan_with_compreface(
     for match in matches:
         image_uuid = uuid.UUID(match["image_id"])
         try:
-            thumbnail_url = storage_service.generate_url(
-                event_id=event_id, image_id=image_uuid, photo_type="thumb"
+            thumbnail_url, original_url, download_url = _guest_photo_urls(
+                event_id, image_uuid, event.allow_downloads
             )
-            original_url = storage_service.generate_url(
-                event_id=event_id, image_id=image_uuid, photo_type="original"
-            )
-            download_url = None
-            if event.allow_downloads:
-                download_url = original_url
 
             face_matches.append(FaceMatch(
                 image_id=match["image_id"],
@@ -577,11 +600,10 @@ async def download_zip(
 
         thread.join(timeout=5)
 
-    safe_name = event.name.replace(' ', '_').replace('"', '')
     return StreamingResponse(
         generate_zip(),
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{safe_name}_photos.zip"'}
+        headers={"Content-Disposition": attachment_content_disposition(f"{event.name}_photos.zip", "photos.zip")}
     )
 
 
@@ -635,7 +657,7 @@ async def get_gallery(
                 log_action(db=db, event_id=event_id, actor_type='guest',
                            actor_id=session_id, action='gallery_view',
                            metadata={'total_photos': cached.get('total', 0)})
-        return GalleryResponse(**cached)
+        return GalleryResponse(**_scrub_gallery_payload(cached))
 
     # Verify event exists (cache miss path)
     event = db.query(Event).filter(Event.id == event_id).first()
@@ -659,13 +681,9 @@ async def get_gallery(
     photos = []
     for image in images:
         try:
-            thumbnail_url = storage_service.generate_url(
-                event_id=event_id, image_id=image.id, photo_type="thumb"
+            thumbnail_url, original_url, download_url = _guest_photo_urls(
+                event_id, image.id, event.allow_downloads
             )
-            original_url = storage_service.generate_url(
-                event_id=event_id, image_id=image.id, photo_type="original"
-            )
-            download_url = original_url if event.allow_downloads else None
 
             photos.append(GalleryPhoto(
                 image_id=str(image.id),
@@ -726,12 +744,6 @@ async def get_share_info(
     client_ip = request.client.host if request.client else "unknown"
     share_rate_limiter.enforce_rate_limit(client_ip, action="share")
 
-    # Check cache first
-    cache_key = f"share:{event_id}:{image_id}"
-    cached = cache_get(cache_key)
-    if cached:
-        return ShareInfoResponse(**cached)
-
     try:
         event_uuid = uuid.UUID(event_id)
         image_uuid = uuid.UUID(image_id)
@@ -739,19 +751,27 @@ async def get_share_info(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid ID format")
 
     # Verify image and event (and that the event is still serving guests).
-    image = db.query(Image).filter(Image.id == image_uuid, Image.event_id == event_uuid).first()
-    if not image:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
-
     event = db.query(Event).filter(Event.id == event_uuid).first()
     if not event or event.status != 'active':
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
 
-    image_url = storage_service.generate_url(
-        event_id=event_uuid, image_id=image_uuid, photo_type="original"
-    )
-    thumbnail_url = storage_service.generate_url(
-        event_id=event_uuid, image_id=image_uuid, photo_type="thumb"
+    image = db.query(Image.id).filter(Image.id == image_uuid, Image.event_id == event_uuid).first()
+    if not image:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
+
+    # Check cache after DB validation so deleted/frozen events do not keep
+    # serving stale share payloads. Scrub legacy cached originals when
+    # downloads are disabled.
+    cache_key = f"share:{event_id}:{image_id}"
+    cached = cache_get(cache_key)
+    if cached:
+        if not event.allow_downloads and cached.get("thumbnail_url"):
+            cached = dict(cached)
+            cached["image_url"] = cached["thumbnail_url"]
+        return ShareInfoResponse(**cached)
+
+    thumbnail_url, image_url, _download_url = _guest_photo_urls(
+        event_uuid, image_uuid, event.allow_downloads
     )
 
     result = ShareInfoResponse(

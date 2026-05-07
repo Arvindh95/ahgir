@@ -11,8 +11,21 @@ from app.main import app
 from app.database import get_db
 from app.models import User, Event, UserTier
 from app.auth import hash_password, create_access_token
+from app.routers.events import normalize_public_slug
 
 client = TestClient(app)
+
+
+def test_normalize_public_slug_rejects_route_breaking_values():
+    """Slug normalization keeps public event URLs route-safe."""
+    assert normalize_public_slug("  Smith Wedding 2026  ") == "smith-wedding-2026"
+    assert normalize_public_slug("Cafe Reception") == "cafe-reception"
+
+    with pytest.raises(ValueError):
+        normalize_public_slug("***")
+
+    with pytest.raises(ValueError):
+        normalize_public_slug("a" * 256)
 
 
 def _attach_pro_tier(db_session, user):

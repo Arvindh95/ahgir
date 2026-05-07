@@ -156,6 +156,9 @@ class UserTier(Base):
     # to reject out-of-order deliveries (e.g., a stale subscription.updated
     # arriving after a subscription.deleted has already cleared this row).
     last_subscription_event_at = Column(TIMESTAMP, nullable=True)
+    last_subscription_event_id = Column(String(255), nullable=True)
+    last_subscription_event_type = Column(String(80), nullable=True)
+    last_subscription_event_subscription_id = Column(String(255), nullable=True)
 
     created_at = Column(TIMESTAMP, server_default=func.now(), nullable=False)
     updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -227,6 +230,14 @@ class Payment(Base):
         CheckConstraint("status IN ('pending', 'completed', 'failed', 'refunded')", name="valid_payment_status"),
         {"schema": None}
     )
+
+
+Index(
+    "uq_payments_stripe_invoice_id_not_null",
+    Payment.stripe_invoice_id,
+    unique=True,
+    postgresql_where=Payment.stripe_invoice_id.isnot(None),
+)
 
 
 class RateLimit(Base):

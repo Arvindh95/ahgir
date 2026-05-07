@@ -212,7 +212,8 @@ async def forgot_password(request_data: ForgotPasswordRequest, request: Request,
     Request a password reset link. Always returns success to prevent email enumeration.
     """
     client_ip = request.client.host if request.client else "unknown"
-    auth_rate_limiter.enforce_rate_limit(client_ip, action="forgot_password")
+    auth_rate_limiter.enforce_rate_limit(client_ip, action="forgot_password_ip")
+    auth_rate_limiter.enforce_rate_limit(request_data.email, action="forgot_password_email")
 
     user = db.query(User).filter(User.email == request_data.email).first()
 

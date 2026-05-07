@@ -102,6 +102,8 @@ def validate_production_secrets():
         errors.append("SMTP_USERNAME or SMTP_PASSWORD is unset")
     if not settings.compreface_api_key:
         errors.append("COMPREFACE_API_KEY is unset")
+    if not settings.compreface_detection_api_key:
+        errors.append("COMPREFACE_DETECTION_API_KEY is unset")
     if settings.minio_secret_key in ("minioadmin", "minioadmin_dev_only", ""):
         errors.append("MINIO_SECRET_KEY is unset or using dev default")
     if "localhost" in settings.cors_origins.lower() or "127.0.0.1" in settings.cors_origins:

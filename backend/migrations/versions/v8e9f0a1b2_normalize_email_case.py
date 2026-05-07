@@ -15,10 +15,29 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Normalize existing rows. If two users registered as User@x.com and
-    # user@x.com, this UPDATE will fail on the existing UNIQUE(email)
-    # constraint — that's intentional. Resolve the duplicate manually
-    # before re-running the migration.
+    bind = op.get_bind()
+    duplicates = bind.execute(sa.text("""
+        SELECT lower(email) AS normalized_email, count(*) AS row_count,
+               array_agg(email ORDER BY email) AS emails
+        FROM users
+        GROUP BY lower(email)
+        HAVING count(*) > 1
+        ORDER BY lower(email)
+        LIMIT 10
+    """)).mappings().all()
+    if duplicates:
+        examples = "; ".join(
+            f"{row['normalized_email']} ({row['row_count']} rows: {', '.join(row['emails'])})"
+            for row in duplicates
+        )
+        raise RuntimeError(
+            "Cannot normalize users.email because case-insensitive duplicates exist. "
+            "Merge or delete the duplicate accounts first, then rerun the migration. "
+            f"Examples: {examples}"
+        )
+
+    # Safe after the duplicate preflight: no existing row will collide with
+    # another row once lowercased.
     op.execute("UPDATE users SET email = lower(email) WHERE email <> lower(email)")
 
     # Defense-in-depth: enforce case-insensitive uniqueness at the DB even

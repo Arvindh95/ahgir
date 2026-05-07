@@ -2,7 +2,9 @@
 
 import httpx
 import logging
+from io import BytesIO
 from typing import List, Dict, Any, Optional, Tuple
+from PIL import Image as PILImage
 from app.config import settings, get_compreface_url
 
 logger = logging.getLogger(__name__)
@@ -13,6 +15,7 @@ class CompreFaceClient:
 
     def __init__(self):
         self.api_key = settings.compreface_api_key
+        self.detection_api_key = settings.compreface_detection_api_key
         self._recognition_service_name = "picur-recognition"
 
     def _get_headers(self) -> Dict[str, str]:
@@ -21,15 +24,35 @@ class CompreFaceClient:
             "x-api-key": self.api_key,
         }
 
+    def _get_detection_headers(self) -> Dict[str, str]:
+        """Get headers for Detection API requests."""
+        return {
+            "x-api-key": self.detection_api_key,
+        }
+
     async def health_check(self) -> bool:
-        """Check if CompreFace is healthy by listing subjects."""
+        """Check if both CompreFace recognition and detection services are healthy."""
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.get(
                     f"{get_compreface_url()}/api/v1/recognition/subjects",
                     headers=self._get_headers()
                 )
-                return response.status_code == 200
+                if response.status_code != 200:
+                    return False
+
+                # Detection uses a separate service/key. Send a tiny valid JPEG
+                # so missing/invalid detection credentials fail health checks.
+                probe = BytesIO()
+                PILImage.new("RGB", (32, 32), "white").save(probe, format="JPEG")
+                probe.seek(0)
+                detection_response = await client.post(
+                    f"{get_compreface_url()}/api/v1/detection/detect",
+                    headers=self._get_detection_headers(),
+                    files={"file": ("health.jpg", probe.getvalue(), "image/jpeg")},
+                    params={"det_prob_threshold": 0.5},
+                )
+                return detection_response.status_code == 200
         except Exception as e:
             logger.error(f"CompreFace health check failed: {e}")
             return False

@@ -2,19 +2,19 @@
 
 import stripe
 import logging
-import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
-from sqlalchemy import func, desc, asc
+from sqlalchemy import and_, func, or_
+from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel
 
 from app.auth import get_current_user
-from app.cache import cache_delete_pattern
 from app.database import get_db
-from app.models import User, Event, UserTier, Payment
+from app.event_status import rebalance_event_status
+from app.models import User, UserTier, Payment
 from app.config import settings
 from app.tiers import (
     TIER_CONFIG,
@@ -124,6 +124,147 @@ def _get_or_create_stripe_customer(user: User, user_tier: UserTier) -> str:
     return customer.id
 
 
+def _checkout_matches_request(payment: Payment, tier_name: str, interval: str) -> bool:
+    return payment.tier_name == tier_name and payment.billing_interval == interval
+
+
+def _expire_mismatched_checkout(payment: Payment) -> None:
+    """Expire an open Checkout Session that no longer matches the user's choice."""
+    try:
+        stripe.checkout.Session.expire(payment.stripe_checkout_session_id)
+    except stripe.StripeError as e:
+        logger.warning("Could not expire mismatched checkout session %s: %s", payment.stripe_checkout_session_id, e)
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "CHECKOUT_PENDING_DIFFERENT_PLAN",
+                "message": "A checkout is already pending for another plan. Try again in a moment.",
+            },
+        )
+    payment.status = "failed"
+
+
+def _get_reusable_checkout_session(
+    user: User,
+    db: Session,
+    tier_name: str,
+    interval: str,
+) -> Optional[CheckoutResponse]:
+    """Return a matching open Checkout Session, or block while a completed one settles."""
+    now = datetime.utcnow()
+    pending_cutoff = now - timedelta(hours=25)
+    processing_cutoff = now - timedelta(hours=1)
+    candidates = (
+        db.query(Payment)
+        .filter(
+            Payment.user_id == user.id,
+            Payment.stripe_checkout_session_id.isnot(None),
+            or_(
+                and_(Payment.status == "pending", Payment.created_at >= pending_cutoff),
+                and_(Payment.status == "completed", Payment.created_at >= processing_cutoff),
+            ),
+        )
+        .order_by(Payment.created_at.desc())
+        .with_for_update()
+        .all()
+    )
+
+    for payment in candidates:
+        try:
+            session = stripe.checkout.Session.retrieve(payment.stripe_checkout_session_id)
+        except stripe.StripeError as e:
+            logger.warning("Could not verify checkout session %s: %s", payment.stripe_checkout_session_id, e)
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "CHECKOUT_PENDING",
+                    "message": "A checkout is already pending. Try again in a moment.",
+                },
+            )
+
+        session_status = _g(session, "status")
+        session_url = _g(session, "url")
+        if session_status == "open" and session_url:
+            if _checkout_matches_request(payment, tier_name, interval):
+                return CheckoutResponse(checkout_url=session_url, session_id=payment.stripe_checkout_session_id)
+            _expire_mismatched_checkout(payment)
+            db.flush()
+            continue
+        if session_status == "complete":
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "CHECKOUT_PROCESSING",
+                    "message": "Your checkout completed and the subscription is still processing.",
+                },
+            )
+        if session_status == "expired":
+            payment.status = "failed"
+            db.flush()
+
+    return None
+
+
+def _stripe_updates_locked(user_tier: UserTier) -> bool:
+    """True when a superadmin manual tier override should ignore Stripe entitlement webhooks."""
+    return user_tier.last_subscription_event_type == "manual_override"
+
+
+def _clear_manual_stripe_override(user_tier: UserTier) -> None:
+    if not _stripe_updates_locked(user_tier):
+        return
+    user_tier.last_subscription_event_at = None
+    user_tier.last_subscription_event_id = None
+    user_tier.last_subscription_event_type = None
+    user_tier.last_subscription_event_subscription_id = None
+
+
+def _current_period_end_from_subscription(subscription: dict) -> Optional[int]:
+    items_obj = _g(subscription, "items") or {}
+    items = _g(items_obj, "data") or []
+    if items:
+        current_period_end = _g(items[0], "current_period_end")
+        if current_period_end is not None:
+            return current_period_end
+    return _g(subscription, "current_period_end")
+
+
+def _apply_subscription_state(user_tier: UserTier, subscription: dict, db: Session) -> bool:
+    """Apply the current Stripe subscription object to UserTier without committing."""
+    sub_id = subscription["id"]
+    sub_status = subscription["status"]
+    cancel_at_period_end = bool(_g(subscription, "cancel_at_period_end", False))
+    current_period_end = _current_period_end_from_subscription(subscription)
+
+    tier_name, interval = _resolve_tier_from_subscription(subscription)
+    if not tier_name:
+        logger.warning(f"Cannot resolve tier_name for subscription {sub_id}")
+        return False
+
+    if sub_status in ("active", "trialing"):
+        _apply_tier_limits(user_tier, tier_name, interval, db)
+    elif sub_status in ("canceled", "incomplete_expired", "unpaid"):
+        _downgrade_to_free(user_tier, db)
+
+    user_tier.stripe_subscription_id = sub_id
+    user_tier.subscription_status = sub_status
+    user_tier.cancel_at_period_end = cancel_at_period_end
+    user_tier.current_period_end = (
+        datetime.utcfromtimestamp(current_period_end) if current_period_end else None
+    )
+    user_tier.activated_at = datetime.utcnow()
+    return True
+
+
+def _sync_subscription_from_stripe(user_tier: UserTier, subscription_id: str, db: Session) -> bool:
+    try:
+        subscription = stripe.Subscription.retrieve(subscription_id)
+    except stripe.StripeError as e:
+        logger.warning("Could not fetch subscription %s after invoice.paid: %s", subscription_id, e)
+        raise
+    return _apply_subscription_state(user_tier, subscription, db)
+
+
 def _apply_tier_limits(user_tier: UserTier, tier_name: str, interval: Optional[str], db: Session) -> None:
     """Set tier limits on UserTier and freeze/unfreeze events to match new active-event cap."""
     cfg = TIER_CONFIG.get(tier_name)
@@ -138,64 +279,7 @@ def _apply_tier_limits(user_tier: UserTier, tier_name: str, interval: Optional[s
     user_tier.price_cents = cfg["monthly_cents"] if interval == "month" else cfg["yearly_cents"]
     user_tier.billing_interval = interval
 
-    _rebalance_event_status(user_tier.user_id, cfg["max_events"], db)
-
-
-def _rebalance_event_status(user_id: uuid.UUID, max_active: int, db: Session) -> None:
-    """Reconcile event status with active-event quota.
-
-    - If active count > max: freeze oldest excess (preserve newest)
-    - If active count < max and frozen events exist: unfreeze newest frozen up to max
-    Expired events untouched (retention scheduler owns them).
-    """
-    active_events = (
-        db.query(Event)
-        .filter(Event.owner_user_id == user_id, Event.status == 'active')
-        .order_by(asc(Event.created_at))
-        .all()
-    )
-    active_count = len(active_events)
-
-    if active_count > max_active:
-        excess = active_count - max_active
-        flipped = active_events[:excess]
-        for ev in flipped:
-            ev.status = 'frozen'
-        _invalidate_event_public_caches(flipped)
-        logger.info(f"Froze {excess} oldest events for user {user_id} (cap dropped to {max_active})")
-        return
-
-    slots_available = max_active - active_count
-    if slots_available <= 0:
-        return
-
-    frozen_events = (
-        db.query(Event)
-        .filter(Event.owner_user_id == user_id, Event.status == 'frozen')
-        .order_by(desc(Event.created_at))
-        .limit(slots_available)
-        .all()
-    )
-    for ev in frozen_events:
-        ev.status = 'active'
-    if frozen_events:
-        _invalidate_event_public_caches(frozen_events)
-        logger.info(f"Unfroze {len(frozen_events)} events for user {user_id} (cap raised to {max_active})")
-
-
-def _invalidate_event_public_caches(events) -> None:
-    """Drop guest-facing caches for events whose status just changed.
-
-    Without this, /e/{slug} keeps serving the cached event_info payload (and
-    /share/{event_id}/{image_id} keeps serving cached signed URLs) for up to
-    five minutes after a freeze/unfreeze, which is long enough for guests to
-    keep browsing or downloading from a frozen event.
-    """
-    for ev in events:
-        if ev.slug:
-            cache_delete_pattern(f"event_info:{ev.slug}")
-        cache_delete_pattern(f"share:{ev.id}:*")
-        cache_delete_pattern(f"gallery:{ev.id}:*")
+    rebalance_event_status(user_tier.user_id, cfg["max_events"], db)
 
 
 def _downgrade_to_free(user_tier: UserTier, db: Session) -> None:
@@ -290,6 +374,13 @@ async def create_checkout_session(
                 "message": "You already have an active subscription. Use the billing portal to change plans.",
             },
         )
+
+    _clear_manual_stripe_override(user_tier)
+
+    reusable_session = _get_reusable_checkout_session(current_user, db, req.tier_name, req.interval)
+    if reusable_session:
+        db.commit()
+        return reusable_session
 
     customer_id = _get_or_create_stripe_customer(current_user, user_tier)
     db.flush()
@@ -386,29 +477,30 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     # subscription/invoice object. Pass it to subscription handlers so they
     # can reject out-of-order deliveries.
     event_created = event.get("created")
+    event_id = event.get("id")
 
-    handlers_with_ts = {
+    handlers_with_event = {
         "customer.subscription.created": _handle_subscription_upsert,
         "customer.subscription.updated": _handle_subscription_upsert,
         "customer.subscription.deleted": _handle_subscription_deleted,
-    }
-    handlers_no_ts = {
-        "checkout.session.completed": _handle_checkout_completed,
         "invoice.paid": _handle_invoice_paid,
         "invoice.payment_failed": _handle_invoice_payment_failed,
     }
-    handler_with_ts = handlers_with_ts.get(etype)
-    handler_no_ts = handlers_no_ts.get(etype)
-    if handler_with_ts:
+    handlers_no_event = {
+        "checkout.session.completed": _handle_checkout_completed,
+    }
+    handler_with_event = handlers_with_event.get(etype)
+    handler_no_event = handlers_no_event.get(etype)
+    if handler_with_event:
         try:
-            handler_with_ts(obj, db, event_created)
+            handler_with_event(obj, db, event_created, event_id, etype)
         except Exception as e:
             logger.exception(f"Webhook handler {etype} failed: {e}")
             db.rollback()
             raise HTTPException(status_code=500, detail="Webhook handler failed")
-    elif handler_no_ts:
+    elif handler_no_event:
         try:
-            handler_no_ts(obj, db)
+            handler_no_event(obj, db)
         except Exception as e:
             logger.exception(f"Webhook handler {etype} failed: {e}")
             db.rollback()
@@ -473,38 +565,98 @@ def _resolve_tier_from_subscription(subscription: dict) -> tuple[Optional[str], 
     return tier_name, interval
 
 
-def _is_event_stale(user_tier: UserTier, event_created: Optional[int]) -> bool:
+def _subscription_event_datetime(event_created: Optional[int]) -> Optional[datetime]:
+    if event_created is None:
+        return None
+    return datetime.utcfromtimestamp(int(event_created))
+
+
+def _is_event_stale(
+    user_tier: UserTier,
+    event_created: Optional[int],
+    event_id: Optional[str] = None,
+    event_type: Optional[str] = None,
+    subscription_id: Optional[str] = None,
+) -> bool:
     """True if `event_created` is older than the last subscription event we
-    already applied for this user_tier. Stripe webhook delivery is not
-    ordered, so a delayed `customer.subscription.updated` arriving after a
-    `customer.subscription.deleted` would otherwise reapply the paid tier.
+    already applied for this user_tier.
+
+    Stripe webhook delivery is not ordered and `created` is second-granularity.
+    A same-second deletion must still be allowed after an update, but once a
+    deletion has been applied, same-second upserts for that subscription must
+    not reapply the paid tier.
     """
-    if event_created is None or user_tier.last_subscription_event_at is None:
+    if event_id and user_tier.last_subscription_event_id == event_id:
+        return True
+
+    event_dt = _subscription_event_datetime(event_created)
+    if event_dt is None or user_tier.last_subscription_event_at is None:
         return False
-    return datetime.utcfromtimestamp(int(event_created)) < user_tier.last_subscription_event_at
+    if event_dt < user_tier.last_subscription_event_at:
+        return True
+    if (
+        event_dt == user_tier.last_subscription_event_at
+        and user_tier.last_subscription_event_type == "customer.subscription.deleted"
+        and event_type != "customer.subscription.deleted"
+        and user_tier.last_subscription_event_subscription_id == subscription_id
+    ):
+        return True
+    return False
 
 
-def _handle_subscription_upsert(subscription: dict, db: Session, event_created: Optional[int] = None) -> None:
+def _is_invoice_failure_stale(
+    user_tier: UserTier,
+    event_created: Optional[int],
+    event_id: Optional[str],
+    event_type: Optional[str],
+    subscription_id: Optional[str],
+) -> bool:
+    """Reject delayed invoice failures that arrive after a recovery event."""
+    if _is_event_stale(user_tier, event_created, event_id, event_type, subscription_id):
+        return True
+
+    event_dt = _subscription_event_datetime(event_created)
+    if event_dt is None or user_tier.last_subscription_event_at is None:
+        return False
+    return (
+        event_dt == user_tier.last_subscription_event_at
+        and user_tier.last_subscription_event_subscription_id == subscription_id
+        and user_tier.last_subscription_event_type in {
+            "customer.subscription.created",
+            "customer.subscription.updated",
+            "invoice.paid",
+        }
+    )
+
+
+def _mark_subscription_event_applied(
+    user_tier: UserTier,
+    event_created: Optional[int],
+    event_id: Optional[str],
+    event_type: Optional[str],
+    subscription_id: Optional[str],
+) -> None:
+    event_dt = _subscription_event_datetime(event_created)
+    if event_dt is not None:
+        user_tier.last_subscription_event_at = event_dt
+    if event_id:
+        user_tier.last_subscription_event_id = event_id
+    if event_type:
+        user_tier.last_subscription_event_type = event_type
+    if subscription_id:
+        user_tier.last_subscription_event_subscription_id = subscription_id
+
+
+def _handle_subscription_upsert(
+    subscription: dict,
+    db: Session,
+    event_created: Optional[int] = None,
+    event_id: Optional[str] = None,
+    event_type: Optional[str] = None,
+) -> None:
     """Sync UserTier with Stripe subscription state. Source of truth for tier flips."""
     sub_id = subscription["id"]
     customer_id = subscription["customer"]
-    sub_status = subscription["status"]
-    cancel_at_period_end = bool(_g(subscription, "cancel_at_period_end", False))
-
-    # Stripe API 2024+ moved current_period_end onto SubscriptionItem.
-    items_obj = _g(subscription, "items") or {}
-    items = _g(items_obj, "data") or []
-    current_period_end = None
-    if items:
-        current_period_end = _g(items[0], "current_period_end")
-    if current_period_end is None:
-        current_period_end = _g(subscription, "current_period_end")
-
-    tier_name, interval = _resolve_tier_from_subscription(subscription)
-    if not tier_name:
-        logger.warning(f"Cannot resolve tier_name for subscription {sub_id}")
-        return
-
     user_tier = (
         db.query(UserTier)
         .filter(UserTier.stripe_customer_id == customer_id)
@@ -514,37 +666,34 @@ def _handle_subscription_upsert(subscription: dict, db: Session, event_created: 
     if not user_tier:
         logger.warning(f"No UserTier for stripe customer {customer_id}")
         return
+    if _stripe_updates_locked(user_tier):
+        logger.info("Skipping subscription event for %s because user %s has a manual tier override", sub_id, user_tier.user_id)
+        return
 
     # Reject out-of-order deliveries (e.g., stale subscription.updated arriving
     # after subscription.deleted has already cleared this user's tier).
-    if _is_event_stale(user_tier, event_created):
+    if _is_event_stale(user_tier, event_created, event_id, event_type, sub_id):
         logger.info(
             f"Skipping stale subscription event for {sub_id}: "
-            f"event ts={event_created} < last_applied={user_tier.last_subscription_event_at}"
+            f"event id={event_id} type={event_type} ts={event_created} "
+            f"last_applied={user_tier.last_subscription_event_at}"
         )
         return
 
-    # Active or trialing → grant tier; anything else (incomplete, past_due) holds current state
-    if sub_status in ("active", "trialing"):
-        _apply_tier_limits(user_tier, tier_name, interval, db)
-    elif sub_status in ("canceled", "incomplete_expired", "unpaid"):
-        _downgrade_to_free(user_tier, db)
-    # 'past_due' / 'incomplete' → leave tier in place; grace handled by cron
-
-    user_tier.stripe_subscription_id = sub_id
-    user_tier.subscription_status = sub_status
-    user_tier.cancel_at_period_end = cancel_at_period_end
-    user_tier.current_period_end = (
-        datetime.utcfromtimestamp(current_period_end) if current_period_end else None
-    )
-    user_tier.activated_at = datetime.utcnow()
-    if event_created is not None:
-        user_tier.last_subscription_event_at = datetime.utcfromtimestamp(int(event_created))
+    if not _apply_subscription_state(user_tier, subscription, db):
+        return
+    _mark_subscription_event_applied(user_tier, event_created, event_id, event_type, sub_id)
     db.commit()
-    logger.info(f"Subscription {sub_id} synced: tier={tier_name} status={sub_status} user={user_tier.user_id}")
+    logger.info(f"Subscription {sub_id} synced: status={subscription['status']} user={user_tier.user_id}")
 
 
-def _handle_subscription_deleted(subscription: dict, db: Session, event_created: Optional[int] = None) -> None:
+def _handle_subscription_deleted(
+    subscription: dict,
+    db: Session,
+    event_created: Optional[int] = None,
+    event_id: Optional[str] = None,
+    event_type: Optional[str] = None,
+) -> None:
     """Subscription fully canceled (period_end reached or canceled immediately) → free tier."""
     sub_id = subscription["id"]
     user_tier = (
@@ -556,17 +705,25 @@ def _handle_subscription_deleted(subscription: dict, db: Session, event_created:
     if not user_tier:
         logger.info(f"Subscription deleted for unknown sub_id {sub_id}")
         return
-    if _is_event_stale(user_tier, event_created):
+    if _stripe_updates_locked(user_tier):
+        logger.info("Skipping subscription.deleted for %s because user %s has a manual tier override", sub_id, user_tier.user_id)
+        return
+    if _is_event_stale(user_tier, event_created, event_id, event_type, sub_id):
         logger.info(f"Skipping stale subscription.deleted for {sub_id}")
         return
     _downgrade_to_free(user_tier, db)
-    if event_created is not None:
-        user_tier.last_subscription_event_at = datetime.utcfromtimestamp(int(event_created))
+    _mark_subscription_event_applied(user_tier, event_created, event_id, event_type, sub_id)
     db.commit()
     logger.info(f"User {user_tier.user_id} downgraded to free (subscription deleted)")
 
 
-def _handle_invoice_paid(invoice: dict, db: Session) -> None:
+def _handle_invoice_paid(
+    invoice: dict,
+    db: Session,
+    event_created: Optional[int] = None,
+    event_id: Optional[str] = None,
+    event_type: Optional[str] = None,
+) -> None:
     """Record successful subscription invoice as a Payment row."""
     invoice_id = invoice["id"]
     sub_id = _g(invoice, "subscription")
@@ -578,10 +735,22 @@ def _handle_invoice_paid(invoice: dict, db: Session) -> None:
         return  # idempotent
 
     customer_id = invoice["customer"]
-    user_tier = db.query(UserTier).filter(UserTier.stripe_customer_id == customer_id).first()
+    user_tier = (
+        db.query(UserTier)
+        .filter(UserTier.stripe_customer_id == customer_id)
+        .with_for_update()
+        .first()
+    )
     if not user_tier:
         logger.warning(f"invoice.paid for unknown customer {customer_id}")
         return
+
+    if not _stripe_updates_locked(user_tier) and not _is_event_stale(user_tier, event_created, event_id, event_type, sub_id):
+        # invoice.paid is often the recovery signal after past_due. Reconcile
+        # the current Stripe subscription now so a missing/delayed
+        # customer.subscription.updated does not leave the user downgradeable.
+        if _sync_subscription_from_stripe(user_tier, sub_id, db):
+            _mark_subscription_event_applied(user_tier, event_created, event_id, event_type, sub_id)
 
     payment = Payment(
         user_id=user_tier.user_id,
@@ -595,10 +764,20 @@ def _handle_invoice_paid(invoice: dict, db: Session) -> None:
         metadata_={"invoice_number": _g(invoice, "number")},
     )
     db.add(payment)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        logger.info("Duplicate invoice.paid ignored for invoice %s", invoice_id)
 
 
-def _handle_invoice_payment_failed(invoice: dict, db: Session) -> None:
+def _handle_invoice_payment_failed(
+    invoice: dict,
+    db: Session,
+    event_created: Optional[int] = None,
+    event_id: Optional[str] = None,
+    event_type: Optional[str] = None,
+) -> None:
     """Mark subscription past_due. Cron will downgrade to free after grace_period_days."""
     sub_id = _g(invoice, "subscription")
     if not sub_id:
@@ -611,6 +790,13 @@ def _handle_invoice_payment_failed(invoice: dict, db: Session) -> None:
     )
     if not user_tier:
         return
+    if _stripe_updates_locked(user_tier):
+        logger.info("Skipping invoice.payment_failed for %s because user %s has a manual tier override", sub_id, user_tier.user_id)
+        return
+    if _is_invoice_failure_stale(user_tier, event_created, event_id, event_type, sub_id):
+        logger.info("Skipping stale invoice.payment_failed for subscription %s", sub_id)
+        return
     user_tier.subscription_status = "past_due"
+    _mark_subscription_event_applied(user_tier, event_created, event_id, event_type, sub_id)
     db.commit()
     logger.warning(f"Subscription {sub_id} payment failed - user {user_tier.user_id} marked past_due")
