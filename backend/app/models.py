@@ -152,6 +152,10 @@ class UserTier(Base):
     billing_interval = Column(String(10), nullable=True)  # month, year
     current_period_end = Column(TIMESTAMP, nullable=True)
     cancel_at_period_end = Column(Boolean, nullable=False, default=False)
+    # Stripe event timestamp of the last subscription.* webhook applied. Used
+    # to reject out-of-order deliveries (e.g., a stale subscription.updated
+    # arriving after a subscription.deleted has already cleared this row).
+    last_subscription_event_at = Column(TIMESTAMP, nullable=True)
 
     created_at = Column(TIMESTAMP, server_default=func.now(), nullable=False)
     updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now(), nullable=False)

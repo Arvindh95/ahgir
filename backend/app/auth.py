@@ -239,5 +239,13 @@ async def get_event_from_token(
     if session.expires_at and session.expires_at < datetime.utcnow():
         raise InvalidTokenError()
 
+    # Reject guest access to frozen/expired events. Frozen events are read-only
+    # from the photographer's side, but without this check existing guest JWTs
+    # could continue scanning and downloading until natural expiry.
+    from app.models import Event as _Event
+    event = db.query(_Event).filter(_Event.id == event_uuid).first()
+    if event is None or event.status != 'active':
+        raise InvalidTokenError()
+
     return EventTokenPayload(event_id=event_id, session_id=session_id)
 

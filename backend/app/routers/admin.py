@@ -5,7 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import uuid
 
 from app.auth import get_current_user
@@ -52,8 +52,11 @@ class UserUpdateRequest(BaseModel):
 
 class UserTierUpdateRequest(BaseModel):
     tier_name: str  # free, starter, pro, custom
-    max_events: Optional[int] = None
-    max_photos_per_event: Optional[int] = None
+    # Custom-tier overrides: must be positive integers. Without these bounds
+    # superadmin can write zero/negative values, putting users into nonsensical
+    # quota states that produce confusing upload/create failures downstream.
+    max_events: Optional[int] = Field(default=None, ge=1, le=100000)
+    max_photos_per_event: Optional[int] = Field(default=None, ge=1, le=1000000)
 
 
 class PlatformStats(BaseModel):
@@ -448,7 +451,7 @@ async def admin_delete_event(
 # --- Per-Event Photo Override ---
 
 class EventPhotoOverrideRequest(BaseModel):
-    photo_limit: int
+    photo_limit: int = Field(..., ge=1, le=1000000)
 
 
 @router.patch("/events/{event_id}/photo-override")

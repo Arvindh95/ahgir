@@ -97,7 +97,10 @@ async def get_event_by_slug(slug: str, db: Session = Depends(get_db)):
     # Find event by slug
     event = db.query(Event).filter(Event.slug == slug).first()
 
-    if not event:
+    # Treat frozen/expired events as not-found from a guest's perspective.
+    # Frozen means the photographer is on a tier that no longer covers this
+    # event slot — public access to it must stop, just like uploads/reindex.
+    if not event or event.status != 'active':
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Event not found"
@@ -143,7 +146,7 @@ async def authenticate_guest(
     # Find event by slug
     event = db.query(Event).filter(Event.slug == slug).first()
 
-    if not event:
+    if not event or event.status != 'active':
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Event not found"
@@ -735,13 +738,13 @@ async def get_share_info(
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid ID format")
 
-    # Verify image and event
+    # Verify image and event (and that the event is still serving guests).
     image = db.query(Image).filter(Image.id == image_uuid, Image.event_id == event_uuid).first()
     if not image:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
 
     event = db.query(Event).filter(Event.id == event_uuid).first()
-    if not event:
+    if not event or event.status != 'active':
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
 
     image_url = storage_service.generate_url(

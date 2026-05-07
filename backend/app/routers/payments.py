@@ -363,18 +363,33 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     etype = event["type"]
     obj = event["data"]["object"]
 
-    handlers = {
-        "checkout.session.completed": _handle_checkout_completed,
+    # Stripe Event has its own `created` timestamp distinct from the embedded
+    # subscription/invoice object. Pass it to subscription handlers so they
+    # can reject out-of-order deliveries.
+    event_created = event.get("created")
+
+    handlers_with_ts = {
         "customer.subscription.created": _handle_subscription_upsert,
         "customer.subscription.updated": _handle_subscription_upsert,
         "customer.subscription.deleted": _handle_subscription_deleted,
+    }
+    handlers_no_ts = {
+        "checkout.session.completed": _handle_checkout_completed,
         "invoice.paid": _handle_invoice_paid,
         "invoice.payment_failed": _handle_invoice_payment_failed,
     }
-    handler = handlers.get(etype)
-    if handler:
+    handler_with_ts = handlers_with_ts.get(etype)
+    handler_no_ts = handlers_no_ts.get(etype)
+    if handler_with_ts:
         try:
-            handler(obj, db)
+            handler_with_ts(obj, db, event_created)
+        except Exception as e:
+            logger.exception(f"Webhook handler {etype} failed: {e}")
+            db.rollback()
+            raise HTTPException(status_code=500, detail="Webhook handler failed")
+    elif handler_no_ts:
+        try:
+            handler_no_ts(obj, db)
         except Exception as e:
             logger.exception(f"Webhook handler {etype} failed: {e}")
             db.rollback()
@@ -408,7 +423,49 @@ def _handle_checkout_completed(session: dict, db: Session) -> None:
     db.commit()
 
 
-def _handle_subscription_upsert(subscription: dict, db: Session) -> None:
+def _resolve_tier_from_subscription(subscription: dict) -> tuple[Optional[str], Optional[str]]:
+    """Resolve (tier_name, interval) from a Stripe subscription object.
+
+    Source of truth is the active SubscriptionItem's Price ID — it always
+    reflects the current plan, including portal-driven plan changes. The
+    `metadata.tier_name` field is only set by our own checkout flow and is
+    NOT updated when a customer changes plan via the Billing Portal, so
+    relying on metadata first would let a downgrade keep granting the
+    higher tier (or vice versa). Use metadata only when the price ID
+    can't be matched.
+    """
+    items_obj = _g(subscription, "items") or {}
+    items = _g(items_obj, "data") or []
+    if items:
+        price_obj = _g(items[0], "price") or {}
+        price_id = _g(price_obj, "id")
+        for tn in PURCHASABLE_TIERS:
+            cfg = TIER_CONFIG[tn]
+            if price_id == cfg.get("stripe_price_monthly"):
+                return tn, "month"
+            if price_id == cfg.get("stripe_price_yearly"):
+                return tn, "year"
+
+    # Fallback to metadata when the price doesn't match any known tier
+    # (e.g., legacy Stripe products before a price ID rotation).
+    metadata = _g(subscription, "metadata") or {}
+    tier_name = _g(metadata, "tier_name")
+    interval = _g(metadata, "interval")
+    return tier_name, interval
+
+
+def _is_event_stale(user_tier: UserTier, event_created: Optional[int]) -> bool:
+    """True if `event_created` is older than the last subscription event we
+    already applied for this user_tier. Stripe webhook delivery is not
+    ordered, so a delayed `customer.subscription.updated` arriving after a
+    `customer.subscription.deleted` would otherwise reapply the paid tier.
+    """
+    if event_created is None or user_tier.last_subscription_event_at is None:
+        return False
+    return datetime.utcfromtimestamp(int(event_created)) < user_tier.last_subscription_event_at
+
+
+def _handle_subscription_upsert(subscription: dict, db: Session, event_created: Optional[int] = None) -> None:
     """Sync UserTier with Stripe subscription state. Source of truth for tier flips."""
     sub_id = subscription["id"]
     customer_id = subscription["customer"]
@@ -416,7 +473,6 @@ def _handle_subscription_upsert(subscription: dict, db: Session) -> None:
     cancel_at_period_end = bool(_g(subscription, "cancel_at_period_end", False))
 
     # Stripe API 2024+ moved current_period_end onto SubscriptionItem.
-    # Read from items[0] first, fall back to top-level for older API versions.
     items_obj = _g(subscription, "items") or {}
     items = _g(items_obj, "data") or []
     current_period_end = None
@@ -425,21 +481,7 @@ def _handle_subscription_upsert(subscription: dict, db: Session) -> None:
     if current_period_end is None:
         current_period_end = _g(subscription, "current_period_end")
 
-    metadata = _g(subscription, "metadata") or {}
-    tier_name = _g(metadata, "tier_name")
-    interval = _g(metadata, "interval")
-
-    # Fall back to deriving tier_name from the price ID if metadata missing
-    if not tier_name and items:
-        price_obj = _g(items[0], "price") or {}
-        price_id = _g(price_obj, "id")
-        for tn in PURCHASABLE_TIERS:
-            cfg = TIER_CONFIG[tn]
-            if price_id in (cfg["stripe_price_monthly"], cfg["stripe_price_yearly"]):
-                tier_name = tn
-                interval = "month" if price_id == cfg["stripe_price_monthly"] else "year"
-                break
-
+    tier_name, interval = _resolve_tier_from_subscription(subscription)
     if not tier_name:
         logger.warning(f"Cannot resolve tier_name for subscription {sub_id}")
         return
@@ -454,11 +496,19 @@ def _handle_subscription_upsert(subscription: dict, db: Session) -> None:
         logger.warning(f"No UserTier for stripe customer {customer_id}")
         return
 
+    # Reject out-of-order deliveries (e.g., stale subscription.updated arriving
+    # after subscription.deleted has already cleared this user's tier).
+    if _is_event_stale(user_tier, event_created):
+        logger.info(
+            f"Skipping stale subscription event for {sub_id}: "
+            f"event ts={event_created} < last_applied={user_tier.last_subscription_event_at}"
+        )
+        return
+
     # Active or trialing → grant tier; anything else (incomplete, past_due) holds current state
     if sub_status in ("active", "trialing"):
         _apply_tier_limits(user_tier, tier_name, interval, db)
     elif sub_status in ("canceled", "incomplete_expired", "unpaid"):
-        # Hard-end states: drop to free immediately
         _downgrade_to_free(user_tier, db)
     # 'past_due' / 'incomplete' → leave tier in place; grace handled by cron
 
@@ -469,11 +519,13 @@ def _handle_subscription_upsert(subscription: dict, db: Session) -> None:
         datetime.utcfromtimestamp(current_period_end) if current_period_end else None
     )
     user_tier.activated_at = datetime.utcnow()
+    if event_created is not None:
+        user_tier.last_subscription_event_at = datetime.utcfromtimestamp(int(event_created))
     db.commit()
     logger.info(f"Subscription {sub_id} synced: tier={tier_name} status={sub_status} user={user_tier.user_id}")
 
 
-def _handle_subscription_deleted(subscription: dict, db: Session) -> None:
+def _handle_subscription_deleted(subscription: dict, db: Session, event_created: Optional[int] = None) -> None:
     """Subscription fully canceled (period_end reached or canceled immediately) → free tier."""
     sub_id = subscription["id"]
     user_tier = (
@@ -485,7 +537,12 @@ def _handle_subscription_deleted(subscription: dict, db: Session) -> None:
     if not user_tier:
         logger.info(f"Subscription deleted for unknown sub_id {sub_id}")
         return
+    if _is_event_stale(user_tier, event_created):
+        logger.info(f"Skipping stale subscription.deleted for {sub_id}")
+        return
     _downgrade_to_free(user_tier, db)
+    if event_created is not None:
+        user_tier.last_subscription_event_at = datetime.utcfromtimestamp(int(event_created))
     db.commit()
     logger.info(f"User {user_tier.user_id} downgraded to free (subscription deleted)")
 

@@ -1400,6 +1400,36 @@ async def admin_download_all_zip(
     if not images:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No photos found")
 
+    # Pre-flight size check using stored size_bytes. Without this, a large
+    # event could tie up MinIO + a worker for many minutes streaming a
+    # multi-GB ZIP. Same caps as guest bulk download.
+    total_bytes = sum((img.size_bytes or 0) for img in images)
+    max_bytes = settings.bulk_download_max_bytes
+    if total_bytes > max_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail={
+                "code": "DOWNLOAD_TOO_LARGE",
+                "message": (
+                    f"Total download size {total_bytes // (1024*1024)} MB exceeds "
+                    f"{max_bytes // (1024*1024)} MB limit. Use the photos page to download in batches."
+                ),
+                "total_bytes": total_bytes,
+                "max_bytes": max_bytes,
+                "image_count": len(images),
+            },
+        )
+    if len(images) > settings.bulk_download_max_images:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail={
+                "code": "TOO_MANY_IMAGES",
+                "message": f"Cannot bulk-download more than {settings.bulk_download_max_images} images at once.",
+                "image_count": len(images),
+                "max_images": settings.bulk_download_max_images,
+            },
+        )
+
     def generate_zip():
         data_queue = queue.Queue(maxsize=32)
 
