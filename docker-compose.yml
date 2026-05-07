@@ -100,7 +100,7 @@ services:
         condition: service_started
     security_opt:
       - seccomp:unconfined
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --proxy-headers --forwarded-allow-ips='*'
 
   # Daily retention cron: enqueues an RQ job that the regular worker drains.
   # Uses tianon/true-style sleep loop so we don't depend on a separate cron sidecar image.

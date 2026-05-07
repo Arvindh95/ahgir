@@ -16,9 +16,13 @@ class User(Base):
     is_verified = Column(Boolean, default=False, nullable=False)
     is_superadmin = Column(Boolean, default=False, nullable=False)
     is_disabled = Column(Boolean, default=False, nullable=False)
+    # Set to NOW() whenever the user's password is reset or changed. Tokens
+    # whose iat is before this timestamp are rejected, killing replay of any
+    # outstanding access token or password-reset link.
+    password_changed_at = Column(TIMESTAMP, nullable=True)
     created_at = Column(TIMESTAMP, server_default=func.now(), nullable=False)
     updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now(), nullable=False)
-    
+
     # Relationships
     events = relationship("Event", back_populates="owner", cascade="all, delete-orphan")
     user_tier = relationship("UserTier", back_populates="user", uselist=False, cascade="all, delete-orphan")

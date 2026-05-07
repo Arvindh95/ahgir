@@ -2,6 +2,8 @@
 Rate limiting service using Redis for distributed rate limiting.
 
 Implements a sliding window algorithm to enforce scan rate limits per guest session.
+The check + add is performed by a Redis-side Lua script so concurrent requests
+cannot all observe count<limit and then all add themselves past the cap.
 """
 
 from datetime import datetime, timedelta
@@ -13,6 +15,60 @@ from app.config import settings
 
 # Initialize Redis client
 redis_client = redis.from_url(settings.redis_url, decode_responses=True)
+
+
+# Atomic check-and-add Lua script.
+# KEYS[1]: rate-limit zset key
+# ARGV[1]: now (epoch seconds, float)
+# ARGV[2]: window_start (epoch seconds, float) — anything older is pruned
+# ARGV[3]: limit (int)
+# ARGV[4]: member (unique string for this request)
+# ARGV[5]: expire_seconds (int) — TTL on the key
+# Returns: { allowed (1/0), oldest_timestamp_in_window (or 0 if allowed/empty) }
+RATE_LIMIT_LUA = """
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local window_start = tonumber(ARGV[2])
+local limit = tonumber(ARGV[3])
+local member = ARGV[4]
+local expire_seconds = tonumber(ARGV[5])
+
+redis.call('ZREMRANGEBYSCORE', key, 0, window_start)
+local count = redis.call('ZCARD', key)
+
+if count >= limit then
+    local oldest = redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')
+    if #oldest >= 2 then
+        return {0, oldest[2]}
+    end
+    return {0, '0'}
+end
+
+redis.call('ZADD', key, now, member)
+redis.call('EXPIRE', key, expire_seconds)
+return {1, '0'}
+"""
+
+# Lazily-registered SHA so reconnects (e.g., redis restart) auto-recover.
+_LUA_SHA: Optional[str] = None
+
+
+def _run_rate_limit(client: redis.Redis, key: str, now: float, window_start: float,
+                    limit: int, member: str, expire_seconds: int) -> tuple[int, float]:
+    """Run the atomic rate-limit script. Falls back to register+retry on NOSCRIPT."""
+    global _LUA_SHA
+    args = [now, window_start, limit, member, expire_seconds]
+    try:
+        if _LUA_SHA is None:
+            _LUA_SHA = client.script_load(RATE_LIMIT_LUA)
+        result = client.evalsha(_LUA_SHA, 1, key, *args)
+    except redis.exceptions.NoScriptError:
+        # Redis was restarted or evicted the script. Reload and retry.
+        _LUA_SHA = client.script_load(RATE_LIMIT_LUA)
+        result = client.evalsha(_LUA_SHA, 1, key, *args)
+    allowed = int(result[0])
+    oldest = float(result[1])
+    return allowed, oldest
 
 
 class RateLimiter:
@@ -67,50 +123,34 @@ class RateLimiter:
         key = self._get_key(session_id, action)
         now = datetime.utcnow()
         window_start = now - timedelta(hours=self.window_hours)
-        
-        # Use Redis pipeline for atomic operations
-        pipe = self.redis.pipeline()
-        
-        # Remove timestamps older than the window
-        pipe.zremrangebyscore(key, 0, window_start.timestamp())
-        
-        # Count current timestamps in window
-        pipe.zcard(key)
-        
-        # Execute pipeline
-        results = pipe.execute()
-        current_count = results[1]
-        
-        # Check if under limit
-        if current_count < self.limit:
-            # Add current timestamp. Member must be unique even at sub-millisecond
-            # collision; ZSET overwrites duplicate members which would silently drop
-            # a request from the count.
-            member = f"{now.timestamp()}-{uuid.uuid4().hex}"
-            self.redis.zadd(key, {member: now.timestamp()})
-            
-            # Set expiry on key (window + buffer)
-            self.redis.expire(key, self.window_seconds + 3600)
-            
+        now_ts = now.timestamp()
+        window_start_ts = window_start.timestamp()
+
+        # Atomic check + add via Lua. Without this, concurrent requests can
+        # all observe count < limit and then each add their own entry,
+        # blowing past the cap. The script does prune + count + (conditional)
+        # add + expire as a single Redis operation.
+        member = f"{now_ts}-{uuid.uuid4().hex}"
+        allowed, oldest_ts = _run_rate_limit(
+            self.redis,
+            key,
+            now_ts,
+            window_start_ts,
+            self.limit,
+            member,
+            self.window_seconds + 3600,
+        )
+
+        if allowed == 1:
             return True, None
+
+        # Over limit — compute retry-after from the oldest entry in the window.
+        if oldest_ts > 0:
+            retry_time = datetime.fromtimestamp(oldest_ts) + timedelta(hours=self.window_hours)
+            retry_after_seconds = max(1, int((retry_time - now).total_seconds()))
         else:
-            # Over limit - calculate retry-after
-            # Get oldest timestamp in current window
-            oldest_timestamps = self.redis.zrange(key, 0, 0, withscores=True)
-            
-            if oldest_timestamps:
-                oldest_timestamp = oldest_timestamps[0][1]
-                oldest_time = datetime.fromtimestamp(oldest_timestamp)
-                retry_time = oldest_time + timedelta(hours=self.window_hours)
-                retry_after_seconds = int((retry_time - now).total_seconds())
-                
-                # Ensure retry_after is at least 1 second
-                retry_after_seconds = max(1, retry_after_seconds)
-            else:
-                # Fallback if no timestamps found
-                retry_after_seconds = self.window_seconds
-            
-            return False, retry_after_seconds
+            retry_after_seconds = self.window_seconds
+        return False, retry_after_seconds
     
     def enforce_rate_limit(self, session_id: str, action: str = "scan") -> None:
         """

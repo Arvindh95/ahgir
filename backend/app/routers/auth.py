@@ -1,5 +1,5 @@
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 logger = logging.getLogger(__name__)
@@ -159,18 +159,28 @@ async def verify_email(request: VerifyRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/resend-verify", response_model=MessageResponse)
-async def resend_verification(request: ResendVerifyRequest, db: Session = Depends(get_db)):
+async def resend_verification(
+    request: ResendVerifyRequest,
+    http_request: Request,
+    db: Session = Depends(get_db),
+):
     """
-    Resend verification email to registered email address.
+    Resend verification email.
+
+    Always returns the same generic response regardless of whether the email
+    is registered, unverified, or already verified — otherwise the differing
+    responses leak account state to attackers. Rate-limited per IP and per
+    email so the endpoint can't be used as a free spam relay.
     """
+    GENERIC = MessageResponse(message="If the email is unverified, a new verification link has been sent")
+
+    client_ip = http_request.client.host if http_request.client else "unknown"
+    auth_rate_limiter.enforce_rate_limit(client_ip, action="resend_verify_ip")
+    auth_rate_limiter.enforce_rate_limit(request.email.lower(), action="resend_verify_email")
+
     user = db.query(User).filter(User.email == request.email).first()
-
-    # Don't reveal if email exists or not
-    if not user:
-        return MessageResponse(message="If the email is registered, a verification link has been sent")
-
-    if user.is_verified:
-        return MessageResponse(message="Email is already verified")
+    if not user or user.is_verified:
+        return GENERIC
 
     token = create_verification_token(user.id)
     verify_url = f"{settings.frontend_url}/admin/verify?token={token}"
@@ -179,7 +189,7 @@ async def resend_verification(request: ResendVerifyRequest, db: Session = Depend
     except Exception as e:
         logger.error(f"Failed to enqueue verification email: {e}")
 
-    return MessageResponse(message="If the email is registered, a verification link has been sent")
+    return GENERIC
 
 
 @router.post("/forgot-password", response_model=MessageResponse)
@@ -208,6 +218,11 @@ async def forgot_password(request_data: ForgotPasswordRequest, request: Request,
 async def reset_password(request_data: ResetPasswordRequest, db: Session = Depends(get_db)):
     """
     Reset password using a token from the reset email.
+
+    A reset link is single-use: the moment we change the password we update
+    `password_changed_at`, and the same handler rejects any token whose `iat`
+    is older than that timestamp. So a leaked or replayed reset URL stops
+    working as soon as the first valid use completes.
     """
     try:
         payload = decode_token(request_data.token)
@@ -218,12 +233,20 @@ async def reset_password(request_data: ResetPasswordRequest, db: Session = Depen
         raise InvalidTokenError("Invalid reset token")
 
     user_id = payload.get("sub")
+    token_iat = payload.get("iat")
     if not user_id:
         raise InvalidTokenError("Invalid reset token")
 
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise InvalidTokenError("User not found")
+
+    # Reject tokens issued before the user's most recent password change.
+    # First successful reset sets password_changed_at; any later attempt with
+    # the same (now-stale) JWT is rejected here.
+    if user.password_changed_at and token_iat is not None:
+        if datetime.utcfromtimestamp(int(token_iat)) < user.password_changed_at:
+            raise InvalidTokenError("Reset link has already been used")
 
     # Validate password strength using the same rules as registration
     try:
@@ -235,6 +258,7 @@ async def reset_password(request_data: ResetPasswordRequest, db: Session = Depen
         )
 
     user.password_hash = hash_password(request_data.new_password)
+    user.password_changed_at = datetime.utcnow()
     db.commit()
 
     return MessageResponse(message="Password reset successfully")

@@ -7,6 +7,7 @@ conversion, or thumbnailing. Wrap every Image.open call with this helper
 to enforce a pixel cap up-front and reject decompression bombs.
 """
 
+import warnings
 from io import BytesIO
 
 from PIL import Image as PILImage
@@ -17,9 +18,12 @@ from fastapi import HTTPException, status
 # 100MP — adjust upward if those become a real use case).
 MAX_PIXELS = 50_000_000
 
-# Tell Pillow to raise DecompressionBombError above this threshold rather
-# than just warning. We add our own explicit check too as belt-and-braces.
+# Tell Pillow to raise DecompressionBombError above 2*threshold and
+# DecompressionBombWarning above the threshold itself. We promote the
+# warning to an exception so even images in the 1x..2x range are caught
+# without us calling .load() first.
 PILImage.MAX_IMAGE_PIXELS = MAX_PIXELS
+warnings.simplefilter("error", PILImage.DecompressionBombWarning)
 
 
 class ImageTooLarge(HTTPException):
@@ -30,25 +34,33 @@ class ImageTooLarge(HTTPException):
 def safe_open(data: bytes, *, max_pixels: int = MAX_PIXELS) -> PILImage.Image:
     """Open image bytes with bomb protection.
 
-    Raises HTTPException 413 if the image exceeds max_pixels OR Pillow's
-    DecompressionBombError. Caller is responsible for closing / discarding
-    the returned image when done.
+    Order matters: we read width/height from the file header first, reject
+    if the implied pixel count exceeds max_pixels, and only then call
+    .load() to actually decode. This means a 100MP bomb gets rejected
+    after parsing a few bytes of the header, never decoded into RAM.
     """
     try:
         img = PILImage.open(BytesIO(data))
-        # Force Pillow to read the header so width/height are populated.
+        # Header parsing populates width/height without decoding pixel data.
+        # Check the pixel cap NOW, before .load() forces a full decode.
+        pixels = (img.width or 0) * (img.height or 0)
+        if pixels > max_pixels:
+            raise ImageTooLarge(
+                f"Image is {img.width}x{img.height} ({pixels:,} pixels); max is {max_pixels:,}"
+            )
+        # Now safe to fully decode.
         img.load()
     except PILImage.DecompressionBombError:
         raise ImageTooLarge("Image too large (decompression bomb protection)")
+    except PILImage.DecompressionBombWarning:
+        # Promoted to exception via warnings.simplefilter("error", ...)
+        raise ImageTooLarge("Image too large (decompression bomb protection)")
+    except ImageTooLarge:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid image: {e}",
         )
 
-    pixels = (img.width or 0) * (img.height or 0)
-    if pixels > max_pixels:
-        raise ImageTooLarge(
-            f"Image is {img.width}x{img.height} ({pixels:,} pixels); max is {max_pixels:,}"
-        )
     return img

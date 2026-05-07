@@ -10,7 +10,11 @@ services:
 
   backend:
     volumes: !reset []
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+    # --proxy-headers + forwarded-allow-ips=* so X-Forwarded-For from the
+    # host reverse proxy (nginx → 127.0.0.1:8005 → docker bridge) is trusted.
+    # Without this, every request appears to come from the docker bridge IP
+    # and per-IP rate limits collapse to a single global bucket.
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4 --proxy-headers --forwarded-allow-ips='*'
     ports: !reset []  # do not publish; Caddy proxies /api → backend:8000
     environment:
       COMPREFACE_API_URL: "http://compreface-api:8080,http://compreface-api-2:8080"

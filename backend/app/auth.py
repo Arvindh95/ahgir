@@ -171,6 +171,7 @@ async def get_current_user(
         token_type = payload.get("type")
         if token_type != "access":
             raise InvalidTokenError()
+        token_iat = payload.get("iat")
     except JWTError:
         raise InvalidTokenError()
 
@@ -183,6 +184,12 @@ async def get_current_user(
             status_code=403,
             detail="Account has been disabled"
         )
+
+    # Reject tokens issued before the most recent password change. Stops
+    # outstanding sessions from surviving a password reset or rotation.
+    if user.password_changed_at and token_iat is not None:
+        if datetime.utcfromtimestamp(int(token_iat)) < user.password_changed_at:
+            raise InvalidTokenError()
 
     return user
 
