@@ -75,6 +75,10 @@ class Settings(BaseSettings):
     bulk_download_max_bytes: int = 500 * 1024 * 1024  # 500 MB
     # Per-file upload cap (matches Caddy request_body max_size in prod).
     max_upload_bytes: int = 25 * 1024 * 1024  # 25 MB
+    # Per-frame cap on guest face-scan submissions (decoded bytes).
+    max_scan_frame_bytes: int = 8 * 1024 * 1024  # 8 MB
+    # Total cap across all frames in one scan request.
+    max_scan_total_bytes: int = 25 * 1024 * 1024  # 25 MB
     
     class Config:
         env_file = ".env"

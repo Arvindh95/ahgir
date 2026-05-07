@@ -16,6 +16,7 @@ import string
 import hashlib
 import logging
 import zipfile
+from app.utils.filename import safe_zip_filename
 import queue
 import threading
 from PIL import Image as PILImage, ImageOps
@@ -1334,7 +1335,7 @@ async def admin_download_zip(
                     for image in images:
                         try:
                             photo_bytes = storage_service.get_photo(event_uuid, image.id, "original")
-                            filename = image.filename or f"photo_{image.id}.jpg"
+                            filename = safe_zip_filename(image.filename, f"photo_{image.id}.jpg")
                             zf.writestr(filename, photo_bytes)
                         except Exception as e:
                             logger.error(f"Failed to add image {image.id} to ZIP: {e}")
@@ -1403,7 +1404,7 @@ async def admin_download_all_zip(
                     for image in images:
                         try:
                             photo_bytes = storage_service.get_photo(event_uuid, image.id, "original")
-                            filename = image.filename or f"photo_{image.id}.jpg"
+                            filename = safe_zip_filename(image.filename, f"photo_{image.id}.jpg")
                             zf.writestr(filename, photo_bytes)
                         except Exception as e:
                             logger.error(f"Failed to add image {image.id} to ZIP: {e}")
@@ -1717,7 +1718,7 @@ async def get_event_analytics(
     event = db.query(Event).filter(Event.id == event_uuid).first()
     if not event:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
-    if event.owner_user_id != current_user.id:
+    if not current_user.is_superadmin and event.owner_user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
 
     # Total scans

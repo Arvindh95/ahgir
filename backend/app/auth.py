@@ -84,18 +84,19 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     return bcrypt.checkpw(legacy_input, hashed_bytes)
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
-    """Create a JWT access token"""
+    """Create a JWT access token (Bearer for admin API)."""
     to_encode = data.copy()
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
     else:
         expire = datetime.utcnow() + timedelta(hours=settings.jwt_expiration_hours)
-    
+
     to_encode.update({
         "exp": expire,
-        "iat": datetime.utcnow()
+        "iat": datetime.utcnow(),
+        "type": "access",
     })
-    
+
     encoded_jwt = jwt.encode(to_encode, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
     return encoded_jwt
 
@@ -159,15 +160,20 @@ async def get_current_user(
     from app.exceptions import InvalidTokenError, UserNotFoundError
     
     token = credentials.credentials
-    
+
     try:
         payload = decode_token(token)
         user_id: str = payload.get("sub")
         if user_id is None:
             raise InvalidTokenError()
+        # Reject email_verify / password_reset tokens — they share `sub` with
+        # access tokens but should not authorize protected admin endpoints.
+        token_type = payload.get("type")
+        if token_type != "access":
+            raise InvalidTokenError()
     except JWTError:
         raise InvalidTokenError()
-    
+
     user = db.query(User).filter(User.id == uuid.UUID(user_id)).first()
     if user is None:
         raise UserNotFoundError()
