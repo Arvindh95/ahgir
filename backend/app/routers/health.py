@@ -164,10 +164,9 @@ async def load_metrics(_superadmin=Depends(get_superadmin_user)):
         with engine.connect() as conn:
             row = conn.execute(text("""
                 SELECT
-                    COUNT(*) FILTER (WHERE status = 'pending')                AS pending,
-                    COUNT(*) FILTER (WHERE status = 'failed')                 AS failed,
-                    EXTRACT(EPOCH FROM (NOW() - MIN(uploaded_at))) FILTER
-                        (WHERE status = 'pending')                            AS oldest_pending_age_seconds
+                    COUNT(*) FILTER (WHERE status = 'pending') AS pending,
+                    COUNT(*) FILTER (WHERE status = 'failed')  AS failed,
+                    EXTRACT(EPOCH FROM (NOW() - MIN(uploaded_at) FILTER (WHERE status = 'pending'))) AS oldest_pending_age_seconds
                 FROM images
             """)).fetchone()
             pending = int(row.pending or 0)

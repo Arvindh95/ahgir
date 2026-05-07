@@ -80,7 +80,7 @@ export default function Pricing() {
   return (
     <PublicLayout>
       <Head>
-        <meta name="description" content="PicUr Pricing - Subscription plans for wedding photographers." />
+        <meta name="description" content="PicUr Pricing - Subscription plans for event photographers." />
       </Head>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 md:py-24">
@@ -101,7 +101,7 @@ export default function Pricing() {
               <div className="flex-1">
                 <h3 className="text-lg font-bold mb-1">We&apos;re in beta — your event is on us</h3>
                 <p className="text-sm text-gray-300 mb-3">
-                  PicUr is currently in beta while we test the platform under real wedding traffic.
+                  PicUr is currently in beta while we test the platform under real event traffic.
                   During this period we&apos;re offering <strong className="text-white">free tailor-made event packages</strong> in
                   exchange for honest feedback. Tell us what you need.
                 </p>
@@ -188,7 +188,7 @@ export default function Pricing() {
             <div className="text-xs font-bold text-blue-400 mb-3 tracking-wider">SHOOTING ONE EVENT?</div>
             <h2 className="text-2xl font-bold mb-3">One-time event packages</h2>
             <p className="text-gray-400 mb-6 max-w-xl mx-auto">
-              Photographing a single wedding and don&apos;t need a recurring subscription?
+              Shooting a single event and don&apos;t need a recurring subscription?
               We offer one-time event packages tailored to your photo count and retention needs.
               Contact us with your event details and we&apos;ll send a custom quote.
             </p>

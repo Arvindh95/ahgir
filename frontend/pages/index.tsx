@@ -85,6 +85,17 @@ export default function Home() {
         <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
           <div className="text-center max-w-5xl mx-auto">
             <FadeIn>
+              <Link
+                href="/contact"
+                className="inline-flex items-center gap-2 mb-8 px-4 py-2 rounded-full bg-gradient-to-r from-blue-600/20 to-purple-600/20 border border-blue-500/30 hover:border-blue-400/60 transition-colors text-sm font-medium"
+              >
+                <span className="text-xs font-bold tracking-wider px-2 py-0.5 rounded-full bg-gradient-to-r from-blue-600 to-purple-600 text-white">BETA</span>
+                <span className="text-gray-200">Free tailor-made event packages — contact us</span>
+                <ArrowRight className="w-3.5 h-3.5 text-blue-300" />
+              </Link>
+            </FadeIn>
+
+            <FadeIn>
               <h1 className="text-6xl md:text-8xl font-bold tracking-tight leading-[1.1] mb-8">
                 Find your photos with{' '}
                 <span className="bg-gradient-to-r from-blue-400 via-purple-400 to-blue-400 bg-clip-text text-transparent bg-[length:200%_auto] animate-gradient">
@@ -198,9 +209,9 @@ export default function Home() {
           <FadeInStagger>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8 max-w-5xl mx-auto">
               {[
-                { name: 'Free', price: 'RM 0', period: '', desc: '1 event, 50 photos', highlighted: false },
-                { name: 'Premium', price: 'RM 50', period: 'one-time', desc: '3 events, 300 photos each', highlighted: true },
-                { name: 'Premium+', price: 'RM 100', period: 'one-time', desc: '10 events, 500 photos each', highlighted: false },
+                { name: 'Free', price: '$0', period: '', desc: '1 active event, 50 photos', highlighted: false },
+                { name: 'Starter', price: '$9', period: '/month', desc: '5 active events, 500 photos each', highlighted: true },
+                { name: 'Pro', price: '$29', period: '/month', desc: '20 active events, 2000 photos each', highlighted: false },
               ].map((tier) => (
                 <FadeIn key={tier.name}>
                   <div className={`rounded-2xl p-8 flex flex-col text-center ${
