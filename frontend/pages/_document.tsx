@@ -1,5 +1,9 @@
-import Document, { Html, Head, Main, NextScript, DocumentContext, DocumentInitialProps } from 'next/document'
+import { Html, Head, Main, NextScript } from 'next/document'
 
+// CSP NOTE: the SHA-256 of the rendered TITLE_SCRIPT body is pinned in
+// nginx's Content-Security-Policy script-src. If you change this script,
+// recompute the hash (curl -s https://picur.my/ | python -c "..." or
+// `cat rendered.html | sha256sum`) and update the nginx config.
 const TITLE_SCRIPT = `
 (function(){
   var t={
@@ -42,37 +46,18 @@ const TITLE_SCRIPT = `
 })();
 `;
 
-interface PicUrDocumentProps extends DocumentInitialProps {
-  nonce: string
+export default function Document() {
+  return (
+    <Html lang="en">
+      {/* No <title> here — _app.tsx owns the per-route title. A static
+          default title here would render alongside the dynamic one and
+          browsers would render the first one. */}
+      <Head />
+      <body>
+        <Main />
+        <NextScript />
+        <script dangerouslySetInnerHTML={{ __html: TITLE_SCRIPT }} />
+      </body>
+    </Html>
+  )
 }
-
-class PicUrDocument extends Document<PicUrDocumentProps> {
-  static async getInitialProps(ctx: DocumentContext): Promise<PicUrDocumentProps> {
-    const initialProps = await Document.getInitialProps(ctx)
-    // middleware.ts attaches the nonce per request; default to '' so
-    // dev-server pages without middleware still render (no CSP enforced).
-    const headerNonce = ctx.req?.headers?.['x-nonce']
-    const nonce = typeof headerNonce === 'string' ? headerNonce : ''
-    return { ...initialProps, nonce }
-  }
-
-  render() {
-    const { nonce } = this.props
-    return (
-      <Html lang="en">
-        {/* No <title> here — _app.tsx owns the per-route title. A static
-            default title here would render alongside the dynamic one and
-            browsers would pick the wrong one (the post-build inject-titles
-            hack used to scrub it). */}
-        <Head nonce={nonce} />
-        <body>
-          <Main />
-          <NextScript nonce={nonce} />
-          <script nonce={nonce} dangerouslySetInnerHTML={{ __html: TITLE_SCRIPT }} />
-        </body>
-      </Html>
-    )
-  }
-}
-
-export default PicUrDocument
