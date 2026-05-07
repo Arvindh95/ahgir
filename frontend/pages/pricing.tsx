@@ -1,17 +1,22 @@
 import Head from 'next/head'
 import Link from 'next/link'
+import { useState } from 'react'
 import { Check, ArrowRight } from 'lucide-react'
 import PublicLayout from '@/components/PublicLayout'
 
+type Interval = 'month' | 'year'
+
 const tiers = [
   {
+    key: 'free',
     name: 'Free',
-    price: 'RM 0',
-    period: '',
-    description: 'Perfect for trying out PicUr',
+    monthlyRM: 0,
+    yearlyRM: 0,
+    description: 'Try PicUr with one event',
     features: [
-      '1 event',
+      '1 active event',
       'Up to 50 photos per event',
+      '30-day retention',
       'Face recognition',
       'Guest scanning',
       'Photo downloads',
@@ -21,58 +26,97 @@ const tiers = [
     highlighted: false,
   },
   {
-    name: 'Premium',
-    price: 'RM 50',
-    period: 'one-time',
-    description: 'For photographers managing multiple events',
+    key: 'starter',
+    name: 'Starter',
+    monthlyRM: 39,
+    yearlyRM: 390,
+    description: 'For photographers running a few events at a time',
     features: [
-      'Up to 3 events',
-      'Up to 300 photos per event',
+      '5 active events',
+      'Up to 500 photos per event',
+      '6-month retention',
       'Face recognition',
       'Guest scanning',
       'Photo downloads',
     ],
-    cta: 'Get Started',
-    href: '/admin/register',
+    cta: 'Subscribe',
+    href: '/admin/register?plan=starter',
     highlighted: true,
   },
   {
-    name: 'Premium+',
-    price: 'RM 100',
-    period: 'one-time',
-    description: 'For pros managing many events',
+    key: 'pro',
+    name: 'Pro',
+    monthlyRM: 99,
+    yearlyRM: 990,
+    description: 'For studios managing many events year-round',
     features: [
-      'Up to 10 events',
-      'Up to 500 photos per event',
+      '20 active events',
+      'Up to 2000 photos per event',
+      '1-year retention',
       'Face recognition',
       'Guest scanning',
       'Photo downloads',
+      'Priority indexing',
     ],
-    cta: 'Get Started',
-    href: '/admin/register',
+    cta: 'Subscribe',
+    href: '/admin/register?plan=pro',
     highlighted: false,
   },
 ]
 
 export default function Pricing() {
+  const [interval, setInterval] = useState<Interval>('month')
+
+  const formatPrice = (tier: typeof tiers[0]) => {
+    if (tier.key === 'free') return 'RM 0'
+    return interval === 'year' ? `RM ${tier.yearlyRM}` : `RM ${tier.monthlyRM}`
+  }
+
+  const formatPeriod = (tier: typeof tiers[0]) => {
+    if (tier.key === 'free') return ''
+    return interval === 'year' ? '/year' : '/month'
+  }
+
   return (
     <PublicLayout>
       <Head>
-        <meta name="description" content="PicUr Pricing - Choose the plan that fits your needs." />
+        <meta name="description" content="PicUr Pricing - Subscription plans for wedding photographers." />
       </Head>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 md:py-24">
-        <div className="text-center mb-16">
+        <div className="text-center mb-10">
           <h1 className="text-3xl md:text-4xl font-bold mb-4">Simple, transparent pricing</h1>
           <p className="text-gray-400 text-lg max-w-xl mx-auto">
-            Start free, upgrade your account when you need more events and photos.
+            Pay monthly or save with annual billing. Cancel anytime.
           </p>
+        </div>
+
+        <div className="flex justify-center mb-12">
+          <div className="inline-flex items-center bg-white/5 rounded-full p-1 border border-white/10">
+            <button
+              onClick={() => setInterval('month')}
+              className={`px-5 py-2 rounded-full text-sm font-medium transition-colors ${
+                interval === 'month' ? 'bg-white text-black' : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              Monthly
+            </button>
+            <button
+              onClick={() => setInterval('year')}
+              className={`px-5 py-2 rounded-full text-sm font-medium transition-colors ${
+                interval === 'year' ? 'bg-white text-black' : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              Yearly
+              <span className="ml-2 text-xs text-green-400 font-semibold">Save ~17%</span>
+            </button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8 max-w-5xl mx-auto">
           {tiers.map((tier) => (
             <div
-              key={tier.name}
+              key={tier.key}
               className={`rounded-2xl p-8 flex flex-col ${
                 tier.highlighted
                   ? 'glass-card border-blue-500/30 ring-1 ring-blue-500/20'
@@ -84,8 +128,8 @@ export default function Pricing() {
               )}
               <h3 className="text-xl font-bold mb-1">{tier.name}</h3>
               <div className="flex items-baseline gap-1 mb-2">
-                <span className="text-3xl font-bold">{tier.price}</span>
-                {tier.period && <span className="text-gray-400 text-sm">{tier.period}</span>}
+                <span className="text-3xl font-bold">{formatPrice(tier)}</span>
+                {formatPeriod(tier) && <span className="text-gray-400 text-sm">{formatPeriod(tier)}</span>}
               </div>
               <p className="text-gray-400 text-sm mb-6">{tier.description}</p>
 

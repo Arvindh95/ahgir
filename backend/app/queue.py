@@ -7,7 +7,7 @@ from app.config import settings
 
 # Import worker functions at module level so RQ can serialize them properly
 from app.workers.face_indexer_compreface import index_photo_compreface
-from app.workers.retention_policy import check_and_delete_expired_events
+from app.workers.retention_policy import check_and_delete_expired_events, process_overdue_subscriptions
 from app.email import send_verification_email, send_password_reset_email
 
 logger = logging.getLogger(__name__)
@@ -131,4 +131,15 @@ def enqueue_retention_check() -> str:
         result_ttl='7d'     # Keep results for 7 days
     )
 
+    return job.id
+
+
+def enqueue_subscription_processor() -> str:
+    """Enqueue the subscription past-due grace-period downgrade job."""
+    job = retention_queue.enqueue(
+        process_overdue_subscriptions,
+        job_timeout='10m',
+        failure_ttl='7d',
+        result_ttl='7d',
+    )
     return job.id

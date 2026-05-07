@@ -15,10 +15,18 @@ settings.register_profile("ci", max_examples=20, deadline=5000, suppress_health_
 settings.register_profile("dev", max_examples=10, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
 settings.load_profile(os.getenv("HYPOTHESIS_PROFILE", "ci"))
 
-# Test database URL - use environment variable for host (defaults to localhost for local testing)
+# Test database URL — accept full TEST_DATABASE_URL override, else compose from parts.
+# Hardcoded picur:picur creds work for the docker-compose dev stack but not for
+# environments where the postgres password is randomized.
 DB_HOST = os.getenv("POSTGRES_HOST", "postgres")
 DB_PORT = os.getenv("POSTGRES_PORT", "5432")
-TEST_DATABASE_URL = f"postgresql://picur:picur@{DB_HOST}:{DB_PORT}/picur_test"
+DB_USER = os.getenv("POSTGRES_USER", "picur")
+DB_PASS = os.getenv("POSTGRES_PASSWORD", "picur")
+DB_NAME = os.getenv("POSTGRES_TEST_DB", "picur_test")
+TEST_DATABASE_URL = os.getenv(
+    "TEST_DATABASE_URL",
+    f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}",
+)
 
 # Test Redis URL
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")

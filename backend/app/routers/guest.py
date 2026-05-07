@@ -8,6 +8,7 @@ from pydantic import BaseModel
 import uuid
 import base64
 import logging
+from app.utils.filename import safe_zip_filename
 import zipfile
 import queue
 import threading
@@ -405,21 +406,45 @@ async def scan_face(
             detail="Event not found"
         )
 
-    # Decode base64 images (handle data URL format)
+    # Decode base64 images (handle data URL format) with per-frame size cap.
+    # Without this cap a guest can send arbitrarily large base64 strings and
+    # exhaust memory or saturate the CompreFace upstream — Caddyfile.prod has
+    # no body cap, and direct backend access in dev also bypasses any proxy.
+    max_b64 = settings.max_scan_frame_bytes * 4 // 3 + 16  # base64 inflation factor
+    max_total = settings.max_scan_total_bytes
+
     def _decode_frame(data: str) -> bytes:
+        if not isinstance(data, str):
+            raise ValueError("frame must be a string")
+        if len(data) > max_b64:
+            raise ValueError(f"frame exceeds {settings.max_scan_frame_bytes} bytes")
         if data.startswith('data:'):
-            data = data.split(',')[1]
-        return base64.b64decode(data)
+            comma = data.find(',')
+            if comma == -1:
+                raise ValueError("invalid data URL")
+            data = data[comma + 1:]
+        decoded = base64.b64decode(data, validate=False)
+        if len(decoded) > settings.max_scan_frame_bytes:
+            raise ValueError(f"frame exceeds {settings.max_scan_frame_bytes} bytes")
+        return decoded
 
     try:
         all_frames = [_decode_frame(scan_request.image)]
+        running_total = len(all_frames[0])
         if scan_request.additional_frames:
             for frame_data in scan_request.additional_frames[:4]:  # Max 5 total frames
                 try:
-                    all_frames.append(_decode_frame(frame_data))
+                    decoded = _decode_frame(frame_data)
                 except Exception:
-                    pass  # Skip invalid frames
-        logger.info(f"Received {len(all_frames)} scan frames")
+                    continue  # Skip invalid frames
+                if running_total + len(decoded) > max_total:
+                    logger.warning("Scan request truncated: total frame size exceeds cap")
+                    break
+                all_frames.append(decoded)
+                running_total += len(decoded)
+        logger.info(f"Received {len(all_frames)} scan frames, {running_total} bytes")
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to decode image: {e}")
         raise HTTPException(
@@ -530,7 +555,7 @@ async def download_zip(
                     for image in images:
                         try:
                             photo_bytes = storage_service.get_photo(event_id, image.id, "original")
-                            filename = image.filename or f"photo_{image.id}.jpg"
+                            filename = safe_zip_filename(image.filename, f"photo_{image.id}.jpg")
                             zf.writestr(filename, photo_bytes)
                         except Exception as e:
                             logger.error(f"Failed to add image {image.id} to ZIP: {e}")

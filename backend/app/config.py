@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     jwt_expiration_hours: int = 24
     
     # Face Recognition
-    face_similarity_threshold: float = 0.85
+    face_similarity_threshold: float = 0.90
     face_min_detection_probability: float = 0.7
     face_min_crop_pixels: int = 80
 
@@ -49,6 +49,14 @@ class Settings(BaseSettings):
     stripe_secret_key: str = ""
     stripe_publishable_key: str = ""
     stripe_webhook_secret: str = ""
+    # Stripe Price IDs (created by scripts/setup_stripe_products.py)
+    stripe_price_starter_monthly: str = ""
+    stripe_price_starter_yearly: str = ""
+    stripe_price_pro_monthly: str = ""
+    stripe_price_pro_yearly: str = ""
+
+    # Subscription grace period before downgrade-to-free after payment failure
+    subscription_grace_period_days: int = 3
 
     # CORS
     cors_origins: str = "http://localhost:3000"  # Comma-separated; set to "https://picur.my" in production
@@ -67,6 +75,10 @@ class Settings(BaseSettings):
     bulk_download_max_bytes: int = 500 * 1024 * 1024  # 500 MB
     # Per-file upload cap (matches Caddy request_body max_size in prod).
     max_upload_bytes: int = 25 * 1024 * 1024  # 25 MB
+    # Per-frame cap on guest face-scan submissions (decoded bytes).
+    max_scan_frame_bytes: int = 8 * 1024 * 1024  # 8 MB
+    # Total cap across all frames in one scan request.
+    max_scan_total_bytes: int = 25 * 1024 * 1024  # 25 MB
     
     class Config:
         env_file = ".env"

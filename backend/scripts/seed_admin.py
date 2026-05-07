@@ -43,15 +43,15 @@ def main():
         if not ut:
             db.add(UserTier(
                 user_id=user_id,
-                tier_name="premium_plus",
-                max_events=10,
-                max_photos_per_event=500,
-                price_cents=10000,
+                tier_name="pro",
+                max_events=20,
+                max_photos_per_event=2000,
+                price_cents=9900,
                 is_active=True,
                 activated_at=datetime.utcnow(),
             ))
             db.commit()
-            print("Attached premium_plus tier")
+            print("Attached pro tier")
 
         print()
         print(f"Login at http://localhost:3000/admin/login")

@@ -9,10 +9,11 @@ from sqlalchemy import func, text
 import httpx
 
 from app.database import SessionLocal
-from app.models import Event, Image, Face
+from app.models import Event, Image, Face, UserTier
 from app.storage import storage_service
 from app.audit import log_action
 from app.config import settings, get_compreface_url
+from app.tiers import TIER_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +134,80 @@ def check_and_delete_expired_events(db: Session = None):
             db.close()
 
 
+def process_overdue_subscriptions(db: Session = None):
+    """Downgrade subscriptions that exceeded the payment-failure grace period.
+
+    Stripe sends customer.subscription.deleted on hard-cancel, but past_due
+    subscriptions sit in limbo. After grace_period_days past current_period_end
+    we drop the user back to free and freeze excess events.
+
+    Run daily alongside event retention.
+    """
+    db_provided = db is not None
+    if not db_provided:
+        db = SessionLocal()
+
+    grace = timedelta(days=settings.subscription_grace_period_days)
+    cutoff = datetime.utcnow() - grace
+    downgraded = 0
+
+    try:
+        overdue = (
+            db.query(UserTier)
+            .filter(
+                UserTier.subscription_status == "past_due",
+                UserTier.current_period_end.isnot(None),
+                UserTier.current_period_end < cutoff,
+            )
+            .all()
+        )
+
+        for ut in overdue:
+            try:
+                cfg = TIER_CONFIG["free"]
+                ut.tier_name = "free"
+                ut.max_events = cfg["max_events"]
+                ut.max_photos_per_event = cfg["max_photos_per_event"]
+                ut.retention_days = cfg["retention_days"]
+                ut.price_cents = 0
+                ut.subscription_status = None
+                ut.stripe_subscription_id = None
+                ut.billing_interval = None
+                ut.current_period_end = None
+                ut.cancel_at_period_end = False
+
+                # Freeze excess active events down to free-tier cap
+                from sqlalchemy import asc
+                active = (
+                    db.query(Event)
+                    .filter(Event.owner_user_id == ut.user_id, Event.status == "active")
+                    .order_by(asc(Event.created_at))
+                    .all()
+                )
+                excess = max(0, len(active) - cfg["max_events"])
+                for ev in active[:excess]:
+                    ev.status = "frozen"
+
+                if not db_provided:
+                    db.commit()
+                else:
+                    db.flush()
+                downgraded += 1
+                logger.info(f"Subscription grace period exceeded - user {ut.user_id} downgraded to free, froze {excess} events")
+            except Exception as e:
+                if not db_provided:
+                    db.rollback()
+                logger.error(f"Failed to downgrade user {ut.user_id}: {e}")
+                continue
+
+        logger.info(f"Subscription processor completed. Downgraded {downgraded} users.")
+        return downgraded
+    finally:
+        if not db_provided:
+            db.close()
+
+
 if __name__ == "__main__":
     # Allow running this script directly for testing
     check_and_delete_expired_events()
+    process_overdue_subscriptions()

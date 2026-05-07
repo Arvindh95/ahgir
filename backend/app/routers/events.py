@@ -16,6 +16,7 @@ import string
 import hashlib
 import logging
 import zipfile
+from app.utils.filename import safe_zip_filename
 import queue
 import threading
 from PIL import Image as PILImage, ImageOps
@@ -65,6 +66,7 @@ class EventListItem(BaseModel):
     photo_count: int
     indexed_count: int
     face_count: int
+    event_status: str = 'active'  # active, frozen, expired
     created_at: datetime
 
 class EventListResponse(BaseModel):
@@ -102,6 +104,7 @@ class EventDetailResponse(BaseModel):
     cover_image_url: Optional[str] = None
     allow_downloads: bool
     retention_days: int
+    event_status: str = 'active'  # active, frozen, expired
     status: EventStatusResponse
     tier: Optional[EventTierInfo] = None
     user_tier: Optional[UserTierInfo] = None
@@ -231,8 +234,11 @@ async def create_event(
             )
 
         limits = get_effective_limits(user_tier)
+        # Only count active events - frozen events from a prior downgrade
+        # don't occupy a slot (they're read-only and unfreeze on upgrade).
         current_event_count = db.query(func.count(Event.id)).filter(
-            Event.owner_user_id == current_user.id
+            Event.owner_user_id == current_user.id,
+            Event.status == 'active',
         ).scalar() or 0
 
         if current_event_count >= limits["max_events"]:
@@ -240,12 +246,18 @@ async def create_event(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail={
                     "code": "EVENT_LIMIT_REACHED",
-                    "message": f"You have reached the maximum of {limits['max_events']} event(s) on the {limits['tier_name']} tier. Upgrade to create more events.",
+                    "message": f"You have reached the maximum of {limits['max_events']} active event(s) on the {limits['tier_name']} tier. Upgrade to create more events.",
                     "current_count": current_event_count,
                     "max_events": limits["max_events"],
                     "tier": limits["tier_name"],
                 }
             )
+
+        # Clamp per-event retention to tier ceiling. Photographer can set a
+        # shorter retention but cannot exceed the tier's limit.
+        tier_retention = limits.get("retention_days") or 30
+        if event_data.retention_days > tier_retention:
+            event_data.retention_days = tier_retention
 
     # Generate unique slug
     slug = generate_slug(event_data.name, db)
@@ -356,6 +368,7 @@ async def list_events(
             photo_count=photo_count,
             indexed_count=indexed_count,
             face_count=face_count,
+            event_status=event.status or 'active',
             created_at=event.created_at
         ))
     
@@ -445,6 +458,7 @@ async def get_event(
         cover_image_url=cover_image_url,
         allow_downloads=event.allow_downloads,
         retention_days=event.retention_days,
+        event_status=event.status or 'active',
         status=status_info,
         tier=tier_info,
         user_tier=user_tier_info,
@@ -752,6 +766,18 @@ async def upload_photos(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have permission to upload photos to this event"
+        )
+
+    # Frozen events are read-only. Caused by tier downgrade where active-event
+    # quota dropped below current count - oldest events freeze. Upgrade or
+    # delete a newer event to reactivate.
+    if not current_user.is_superadmin and event.status == 'frozen':
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "EVENT_FROZEN",
+                "message": "This event is frozen because your subscription doesn't cover this many active events. Upgrade or delete a newer event to reactivate.",
+            }
         )
 
     # Quota enforcement (superadmin bypasses).
@@ -1309,7 +1335,7 @@ async def admin_download_zip(
                     for image in images:
                         try:
                             photo_bytes = storage_service.get_photo(event_uuid, image.id, "original")
-                            filename = image.filename or f"photo_{image.id}.jpg"
+                            filename = safe_zip_filename(image.filename, f"photo_{image.id}.jpg")
                             zf.writestr(filename, photo_bytes)
                         except Exception as e:
                             logger.error(f"Failed to add image {image.id} to ZIP: {e}")
@@ -1378,7 +1404,7 @@ async def admin_download_all_zip(
                     for image in images:
                         try:
                             photo_bytes = storage_service.get_photo(event_uuid, image.id, "original")
-                            filename = image.filename or f"photo_{image.id}.jpg"
+                            filename = safe_zip_filename(image.filename, f"photo_{image.id}.jpg")
                             zf.writestr(filename, photo_bytes)
                         except Exception as e:
                             logger.error(f"Failed to add image {image.id} to ZIP: {e}")
@@ -1442,6 +1468,15 @@ async def reindex_event(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have permission to reindex this event"
+        )
+
+    if not current_user.is_superadmin and event.status == 'frozen':
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "EVENT_FROZEN",
+                "message": "This event is frozen. Upgrade or delete a newer event to reactivate.",
+            }
         )
 
     # Get all images for this event
@@ -1683,7 +1718,7 @@ async def get_event_analytics(
     event = db.query(Event).filter(Event.id == event_uuid).first()
     if not event:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
-    if event.owner_user_id != current_user.id:
+    if not current_user.is_superadmin and event.owner_user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
 
     # Total scans
