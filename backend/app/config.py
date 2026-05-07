@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     jwt_expiration_hours: int = 24
     
     # Face Recognition
-    face_similarity_threshold: float = 0.85
+    face_similarity_threshold: float = 0.90
     face_min_detection_probability: float = 0.7
     face_min_crop_pixels: int = 80
 
