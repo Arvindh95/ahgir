@@ -51,7 +51,7 @@ class UserUpdateRequest(BaseModel):
 
 
 class UserTierUpdateRequest(BaseModel):
-    tier_name: str  # free, premium, premium_plus, custom
+    tier_name: str  # free, starter, pro, custom
     max_events: Optional[int] = None
     max_photos_per_event: Optional[int] = None
 
@@ -172,11 +172,9 @@ async def update_user_tier(
     if update.tier_name not in valid_tiers:
         raise HTTPException(status_code=400, detail=f"Invalid tier. Must be one of: {valid_tiers}")
 
-    # Determine limits.
-    # NOTE: Named tiers (free/premium/premium_plus) read limits from TIER_CONFIG at runtime
-    # (see tiers.get_effective_limits). Per-row overrides on named tiers are ignored on
-    # read, so reject them at write time to prevent silent no-ops. To customize a user's
-    # limits, set tier_name='custom'.
+    # Named tiers (free/starter/pro) read limits from TIER_CONFIG at runtime via
+    # tiers.get_effective_limits. Per-row overrides on named tiers are ignored on
+    # read, so reject them at write time. Use tier_name='custom' for overrides.
     if update.tier_name == "custom":
         if not update.max_events or not update.max_photos_per_event:
             raise HTTPException(status_code=400, detail="max_events and max_photos_per_event are required for custom tier")
@@ -193,7 +191,7 @@ async def update_user_tier(
         tier_config = TIER_CONFIG[update.tier_name]
         max_events = tier_config["max_events"]
         max_photos = tier_config["max_photos_per_event"]
-        price_cents = tier_config["price_cents"]
+        price_cents = tier_config.get("monthly_cents", 0)
 
     user_tier = db.query(UserTier).filter(UserTier.user_id == target_uuid).first()
     if user_tier:

@@ -100,6 +100,20 @@ def get_effective_limits(user_tier) -> dict:
     }
 
 
+def get_active_event_count(db, user_id) -> int:
+    """Count events that occupy a user's active-event slots.
+
+    Frozen and expired events do NOT count - they're read-only / pending purge,
+    so downgrading freezes excess events instead of blocking the downgrade.
+    """
+    from app.models import Event
+    from sqlalchemy import func
+    return db.query(func.count(Event.id)).filter(
+        Event.owner_user_id == user_id,
+        Event.status == 'active',
+    ).scalar() or 0
+
+
 def is_subscription_active(user_tier) -> bool:
     """True when the subscription entitles the user to paid-tier limits.
 

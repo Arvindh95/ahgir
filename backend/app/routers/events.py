@@ -231,8 +231,11 @@ async def create_event(
             )
 
         limits = get_effective_limits(user_tier)
+        # Only count active events - frozen events from a prior downgrade
+        # don't occupy a slot (they're read-only and unfreeze on upgrade).
         current_event_count = db.query(func.count(Event.id)).filter(
-            Event.owner_user_id == current_user.id
+            Event.owner_user_id == current_user.id,
+            Event.status == 'active',
         ).scalar() or 0
 
         if current_event_count >= limits["max_events"]:
@@ -240,7 +243,7 @@ async def create_event(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail={
                     "code": "EVENT_LIMIT_REACHED",
-                    "message": f"You have reached the maximum of {limits['max_events']} event(s) on the {limits['tier_name']} tier. Upgrade to create more events.",
+                    "message": f"You have reached the maximum of {limits['max_events']} active event(s) on the {limits['tier_name']} tier. Upgrade to create more events.",
                     "current_count": current_event_count,
                     "max_events": limits["max_events"],
                     "tier": limits["tier_name"],
@@ -752,6 +755,18 @@ async def upload_photos(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have permission to upload photos to this event"
+        )
+
+    # Frozen events are read-only. Caused by tier downgrade where active-event
+    # quota dropped below current count - oldest events freeze. Upgrade or
+    # delete a newer event to reactivate.
+    if not current_user.is_superadmin and event.status == 'frozen':
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "EVENT_FROZEN",
+                "message": "This event is frozen because your subscription doesn't cover this many active events. Upgrade or delete a newer event to reactivate.",
+            }
         )
 
     # Quota enforcement (superadmin bypasses).
@@ -1442,6 +1457,15 @@ async def reindex_event(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have permission to reindex this event"
+        )
+
+    if not current_user.is_superadmin and event.status == 'frozen':
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "EVENT_FROZEN",
+                "message": "This event is frozen. Upgrade or delete a newer event to reactivate.",
+            }
         )
 
     # Get all images for this event
