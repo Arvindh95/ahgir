@@ -60,9 +60,11 @@ class PicUrDocument extends Document<PicUrDocumentProps> {
     const { nonce } = this.props
     return (
       <Html lang="en">
-        <Head nonce={nonce}>
-          <title>PicUr</title>
-        </Head>
+        {/* No <title> here — _app.tsx owns the per-route title. A static
+            default title here would render alongside the dynamic one and
+            browsers would pick the wrong one (the post-build inject-titles
+            hack used to scrub it). */}
+        <Head nonce={nonce} />
         <body>
           <Main />
           <NextScript nonce={nonce} />

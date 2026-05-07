@@ -19,7 +19,7 @@ ARG NEXT_PUBLIC_API_URL=http://localhost:8000
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 
 # Build for production (used when command is 'npm start')
-RUN if [ "$BUILD_ENV" = "production" ]; then npm run build && node scripts/inject-titles.js; fi
+RUN if [ "$BUILD_ENV" = "production" ]; then npm run build; fi
 
 # Expose port
 EXPOSE 3000
