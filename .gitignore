@@ -8,7 +8,10 @@ __pycache__/
 .hypothesis/
 DEPLOYMENT.md
 .claude/
+.codex/
+AGENTS.md
 LOCAL_DEV_CREDS.md
 CERT_KEY.md
+VPS_CREDS.md
 graphify-out/
 .graphify_python
