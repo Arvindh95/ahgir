@@ -41,10 +41,14 @@ class CompreFaceClient:
                 if response.status_code != 200:
                     return False
 
-                # Detection uses a separate service/key. Send a tiny valid JPEG
-                # so missing/invalid detection credentials fail health checks.
+                # Detection uses a separate service/key. Send a valid JPEG so
+                # the request is authenticated end-to-end. CompreFace returns
+                # 400 with code 28 ("No face is found") for a blank probe —
+                # that still proves the API key is accepted and the service
+                # is responsive. Treat anything that isn't an auth failure
+                # or 5xx as healthy.
                 probe = BytesIO()
-                PILImage.new("RGB", (32, 32), "white").save(probe, format="JPEG")
+                PILImage.new("RGB", (200, 200), "white").save(probe, format="JPEG")
                 probe.seek(0)
                 detection_response = await client.post(
                     f"{get_compreface_url()}/api/v1/detection/detect",
@@ -52,7 +56,13 @@ class CompreFaceClient:
                     files={"file": ("health.jpg", probe.getvalue(), "image/jpeg")},
                     params={"det_prob_threshold": 0.5},
                 )
-                return detection_response.status_code == 200
+                if detection_response.status_code in (401, 403):
+                    logger.error(
+                        "CompreFace detection auth failed (HTTP %s) — check COMPREFACE_DETECTION_API_KEY",
+                        detection_response.status_code,
+                    )
+                    return False
+                return detection_response.status_code < 500
         except Exception as e:
             logger.error(f"CompreFace health check failed: {e}")
             return False
