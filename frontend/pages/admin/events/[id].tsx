@@ -209,6 +209,24 @@ export default function EventDetailsPage() {
             { label: 'Events', href: '/admin/events' },
             { label: event.name },
           ]} />
+          {event.event_status === 'frozen' && (
+            <div className="mb-6 p-4 rounded-xl bg-orange-500/10 border border-orange-500/20 text-orange-300 flex items-start gap-3">
+              <div className="text-2xl">❄️</div>
+              <div className="flex-1">
+                <div className="font-semibold text-orange-200">This event is frozen</div>
+                <p className="text-sm mt-1 text-orange-300/80">
+                  Your subscription doesn&apos;t cover this many active events. Guests can still view existing photos,
+                  but uploads and reindexing are disabled. Upgrade your plan or delete a newer event to reactivate.
+                </p>
+                <a
+                  href="/admin/billing"
+                  className="inline-flex items-center gap-1 mt-2 text-sm font-semibold text-orange-200 hover:text-white"
+                >
+                  Manage subscription →
+                </a>
+              </div>
+            </div>
+          )}
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
             <h1 className="text-3xl font-bold">{event.name}</h1>
 

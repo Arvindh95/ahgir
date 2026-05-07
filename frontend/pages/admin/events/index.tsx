@@ -144,20 +144,20 @@ export default function EventsPage() {
               <h1 className="text-3xl font-bold">My Events</h1>
               {userTier && (
                 <p className="text-sm text-gray-400 mt-1">
-                  {userTier.events_used} / {userTier.max_events} events used
+                  {userTier.active_events} / {userTier.max_events} active events
                   <span className={`ml-2 px-2 py-0.5 rounded text-xs font-bold uppercase ${
                     userTier.tier_name === 'free' ? 'bg-gray-500/20 text-gray-400' :
-                    userTier.tier_name === 'premium' ? 'bg-blue-500/20 text-blue-400' :
-                    userTier.tier_name === 'premium_plus' ? 'bg-purple-500/20 text-purple-400' :
+                    userTier.tier_name === 'starter' ? 'bg-blue-500/20 text-blue-400' :
+                    userTier.tier_name === 'pro' ? 'bg-purple-500/20 text-purple-400' :
                     'bg-yellow-500/20 text-yellow-400'
                   }`}>
-                    {userTier.tier_name === 'premium_plus' ? 'Premium+' : userTier.tier_name}
+                    {userTier.tier_name}
                   </span>
                 </p>
               )}
             </div>
             <div className="flex gap-2">
-              {userTier && userTier.events_used >= userTier.max_events && userTier.tier_name !== 'premium_plus' && userTier.tier_name !== 'custom' && (
+              {userTier && userTier.active_events >= userTier.max_events && userTier.tier_name !== 'pro' && userTier.tier_name !== 'custom' && (
                 <button
                   onClick={() => setShowUpgradeModal(true)}
                   className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-blue-700 transition-colors"
@@ -168,7 +168,7 @@ export default function EventsPage() {
               )}
               <button
                 onClick={() => {
-                  if (userTier && userTier.events_used >= userTier.max_events) {
+                  if (userTier && userTier.active_events >= userTier.max_events) {
                     setShowUpgradeModal(true)
                   } else {
                     router.push('/admin/events/create')

@@ -65,6 +65,7 @@ class EventListItem(BaseModel):
     photo_count: int
     indexed_count: int
     face_count: int
+    event_status: str = 'active'  # active, frozen, expired
     created_at: datetime
 
 class EventListResponse(BaseModel):
@@ -102,6 +103,7 @@ class EventDetailResponse(BaseModel):
     cover_image_url: Optional[str] = None
     allow_downloads: bool
     retention_days: int
+    event_status: str = 'active'  # active, frozen, expired
     status: EventStatusResponse
     tier: Optional[EventTierInfo] = None
     user_tier: Optional[UserTierInfo] = None
@@ -359,6 +361,7 @@ async def list_events(
             photo_count=photo_count,
             indexed_count=indexed_count,
             face_count=face_count,
+            event_status=event.status or 'active',
             created_at=event.created_at
         ))
     
@@ -448,6 +451,7 @@ async def get_event(
         cover_image_url=cover_image_url,
         allow_downloads=event.allow_downloads,
         retention_days=event.retention_days,
+        event_status=event.status or 'active',
         status=status_info,
         tier=tier_info,
         user_tier=user_tier_info,

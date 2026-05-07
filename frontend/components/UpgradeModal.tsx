@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { X, Loader2, Zap, Check } from 'lucide-react'
-import { paymentService } from '@/lib/payments'
+import { paymentService, BillingInterval } from '@/lib/payments'
 
 interface UpgradeModalProps {
   open: boolean
@@ -10,34 +10,34 @@ interface UpgradeModalProps {
 
 const UPGRADE_TIERS = [
   {
-    key: 'premium',
-    name: 'Premium',
-    price_cents: 5000,
-    events: '3',
-    photos: '300',
-    features: ['Up to 3 events', 'Up to 300 photos per event', 'Face recognition', 'Guest scanning'],
+    key: 'starter' as const,
+    name: 'Starter',
+    monthly_cents: 3900,
+    yearly_cents: 39000,
+    events: '5',
+    photos: '500',
+    retention: '6 months',
+    features: ['5 active events', 'Up to 500 photos per event', '6-month retention', 'Face recognition', 'Guest scanning'],
     popular: true,
   },
   {
-    key: 'premium_plus',
-    name: 'Premium+',
-    price_cents: 10000,
-    events: '10',
-    photos: '500',
-    features: ['Up to 10 events', 'Up to 500 photos per event', 'Face recognition', 'Guest scanning'],
+    key: 'pro' as const,
+    name: 'Pro',
+    monthly_cents: 9900,
+    yearly_cents: 99000,
+    events: '20',
+    photos: '2000',
+    retention: '1 year',
+    features: ['20 active events', 'Up to 2000 photos per event', '1-year retention', 'Face recognition', 'Guest scanning', 'Priority indexing'],
   },
 ]
 
-const TIER_ORDER = ['free', 'premium', 'premium_plus']
-
-function getUpgradePrice(currentTier: string, targetTier: string): number {
-  const prices: Record<string, number> = { free: 0, premium: 5000, premium_plus: 10000 }
-  return (prices[targetTier] || 0) - (prices[currentTier] || 0)
-}
+const TIER_ORDER = ['free', 'starter', 'pro']
 
 export default function UpgradeModal({ open, currentTier, onClose }: UpgradeModalProps) {
   const [isLoading, setIsLoading] = useState<string | null>(null)
   const [error, setError] = useState('')
+  const [interval, setInterval] = useState<BillingInterval>('month')
 
   if (!open) return null
 
@@ -47,14 +47,25 @@ export default function UpgradeModal({ open, currentTier, onClose }: UpgradeModa
     return targetIdx > currentIdx
   })
 
-  const handleUpgrade = async (tierName: string) => {
+  const handleUpgrade = async (tierName: 'starter' | 'pro') => {
     try {
       setIsLoading(tierName)
       setError('')
-      const result = await paymentService.createCheckout(tierName)
+      const result = await paymentService.createCheckout(tierName, interval)
       window.location.href = result.checkout_url
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to start checkout')
+      const detail = err.response?.data?.detail
+      if (typeof detail === 'object' && detail?.code === 'ALREADY_SUBSCRIBED') {
+        try {
+          const portal = await paymentService.openPortal()
+          window.location.href = portal.portal_url
+          return
+        } catch {
+          setError('You already have an active subscription. Open billing settings to change plan.')
+        }
+      } else {
+        setError(typeof detail === 'string' ? detail : detail?.message || 'Failed to start checkout')
+      }
       setIsLoading(null)
     }
   }
@@ -72,12 +83,34 @@ export default function UpgradeModal({ open, currentTier, onClose }: UpgradeModa
           <X className="w-5 h-5 text-gray-400" />
         </button>
 
-        <div className="text-center mb-8">
+        <div className="text-center mb-6">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/20 text-blue-400 text-sm font-medium mb-4">
             <Zap className="w-4 h-4" /> Upgrade Account
           </div>
-          <h2 className="text-2xl font-bold">Unlock more events & photos</h2>
-          <p className="text-gray-400 mt-2">Choose a plan to increase your limits</p>
+          <h2 className="text-2xl font-bold">Unlock more active events</h2>
+          <p className="text-gray-400 mt-2">Subscribe monthly or yearly. Cancel anytime.</p>
+        </div>
+
+        <div className="flex justify-center mb-6">
+          <div className="inline-flex items-center bg-white/5 rounded-full p-1 border border-white/10">
+            <button
+              onClick={() => setInterval('month')}
+              className={`px-4 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                interval === 'month' ? 'bg-white text-black' : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              Monthly
+            </button>
+            <button
+              onClick={() => setInterval('year')}
+              className={`px-4 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                interval === 'year' ? 'bg-white text-black' : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              Yearly
+              <span className="ml-1.5 text-[10px] text-green-400 font-semibold">-17%</span>
+            </button>
+          </div>
         </div>
 
         {error && (
@@ -88,7 +121,8 @@ export default function UpgradeModal({ open, currentTier, onClose }: UpgradeModa
 
         <div className={`grid gap-4 ${availableTiers.length === 1 ? 'max-w-sm mx-auto' : 'grid-cols-1 md:grid-cols-2'}`}>
           {availableTiers.map((tier) => {
-            const price = getUpgradePrice(currentTier, tier.key)
+            const cents = interval === 'year' ? tier.yearly_cents : tier.monthly_cents
+            const period = interval === 'year' ? '/year' : '/month'
             return (
               <div
                 key={tier.key}
@@ -103,8 +137,8 @@ export default function UpgradeModal({ open, currentTier, onClose }: UpgradeModa
                 )}
                 <h3 className="text-lg font-bold">{tier.name}</h3>
                 <div className="flex items-baseline gap-1 mt-1 mb-4">
-                  <span className="text-3xl font-bold">RM {price / 100}</span>
-                  <span className="text-gray-400 text-sm">one-time</span>
+                  <span className="text-3xl font-bold">RM {cents / 100}</span>
+                  <span className="text-gray-400 text-sm">{period}</span>
                 </div>
 
                 <ul className="space-y-2 mb-6">
@@ -127,10 +161,10 @@ export default function UpgradeModal({ open, currentTier, onClose }: UpgradeModa
                 >
                   {isLoading === tier.key ? (
                     <span className="flex items-center justify-center gap-2">
-                      <Loader2 className="w-4 h-4 animate-spin" /> Redirecting to payment...
+                      <Loader2 className="w-4 h-4 animate-spin" /> Redirecting to checkout...
                     </span>
                   ) : (
-                    `Upgrade to ${tier.name}`
+                    `Subscribe to ${tier.name}`
                   )}
                 </button>
               </div>
@@ -139,7 +173,7 @@ export default function UpgradeModal({ open, currentTier, onClose }: UpgradeModa
         </div>
 
         <p className="text-xs text-gray-500 text-center mt-6">
-          Secure payment powered by Stripe. One-time payment per account.
+          Secure billing powered by Stripe. Cancel anytime from the billing portal.
         </p>
       </div>
     </div>

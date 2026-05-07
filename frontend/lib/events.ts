@@ -10,6 +10,7 @@ export interface Event {
   owner_user_id: string
   allow_downloads: boolean
   retention_days: number
+  event_status?: 'active' | 'frozen' | 'expired'
   created_at: string
   photo_count?: number
   indexed_count?: number
