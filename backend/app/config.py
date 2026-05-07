@@ -49,6 +49,14 @@ class Settings(BaseSettings):
     stripe_secret_key: str = ""
     stripe_publishable_key: str = ""
     stripe_webhook_secret: str = ""
+    # Stripe Price IDs (created by scripts/setup_stripe_products.py)
+    stripe_price_starter_monthly: str = ""
+    stripe_price_starter_yearly: str = ""
+    stripe_price_pro_monthly: str = ""
+    stripe_price_pro_yearly: str = ""
+
+    # Subscription grace period before downgrade-to-free after payment failure
+    subscription_grace_period_days: int = 3
 
     # CORS
     cors_origins: str = "http://localhost:3000"  # Comma-separated; set to "https://picur.my" in production

@@ -37,6 +37,7 @@ class Event(Base):
     cover_image = Column(String(500), nullable=True)  # MinIO object key for cover image
     allow_downloads = Column(Boolean, default=True, nullable=False)
     retention_days = Column(Integer, default=90, nullable=False)
+    status = Column(String(20), default='active', nullable=False, index=True)  # active, frozen, expired
     created_at = Column(TIMESTAMP, server_default=func.now(), nullable=False)
     updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now(), nullable=False)
     
@@ -131,13 +132,23 @@ class UserTier(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
-    tier_name = Column(String(50), nullable=False, default="free")  # free, premium, premium_plus, custom
-    max_events = Column(Integer, nullable=False, default=1)
+    tier_name = Column(String(50), nullable=False, default="free")  # free, starter, pro, custom
+    max_events = Column(Integer, nullable=False, default=1)  # max active events
     max_photos_per_event = Column(Integer, nullable=False, default=50)
+    retention_days = Column(Integer, nullable=True)  # tier-level retention (custom override)
     price_cents = Column(Integer, nullable=False, default=0)
     currency = Column(String(3), nullable=False, default="myr")
     is_active = Column(Boolean, default=True, nullable=False)
     activated_at = Column(TIMESTAMP, nullable=True)
+
+    # Subscription state
+    stripe_customer_id = Column(String(255), nullable=True, index=True)
+    stripe_subscription_id = Column(String(255), nullable=True, index=True)
+    subscription_status = Column(String(30), nullable=True)
+    billing_interval = Column(String(10), nullable=True)  # month, year
+    current_period_end = Column(TIMESTAMP, nullable=True)
+    cancel_at_period_end = Column(Boolean, nullable=False, default=False)
+
     created_at = Column(TIMESTAMP, server_default=func.now(), nullable=False)
     updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -145,7 +156,16 @@ class UserTier(Base):
     user = relationship("User", back_populates="user_tier")
 
     __table_args__ = (
-        CheckConstraint("tier_name IN ('free', 'premium', 'premium_plus', 'custom')", name="valid_user_tier_name"),
+        CheckConstraint("tier_name IN ('free', 'starter', 'pro', 'custom')", name="valid_user_tier_name"),
+        CheckConstraint(
+            "subscription_status IS NULL OR subscription_status IN "
+            "('active', 'trialing', 'past_due', 'canceled', 'incomplete', 'incomplete_expired', 'unpaid', 'paused')",
+            name="valid_subscription_status",
+        ),
+        CheckConstraint(
+            "billing_interval IS NULL OR billing_interval IN ('month', 'year')",
+            name="valid_billing_interval",
+        ),
         {"schema": None}
     )
 
@@ -180,8 +200,11 @@ class Payment(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     tier_name = Column(String(50), nullable=True)  # what tier was purchased
-    stripe_checkout_session_id = Column(String(255), unique=True, nullable=False, index=True)
+    stripe_checkout_session_id = Column(String(255), unique=True, nullable=True, index=True)
     stripe_payment_intent_id = Column(String(255), unique=True, nullable=True, index=True)
+    stripe_invoice_id = Column(String(255), nullable=True, index=True)
+    stripe_subscription_id = Column(String(255), nullable=True, index=True)
+    billing_interval = Column(String(10), nullable=True)
     amount_cents = Column(Integer, nullable=False)
     currency = Column(String(3), nullable=False, default="myr")
     status = Column(String(30), nullable=False, default="pending")  # pending, completed, failed, refunded
