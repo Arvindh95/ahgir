@@ -66,11 +66,12 @@ def find_or_create_price(product_id: str, unit_amount: int, currency: str, inter
             kwargs["starting_after"] = starting_after
         page = stripe.Price.list(**kwargs)
         for pr in page.data:
-            recurring = pr.get("recurring") or {}
+            recurring = getattr(pr, "recurring", None)
+            r_interval = getattr(recurring, "interval", None) if recurring else None
             if (
                 pr.unit_amount == unit_amount
                 and pr.currency == currency.lower()
-                and recurring.get("interval") == interval
+                and r_interval == interval
             ):
                 return pr
         if not page.has_more:
