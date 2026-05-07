@@ -220,10 +220,20 @@ export default function PhotoUpload({ eventId, onUploadComplete }: PhotoUploadPr
           <p className="text-sm text-gray-300 ml-7">
             Successfully uploaded <span className="text-white font-medium">{uploadResult.uploaded.length}</span> photos.
           </p>
-          {uploadResult.duplicates.length > 0 && (
-            <p className="text-sm text-yellow-500/80 ml-7 mt-1">
-              {uploadResult.duplicates.length} duplicates were skipped.
-            </p>
+          {uploadResult.failed.length > 0 && (
+            <div className="text-sm text-yellow-500/80 ml-7 mt-1 space-y-0.5">
+              <p>{uploadResult.failed.length} file(s) skipped:</p>
+              <ul className="list-disc ml-5 text-yellow-500/70 text-xs">
+                {uploadResult.failed.slice(0, 5).map((f) => (
+                  <li key={f.filename}>
+                    <span className="font-mono">{f.filename}</span> — {f.reason}
+                  </li>
+                ))}
+                {uploadResult.failed.length > 5 && (
+                  <li>and {uploadResult.failed.length - 5} more…</li>
+                )}
+              </ul>
+            </div>
           )}
         </div>
       )}

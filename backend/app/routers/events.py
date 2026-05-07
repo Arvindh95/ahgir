@@ -629,13 +629,17 @@ class PhotoUploadResult(BaseModel):
     size_bytes: int
     status: str
 
-class PhotoDuplicate(BaseModel):
+class PhotoUploadFailure(BaseModel):
     filename: str
     reason: str
+    # category lets the UI show different messages per failure type. Keep
+    # values stable — frontend keys off them.
+    category: str = "upload_error"  # oversize | invalid_format | duplicate | upload_error
+
 
 class PhotoUploadResponse(BaseModel):
     uploaded: List[PhotoUploadResult]
-    duplicates: List[PhotoDuplicate]
+    failed: List[PhotoUploadFailure]
 
 class PhotoListItem(BaseModel):
     image_id: str
@@ -848,8 +852,8 @@ async def upload_photos(
             )
 
     uploaded = []
-    duplicates = []
-    
+    failed: List[PhotoUploadFailure] = []
+
     max_bytes = settings.max_upload_bytes
     for file in files:
         try:
@@ -857,30 +861,33 @@ async def upload_photos(
             # Prefer Content-Length when available; fall back to streaming with cap.
             content_length = getattr(file, "size", None)
             if content_length is not None and content_length > max_bytes:
-                duplicates.append(PhotoDuplicate(
+                failed.append(PhotoUploadFailure(
                     filename=file.filename,
-                    reason=f"File exceeds {max_bytes // (1024*1024)}MB upload limit"
+                    reason=f"File exceeds {max_bytes // (1024*1024)}MB upload limit",
+                    category="oversize",
                 ))
                 continue
 
             # Read file data
             file_data = await file.read()
             if len(file_data) > max_bytes:
-                duplicates.append(PhotoDuplicate(
+                failed.append(PhotoUploadFailure(
                     filename=file.filename,
-                    reason=f"File exceeds {max_bytes // (1024*1024)}MB upload limit"
+                    reason=f"File exceeds {max_bytes // (1024*1024)}MB upload limit",
+                    category="oversize",
                 ))
                 continue
 
-            # Validate image format
+            # Validate image format (incl. decompression-bomb guard)
             if not validate_image_format(file_data, file.filename):
                 logger.warning(f"Upload rejected - invalid format: {file.filename} (size={len(file_data)}, content_type={file.content_type})")
-                duplicates.append(PhotoDuplicate(
+                failed.append(PhotoUploadFailure(
                     filename=file.filename,
-                    reason="Invalid image format. Only JPEG and PNG are supported."
+                    reason="Invalid image format. Only JPEG and PNG are supported, and the image must be under 50 megapixels.",
+                    category="invalid_format",
                 ))
                 continue
-            
+
             # Compute hash (stored for reference)
             file_hash = compute_file_hash(file_data)
 
@@ -892,9 +899,10 @@ async def upload_photos(
 
             if existing:
                 logger.warning(f"Upload rejected - duplicate filename: {file.filename} (existing image_id={existing.id})")
-                duplicates.append(PhotoDuplicate(
+                failed.append(PhotoUploadFailure(
                     filename=file.filename,
-                    reason="File with this name already exists in event"
+                    reason="File with this name already exists in event",
+                    category="duplicate",
                 ))
                 continue
             
@@ -989,18 +997,19 @@ async def upload_photos(
         except Exception as e:
             logger.error(f"Upload failed for {file.filename}: {str(e)}", exc_info=True)
             db.rollback()
-            duplicates.append(PhotoDuplicate(
+            failed.append(PhotoUploadFailure(
                 filename=file.filename,
-                reason=f"Upload failed: {str(e)}"
+                reason=f"Upload failed: {str(e)}",
+                category="upload_error",
             ))
-    
+
     # Invalidate gallery cache for this event
     if uploaded:
         cache_delete_pattern(f"gallery:{event_id}:*")
 
     return PhotoUploadResponse(
         uploaded=uploaded,
-        duplicates=duplicates
+        failed=failed
     )
 
 @router.get("/{event_id}/photos", response_model=PhotoListResponse)

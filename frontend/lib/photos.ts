@@ -10,6 +10,12 @@ export interface Photo {
   uploaded_at: string
 }
 
+export interface UploadFailure {
+  filename: string
+  reason: string
+  category: 'oversize' | 'invalid_format' | 'duplicate' | 'upload_error'
+}
+
 export interface UploadResult {
   uploaded: Array<{
     image_id: string
@@ -17,10 +23,7 @@ export interface UploadResult {
     size_bytes: number
     status: string
   }>
-  duplicates: Array<{
-    filename: string
-    reason: string
-  }>
+  failed: UploadFailure[]
 }
 
 export interface PhotosResponse {
