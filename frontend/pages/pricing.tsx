@@ -158,21 +158,26 @@ export default function Pricing() {
         </div>
 
         <div className="max-w-3xl mx-auto mt-16">
-          <div className="glass-card rounded-2xl p-8 text-center">
-            <div className="text-xs font-bold text-blue-400 mb-3 tracking-wider">SHOOTING ONE EVENT?</div>
-            <h2 className="text-2xl font-bold mb-3">One-time event packages</h2>
+          <div className="glass-card rounded-2xl p-8 text-center border-blue-500/30 ring-1 ring-blue-500/20">
+            <div className="inline-flex items-center gap-2 mb-4">
+              <span className="text-xs font-bold tracking-wider px-2 py-1 rounded-full bg-gradient-to-r from-blue-600 to-purple-600 text-white">
+                BETA
+              </span>
+              <span className="text-xs font-bold text-blue-400 tracking-wider">FREE WHILE WE TEST</span>
+            </div>
+            <h2 className="text-2xl font-bold mb-3">Free tailor-made event packages</h2>
             <p className="text-gray-400 mb-6 max-w-xl mx-auto">
-              Photographing a single wedding and don&apos;t need a recurring subscription?
-              We offer one-time event packages tailored to your photo count and retention needs.
-              Contact us with your event details and we&apos;ll send a custom quote.
+              We&apos;re in beta and stress-testing the platform. Tell us about your event —
+              guest count, photo count, retention needs — and we&apos;ll set you up at no cost.
+              In exchange we get to learn what real weddings need.
             </p>
-            <a
-              href="mailto:support@picur.my?subject=One-time%20event%20package&body=Hi%2C%20I'd%20like%20a%20quote%20for%20a%20one-time%20event.%0A%0AEvent%20date%3A%0AEstimated%20guest%20count%3A%0AEstimated%20photo%20count%3A%0AAccess%20duration%20needed%3A"
+            <Link
+              href="/contact"
               className="inline-flex items-center gap-2 bg-white text-black px-6 py-3 rounded-xl font-semibold text-sm hover:bg-gray-100 transition-colors"
             >
-              Request a quote
+              Contact us
               <ArrowRight className="w-4 h-4" />
-            </a>
+            </Link>
           </div>
         </div>
 
