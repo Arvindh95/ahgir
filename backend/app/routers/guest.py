@@ -7,6 +7,7 @@ from sqlalchemy import text, func
 from pydantic import BaseModel
 import uuid
 import base64
+import hashlib
 import logging
 from app.utils.filename import attachment_content_disposition, safe_zip_filename
 import zipfile
@@ -173,11 +174,15 @@ async def authenticate_guest(
     # Generate event token
     event_token = create_event_token(event.id, session_id)
     
-    # Store session in database
+    # Store session in database. We persist a SHA-256 of the JWT — never
+    # the raw token. Validation is by session_id (PK), so the field exists
+    # only to satisfy the legacy NOT NULL+UNIQUE constraint without giving
+    # a DB leak the bearer credential it needs to impersonate guests.
+    token_hash = hashlib.sha256(event_token.encode("utf-8")).hexdigest()
     guest_session = GuestSession(
         id=session_id,
         event_id=event.id,
-        session_token=event_token,
+        session_token=token_hash,
         expires_at=expires_at
     )
     
@@ -754,7 +759,9 @@ async def get_share_info(
     # a stale payload only persists if those invalidation paths regress; the
     # 60s TTL caps the blast radius. Skipping the DB on the hot path keeps
     # crawlers and OG previews cheap.
-    cache_key = f"share:{event_id}:{image_id}"
+    # Use the canonical lowercase UUID form so any-case URLs hit the same
+    # cache key as the writer-side `str(uuid)` form used for invalidation.
+    cache_key = f"share:{event_uuid}:{image_uuid}"
     cached = cache_get(cache_key)
     if cached:
         return ShareInfoResponse(**cached)

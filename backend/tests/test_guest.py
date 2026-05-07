@@ -274,12 +274,15 @@ def test_event_token_generation(db_session: Session):
         assert "exp" in payload
         assert "iat" in payload
         
-        # Verify session was created in database
+        # Verify session was created in database. Look up by session_id
+        # (the JWT's claim) rather than the raw token — production stores
+        # a SHA-256 hash of the JWT, never the bearer value itself.
         from app.models import GuestSession
+        session_uuid_from_jwt = uuid.UUID(payload["session_id"])
         session = db_session.query(GuestSession).filter(
-            GuestSession.session_token == data["event_token"]
+            GuestSession.id == session_uuid_from_jwt
         ).first()
-        
+
         assert session is not None
         assert session.event_id == event.id
         assert str(session.id) == payload["session_id"]

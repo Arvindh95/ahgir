@@ -178,6 +178,13 @@ def process_overdue_subscriptions(db: Session = None):
                 ut.billing_interval = None
                 ut.current_period_end = None
                 ut.cancel_at_period_end = False
+                # Stamp now so any stale Stripe webhook (created < utcnow)
+                # for the past_due sub fails the staleness check and cannot
+                # re-grant the paid tier after this manual downgrade.
+                ut.last_subscription_event_at = datetime.utcnow()
+                ut.last_subscription_event_id = None
+                ut.last_subscription_event_type = "grace_period_downgrade"
+                ut.last_subscription_event_subscription_id = None
 
                 # Freeze excess active events down to free-tier cap and clear
                 # guest-facing caches for any event whose status changed.

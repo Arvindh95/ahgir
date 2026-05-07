@@ -547,6 +547,9 @@ async def update_event(
     cache_delete_pattern(f"event_info:{event.slug}")
     if old_slug != event.slug:
         cache_delete_pattern(f"event_info:{old_slug}")
+        # Share payloads embed event_slug; without this, OG previews and
+        # share-page redirects keep pointing at the old slug for up to 60s.
+        cache_delete_pattern(f"share:{event_uuid}:*")
 
     return {"message": "Event updated", "slug": event.slug}
 

@@ -1,4 +1,5 @@
 import logging
+import uuid as uuid_module
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
@@ -159,7 +160,15 @@ async def verify_email(request: VerifyRequest, db: Session = Depends(get_db)):
     if not user_id:
         raise InvalidTokenError("Invalid verification token")
 
-    user = db.query(User).filter(User.id == user_id).first()
+    # JWT contents are signature-trusted but not type-validated. Parse the
+    # UUID before querying so a malformed `sub` returns 400 (InvalidToken)
+    # instead of bubbling up as 500 from a Postgres UUID coercion error.
+    try:
+        user_uuid = uuid_module.UUID(user_id)
+    except (ValueError, TypeError):
+        raise InvalidTokenError("Invalid verification token")
+
+    user = db.query(User).filter(User.id == user_uuid).first()
     if not user:
         raise InvalidTokenError("User not found")
 
@@ -253,7 +262,12 @@ async def reset_password(request_data: ResetPasswordRequest, db: Session = Depen
     if not user_id:
         raise InvalidTokenError("Invalid reset token")
 
-    user = db.query(User).filter(User.id == user_id).first()
+    try:
+        user_uuid = uuid_module.UUID(user_id)
+    except (ValueError, TypeError):
+        raise InvalidTokenError("Invalid reset token")
+
+    user = db.query(User).filter(User.id == user_uuid).first()
     if not user:
         raise InvalidTokenError("User not found")
 

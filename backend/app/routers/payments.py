@@ -258,15 +258,19 @@ def _apply_subscription_state(user_tier: UserTier, subscription: dict, db: Sessi
         user_tier.current_period_end = (
             datetime.utcfromtimestamp(current_period_end) if current_period_end else None
         )
+        user_tier.subscription_status = sub_status
+        user_tier.cancel_at_period_end = cancel_at_period_end
     elif sub_status in ("canceled", "incomplete_expired", "unpaid"):
-        # _downgrade_to_free clears stripe_subscription_id and current_period_end.
-        # Leaving them cleared keeps the row internally consistent — there is
-        # no live subscription to point at.
+        # _downgrade_to_free clears stripe_subscription_id, subscription_status,
+        # current_period_end and cancel_at_period_end. Don't re-set them —
+        # leaving everything cleared keeps the row internally consistent
+        # (no live sub → no associated state).
         _downgrade_to_free(user_tier, db)
-    # past_due / incomplete: leave tier limits in place; only status changes.
+    else:
+        # past_due / incomplete: keep tier limits, just refresh status fields.
+        user_tier.subscription_status = sub_status
+        user_tier.cancel_at_period_end = cancel_at_period_end
 
-    user_tier.subscription_status = sub_status
-    user_tier.cancel_at_period_end = cancel_at_period_end
     user_tier.activated_at = datetime.utcnow()
     return True
 
@@ -398,7 +402,12 @@ async def create_checkout_session(
         return reusable_session
 
     customer_id = _get_or_create_stripe_customer(current_user, user_tier)
-    db.flush()
+    # Persist the new stripe_customer_id eagerly. If checkout creation fails
+    # below, the customer already exists in Stripe — without the commit we'd
+    # rollback the local id, then the next attempt would create a *second*
+    # Stripe customer and orphan the first.
+    db.commit()
+    db.refresh(user_tier)
 
     try:
         session = stripe.checkout.Session.create(
@@ -787,8 +796,14 @@ def _handle_invoice_paid(
         # invoice.paid is often the recovery signal after past_due. Reconcile
         # the current Stripe subscription now so a missing/delayed
         # customer.subscription.updated does not leave the user downgradeable.
-        if _sync_subscription_from_stripe(user_tier, sub_id, db):
-            _mark_subscription_event_applied(user_tier, event_created, event_id, event_type, sub_id)
+        # Decoupled from Payment recording: a Stripe API failure here (e.g.,
+        # sub deleted from the dashboard between events) shouldn't drop the
+        # invoice audit row; Stripe will retry the webhook and we'll catch up.
+        try:
+            if _sync_subscription_from_stripe(user_tier, sub_id, db):
+                _mark_subscription_event_applied(user_tier, event_created, event_id, event_type, sub_id)
+        except stripe.StripeError as e:
+            logger.warning("invoice.paid sync skipped for sub %s: %s", sub_id, e)
 
     # Prefer the invoice's own price IDs over user_tier (which may be stale
     # when sync was skipped). user_tier values are the fallback.
