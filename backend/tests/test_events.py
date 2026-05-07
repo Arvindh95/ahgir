@@ -9,10 +9,29 @@ import uuid
 
 from app.main import app
 from app.database import get_db
-from app.models import User, Event
+from app.models import User, Event, UserTier
 from app.auth import hash_password, create_access_token
 
 client = TestClient(app)
+
+
+def _attach_pro_tier(db_session, user):
+    """Helper: give a test user a Pro UserTier so they can create multiple
+    events with longer retention than the free tier permits.
+
+    Free tier caps active_events=1, retention=30 days. Tests creating 2+
+    events or asserting retention >= 90 days need a paid tier.
+    """
+    db_session.add(UserTier(
+        user_id=user.id,
+        tier_name="pro",
+        max_events=20,
+        max_photos_per_event=2000,
+        retention_days=365,
+        price_cents=9900,
+        is_active=True,
+    ))
+    db_session.commit()
 
 def test_create_event_success(db_session: Session):
     """Test successful event creation with all fields"""
@@ -24,21 +43,22 @@ def test_create_event_success(db_session: Session):
     db_session.add(user)
     db_session.commit()
     db_session.refresh(user)
-    
+    _attach_pro_tier(db_session, user)
+
     # Override the get_db dependency
     def override_get_db():
         try:
             yield db_session
         finally:
             pass
-    
+
     app.dependency_overrides[get_db] = override_get_db
-    
+
     # Generate token
     token = create_access_token(
         data={"sub": str(user.id), "email": user.email}
     )
-    
+
     # Create event
     response = client.post(
         "/events",
@@ -83,21 +103,22 @@ def test_create_event_minimal_fields(db_session: Session):
     db_session.add(user)
     db_session.commit()
     db_session.refresh(user)
-    
+    _attach_pro_tier(db_session, user)
+
     # Override the get_db dependency
     def override_get_db():
         try:
             yield db_session
         finally:
             pass
-    
+
     app.dependency_overrides[get_db] = override_get_db
-    
+
     # Generate token
     token = create_access_token(
         data={"sub": str(user.id), "email": user.email}
     )
-    
+
     # Create event with minimal fields
     response = client.post(
         "/events",
@@ -126,7 +147,8 @@ def test_create_event_slug_uniqueness(db_session: Session):
     db_session.add(user)
     db_session.commit()
     db_session.refresh(user)
-    
+    _attach_pro_tier(db_session, user)
+
     # Override the get_db dependency
     def override_get_db():
         try:
