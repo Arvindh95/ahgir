@@ -190,7 +190,8 @@ async def resend_verification(
 
     client_ip = http_request.client.host if http_request.client else "unknown"
     auth_rate_limiter.enforce_rate_limit(client_ip, action="resend_verify_ip")
-    auth_rate_limiter.enforce_rate_limit(request.email.lower(), action="resend_verify_email")
+    # Pydantic field validator already lowered the email at the schema boundary.
+    auth_rate_limiter.enforce_rate_limit(request.email, action="resend_verify_email")
 
     user = db.query(User).filter(User.email == request.email).first()
     if not user or user.is_verified:

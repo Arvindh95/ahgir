@@ -1,8 +1,11 @@
 """Superadmin management router."""
 
+import logging
 from datetime import datetime
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
+
+logger = logging.getLogger(__name__)
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from pydantic import BaseModel, Field
@@ -220,6 +223,8 @@ async def update_user_tier(
     # This endpoint is an explicit superadmin override. Decouple entitlement
     # from any existing Stripe subscription so a later webhook cannot silently
     # reapply the old paid plan over the manual tier.
+    prior_sub_id = user_tier.stripe_subscription_id
+    prior_sub_status = user_tier.subscription_status
     user_tier.stripe_subscription_id = None
     user_tier.subscription_status = None
     user_tier.billing_interval = None
@@ -230,6 +235,20 @@ async def update_user_tier(
     user_tier.last_subscription_event_type = "manual_override"
     user_tier.last_subscription_event_subscription_id = None
 
+    # We do NOT auto-cancel the Stripe subscription — that has user-visible
+    # billing/refund consequences and should be an explicit operator decision.
+    # Surface the orphan so the operator knows to cancel via the Stripe
+    # dashboard if the customer should stop being charged.
+    stripe_subscription_orphaned = bool(
+        prior_sub_id and prior_sub_status in ("active", "trialing", "past_due")
+    )
+    if stripe_subscription_orphaned:
+        logger.warning(
+            "Manual tier override applied to user %s while Stripe subscription %s is still %s. "
+            "Cancel it via the Stripe dashboard if the customer should stop being charged.",
+            target_uuid, prior_sub_id, prior_sub_status,
+        )
+
     rebalance_event_status(target_uuid, max_events, db)
     db.commit()
 
@@ -239,6 +258,8 @@ async def update_user_tier(
         "tier_name": user_tier.tier_name,
         "max_events": user_tier.max_events,
         "max_photos_per_event": user_tier.max_photos_per_event,
+        "stripe_subscription_orphaned": stripe_subscription_orphaned,
+        "stripe_subscription_id": prior_sub_id if stripe_subscription_orphaned else None,
     }
 
 

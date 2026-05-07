@@ -177,8 +177,8 @@ def _get_reusable_checkout_session(
             raise HTTPException(
                 status_code=503,
                 detail={
-                    "code": "CHECKOUT_PENDING",
-                    "message": "A checkout is already pending. Try again in a moment.",
+                    "code": "STRIPE_UNAVAILABLE",
+                    "message": "Stripe is temporarily unavailable. Please try again in a moment.",
                 },
             )
 
@@ -190,7 +190,10 @@ def _get_reusable_checkout_session(
             _expire_mismatched_checkout(payment)
             db.flush()
             continue
-        if session_status == "complete":
+        # Only block on a *matching* completed session. A completed checkout for
+        # a different tier (e.g. user paid for starter, canceled, now wants pro)
+        # must not lock them out — the stale Payment row is just history.
+        if session_status == "complete" and _checkout_matches_request(payment, tier_name, interval):
             raise HTTPException(
                 status_code=409,
                 detail={
@@ -211,9 +214,17 @@ def _stripe_updates_locked(user_tier: UserTier) -> bool:
 
 
 def _clear_manual_stripe_override(user_tier: UserTier) -> None:
+    """Drop the manual_override marker so future Stripe webhooks process.
+
+    Critically, we keep `last_subscription_event_at` stamped to "now" — any
+    delayed webhook for an orphaned old Stripe subscription (created before
+    the manual override) will have `event.created < utcnow()` and so fall
+    out via the staleness check. New events for a fresh subscription the
+    user is about to start will have `created > utcnow()` and pass.
+    """
     if not _stripe_updates_locked(user_tier):
         return
-    user_tier.last_subscription_event_at = None
+    user_tier.last_subscription_event_at = datetime.utcnow()
     user_tier.last_subscription_event_id = None
     user_tier.last_subscription_event_type = None
     user_tier.last_subscription_event_subscription_id = None
@@ -243,15 +254,19 @@ def _apply_subscription_state(user_tier: UserTier, subscription: dict, db: Sessi
 
     if sub_status in ("active", "trialing"):
         _apply_tier_limits(user_tier, tier_name, interval, db)
+        user_tier.stripe_subscription_id = sub_id
+        user_tier.current_period_end = (
+            datetime.utcfromtimestamp(current_period_end) if current_period_end else None
+        )
     elif sub_status in ("canceled", "incomplete_expired", "unpaid"):
+        # _downgrade_to_free clears stripe_subscription_id and current_period_end.
+        # Leaving them cleared keeps the row internally consistent — there is
+        # no live subscription to point at.
         _downgrade_to_free(user_tier, db)
+    # past_due / incomplete: leave tier limits in place; only status changes.
 
-    user_tier.stripe_subscription_id = sub_id
     user_tier.subscription_status = sub_status
     user_tier.cancel_at_period_end = cancel_at_period_end
-    user_tier.current_period_end = (
-        datetime.utcfromtimestamp(current_period_end) if current_period_end else None
-    )
     user_tier.activated_at = datetime.utcnow()
     return True
 
@@ -534,6 +549,29 @@ def _handle_checkout_completed(session: dict, db: Session) -> None:
     db.commit()
 
 
+def _resolve_tier_from_invoice(invoice: dict) -> tuple[Optional[str], Optional[str]]:
+    """Resolve (tier_name, interval) from a Stripe invoice's line items.
+
+    Lets us record an accurate Payment row even when subscription sync was
+    skipped (manual override or stale webhook), instead of falling back to
+    whatever stale tier_name happens to be on the user_tier row.
+    """
+    lines_obj = _g(invoice, "lines") or {}
+    lines = _g(lines_obj, "data") or []
+    for line in lines:
+        price_obj = _g(line, "price") or {}
+        price_id = _g(price_obj, "id")
+        if not price_id:
+            continue
+        for tn in PURCHASABLE_TIERS:
+            cfg = TIER_CONFIG[tn]
+            if price_id == cfg.get("stripe_price_monthly"):
+                return tn, "month"
+            if price_id == cfg.get("stripe_price_yearly"):
+                return tn, "year"
+    return None, None
+
+
 def _resolve_tier_from_subscription(subscription: dict) -> tuple[Optional[str], Optional[str]]:
     """Resolve (tier_name, interval) from a Stripe subscription object.
 
@@ -752,14 +790,17 @@ def _handle_invoice_paid(
         if _sync_subscription_from_stripe(user_tier, sub_id, db):
             _mark_subscription_event_applied(user_tier, event_created, event_id, event_type, sub_id)
 
+    # Prefer the invoice's own price IDs over user_tier (which may be stale
+    # when sync was skipped). user_tier values are the fallback.
+    invoice_tier, invoice_interval = _resolve_tier_from_invoice(invoice)
     payment = Payment(
         user_id=user_tier.user_id,
-        tier_name=user_tier.tier_name,
-        billing_interval=user_tier.billing_interval,
+        tier_name=invoice_tier or user_tier.tier_name,
+        billing_interval=invoice_interval or user_tier.billing_interval,
         stripe_invoice_id=invoice_id,
         stripe_subscription_id=sub_id,
         amount_cents=_g(invoice, "amount_paid", 0),
-        currency=_g(invoice, "currency", "myr"),
+        currency=_g(invoice, "currency", "usd"),
         status="completed",
         metadata_={"invoice_number": _g(invoice, "number")},
     )

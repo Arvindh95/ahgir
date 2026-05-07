@@ -750,6 +750,15 @@ async def get_share_info(
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid ID format")
 
+    # Cache-first. Status/delete/freeze paths all call cache_delete_pattern so
+    # a stale payload only persists if those invalidation paths regress; the
+    # 60s TTL caps the blast radius. Skipping the DB on the hot path keeps
+    # crawlers and OG previews cheap.
+    cache_key = f"share:{event_id}:{image_id}"
+    cached = cache_get(cache_key)
+    if cached:
+        return ShareInfoResponse(**cached)
+
     # Verify image and event (and that the event is still serving guests).
     event = db.query(Event).filter(Event.id == event_uuid).first()
     if not event or event.status != 'active':
@@ -758,17 +767,6 @@ async def get_share_info(
     image = db.query(Image.id).filter(Image.id == image_uuid, Image.event_id == event_uuid).first()
     if not image:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
-
-    # Check cache after DB validation so deleted/frozen events do not keep
-    # serving stale share payloads. Scrub legacy cached originals when
-    # downloads are disabled.
-    cache_key = f"share:{event_id}:{image_id}"
-    cached = cache_get(cache_key)
-    if cached:
-        if not event.allow_downloads and cached.get("thumbnail_url"):
-            cached = dict(cached)
-            cached["image_url"] = cached["thumbnail_url"]
-        return ShareInfoResponse(**cached)
 
     thumbnail_url, image_url, _download_url = _guest_photo_urls(
         event_uuid, image_uuid, event.allow_downloads

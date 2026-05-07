@@ -141,7 +141,7 @@ class UserTier(Base):
     max_photos_per_event = Column(Integer, nullable=False, default=50)
     retention_days = Column(Integer, nullable=True)  # tier-level retention (custom override)
     price_cents = Column(Integer, nullable=False, default=0)
-    currency = Column(String(3), nullable=False, default="myr")
+    currency = Column(String(3), nullable=False, default="usd")
     is_active = Column(Boolean, default=True, nullable=False)
     activated_at = Column(TIMESTAMP, nullable=True)
 
@@ -190,7 +190,7 @@ class EventTier(Base):
     tier_name = Column(String(50), nullable=False, default="free")  # kept for backward compat
     photo_limit = Column(Integer, nullable=False, default=50)
     price_cents = Column(Integer, nullable=False, default=0)
-    currency = Column(String(3), nullable=False, default="myr")
+    currency = Column(String(3), nullable=False, default="usd")
     is_active = Column(Boolean, default=True, nullable=False)
     activated_at = Column(TIMESTAMP, nullable=True)
     created_at = Column(TIMESTAMP, server_default=func.now(), nullable=False)
@@ -217,7 +217,7 @@ class Payment(Base):
     stripe_subscription_id = Column(String(255), nullable=True, index=True)
     billing_interval = Column(String(10), nullable=True)
     amount_cents = Column(Integer, nullable=False)
-    currency = Column(String(3), nullable=False, default="myr")
+    currency = Column(String(3), nullable=False, default="usd")
     status = Column(String(30), nullable=False, default="pending")  # pending, completed, failed, refunded
     metadata_ = Column("metadata", JSONB, nullable=True)
     created_at = Column(TIMESTAMP, server_default=func.now(), nullable=False)

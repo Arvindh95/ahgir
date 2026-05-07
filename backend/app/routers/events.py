@@ -951,7 +951,11 @@ async def upload_photos(
                 current_count, effective_limit, tier_label = _lock_and_get_photo_capacity()
                 if current_count >= effective_limit:
                     remaining = max(0, effective_limit - current_count)
-                    db.rollback()
+                    # No pending writes at this point (each successful iteration
+                    # ends with commit). Commit releases the locks taken by the
+                    # capacity check and is safe even if a future maintainer
+                    # adds staged DB writes earlier in the iteration.
+                    db.commit()
                     failed.append(PhotoUploadFailure(
                         filename=file.filename,
                         reason=f"Photo limit reached. You have {remaining} upload(s) remaining ({current_count}/{effective_limit}).",
