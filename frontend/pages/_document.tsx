@@ -1,4 +1,4 @@
-import { Html, Head, Main, NextScript } from 'next/document'
+import Document, { Html, Head, Main, NextScript, DocumentContext, DocumentInitialProps } from 'next/document'
 
 const TITLE_SCRIPT = `
 (function(){
@@ -42,17 +42,35 @@ const TITLE_SCRIPT = `
 })();
 `;
 
-export default function Document() {
-  return (
-    <Html lang="en">
-      <Head>
-        <title>PicUr</title>
-      </Head>
-      <body>
-        <Main />
-        <NextScript />
-        <script dangerouslySetInnerHTML={{ __html: TITLE_SCRIPT }} />
-      </body>
-    </Html>
-  )
+interface PicUrDocumentProps extends DocumentInitialProps {
+  nonce: string
 }
+
+class PicUrDocument extends Document<PicUrDocumentProps> {
+  static async getInitialProps(ctx: DocumentContext): Promise<PicUrDocumentProps> {
+    const initialProps = await Document.getInitialProps(ctx)
+    // middleware.ts attaches the nonce per request; default to '' so
+    // dev-server pages without middleware still render (no CSP enforced).
+    const headerNonce = ctx.req?.headers?.['x-nonce']
+    const nonce = typeof headerNonce === 'string' ? headerNonce : ''
+    return { ...initialProps, nonce }
+  }
+
+  render() {
+    const { nonce } = this.props
+    return (
+      <Html lang="en">
+        <Head nonce={nonce}>
+          <title>PicUr</title>
+        </Head>
+        <body>
+          <Main />
+          <NextScript nonce={nonce} />
+          <script nonce={nonce} dangerouslySetInnerHTML={{ __html: TITLE_SCRIPT }} />
+        </body>
+      </Html>
+    )
+  }
+}
+
+export default PicUrDocument
