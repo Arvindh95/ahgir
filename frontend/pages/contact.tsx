@@ -1,5 +1,5 @@
 import Head from 'next/head'
-import { Mail, MapPin, Clock } from 'lucide-react'
+import { Mail, Clock } from 'lucide-react'
 import PublicLayout from '@/components/PublicLayout'
 import { FadeIn } from '@/components/FadeIn'
 
@@ -73,15 +73,6 @@ export default function Contact() {
                   </div>
                 </div>
 
-                <div className="flex items-start gap-5">
-                  <div className="w-12 h-12 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center flex-shrink-0">
-                    <MapPin className="w-6 h-6 text-blue-400" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-semibold text-white mb-1">Location</h3>
-                    <p className="text-gray-300">Malaysia</p>
-                  </div>
-                </div>
               </div>
 
               <div className="mt-10 pt-8 border-t border-white/10">
