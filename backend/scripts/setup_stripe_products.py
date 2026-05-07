@@ -25,16 +25,16 @@ TIER_PRICES = {
     "starter": {
         "name": "PicUr Starter",
         "description": "5 active events, 500 photos per event, 6-month retention.",
-        "monthly_cents": 3900,
-        "yearly_cents": 39000,
-        "currency": "myr",
+        "monthly_cents": 900,
+        "yearly_cents": 9000,
+        "currency": "usd",
     },
     "pro": {
         "name": "PicUr Pro",
         "description": "20 active events, 2000 photos per event, 1-year retention.",
-        "monthly_cents": 9900,
-        "yearly_cents": 99000,
-        "currency": "myr",
+        "monthly_cents": 2900,
+        "yearly_cents": 29000,
+        "currency": "usd",
     },
 }
 

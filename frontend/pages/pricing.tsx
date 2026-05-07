@@ -10,8 +10,8 @@ const tiers = [
   {
     key: 'free',
     name: 'Free',
-    monthlyRM: 0,
-    yearlyRM: 0,
+    monthlyUSD: 0,
+    yearlyUSD: 0,
     description: 'Try PicUr with one event',
     features: [
       '1 active event',
@@ -28,8 +28,8 @@ const tiers = [
   {
     key: 'starter',
     name: 'Starter',
-    monthlyRM: 39,
-    yearlyRM: 390,
+    monthlyUSD: 9,
+    yearlyUSD: 90,
     description: 'For photographers running a few events at a time',
     features: [
       '5 active events',
@@ -46,8 +46,8 @@ const tiers = [
   {
     key: 'pro',
     name: 'Pro',
-    monthlyRM: 99,
-    yearlyRM: 990,
+    monthlyUSD: 29,
+    yearlyUSD: 290,
     description: 'For studios managing many events year-round',
     features: [
       '20 active events',
@@ -68,8 +68,8 @@ export default function Pricing() {
   const [interval, setInterval] = useState<Interval>('month')
 
   const formatPrice = (tier: typeof tiers[0]) => {
-    if (tier.key === 'free') return 'RM 0'
-    return interval === 'year' ? `RM ${tier.yearlyRM}` : `RM ${tier.monthlyRM}`
+    if (tier.key === 'free') return '$0'
+    return interval === 'year' ? `$${tier.yearlyUSD}` : `$${tier.monthlyUSD}`
   }
 
   const formatPeriod = (tier: typeof tiers[0]) => {

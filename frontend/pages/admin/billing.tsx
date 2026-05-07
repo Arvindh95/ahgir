@@ -11,15 +11,15 @@ const TIERS = [
   {
     key: 'starter' as const,
     name: 'Starter',
-    monthly_rm: 39,
-    yearly_rm: 390,
+    monthly_usd: 9,
+    yearly_usd: 90,
     features: ['5 active events', '500 photos per event', '6-month retention'],
   },
   {
     key: 'pro' as const,
     name: 'Pro',
-    monthly_rm: 99,
-    yearly_rm: 990,
+    monthly_usd: 29,
+    yearly_usd: 290,
     features: ['20 active events', '2000 photos per event', '1-year retention', 'Priority indexing'],
     popular: true,
   },
@@ -223,7 +223,7 @@ export default function BillingPage() {
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     {TIERS.map((tier) => {
-                      const price = interval === 'year' ? tier.yearly_rm : tier.monthly_rm
+                      const price = interval === 'year' ? tier.yearly_usd : tier.monthly_usd
                       return (
                         <div
                           key={tier.key}
@@ -238,7 +238,7 @@ export default function BillingPage() {
                           )}
                           <h3 className="text-xl font-bold">{tier.name}</h3>
                           <div className="flex items-baseline gap-1 mt-1 mb-4">
-                            <span className="text-3xl font-bold">RM {price}</span>
+                            <span className="text-3xl font-bold">${price}</span>
                             <span className="text-gray-400 text-sm">/{interval}</span>
                           </div>
                           <ul className="space-y-2 mb-6">

@@ -16,7 +16,7 @@ TIER_CONFIG: Dict[str, Dict[str, Any]] = {
         "retention_days": 30,
         "monthly_cents": 0,
         "yearly_cents": 0,
-        "currency": "myr",
+        "currency": "usd",
         "stripe_price_monthly": None,
         "stripe_price_yearly": None,
     },
@@ -25,9 +25,9 @@ TIER_CONFIG: Dict[str, Dict[str, Any]] = {
         "max_events": 5,
         "max_photos_per_event": 500,
         "retention_days": 180,
-        "monthly_cents": 3900,   # RM 39
-        "yearly_cents": 39000,   # RM 390 (2 months free)
-        "currency": "myr",
+        "monthly_cents": 900,    # $9
+        "yearly_cents": 9000,    # $90 (2 months free)
+        "currency": "usd",
         "stripe_price_monthly": getattr(settings, "stripe_price_starter_monthly", "") or None,
         "stripe_price_yearly": getattr(settings, "stripe_price_starter_yearly", "") or None,
     },
@@ -36,9 +36,9 @@ TIER_CONFIG: Dict[str, Dict[str, Any]] = {
         "max_events": 20,
         "max_photos_per_event": 2000,
         "retention_days": 365,
-        "monthly_cents": 9900,   # RM 99
-        "yearly_cents": 99000,   # RM 990 (2 months free)
-        "currency": "myr",
+        "monthly_cents": 2900,   # $29
+        "yearly_cents": 29000,   # $290 (2 months free)
+        "currency": "usd",
         "stripe_price_monthly": getattr(settings, "stripe_price_pro_monthly", "") or None,
         "stripe_price_yearly": getattr(settings, "stripe_price_pro_yearly", "") or None,
     },

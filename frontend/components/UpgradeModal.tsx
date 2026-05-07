@@ -12,8 +12,8 @@ const UPGRADE_TIERS = [
   {
     key: 'starter' as const,
     name: 'Starter',
-    monthly_cents: 3900,
-    yearly_cents: 39000,
+    monthly_cents: 900,
+    yearly_cents: 9000,
     events: '5',
     photos: '500',
     retention: '6 months',
@@ -23,8 +23,8 @@ const UPGRADE_TIERS = [
   {
     key: 'pro' as const,
     name: 'Pro',
-    monthly_cents: 9900,
-    yearly_cents: 99000,
+    monthly_cents: 2900,
+    yearly_cents: 29000,
     events: '20',
     photos: '2000',
     retention: '1 year',
@@ -137,7 +137,7 @@ export default function UpgradeModal({ open, currentTier, onClose }: UpgradeModa
                 )}
                 <h3 className="text-lg font-bold">{tier.name}</h3>
                 <div className="flex items-baseline gap-1 mt-1 mb-4">
-                  <span className="text-3xl font-bold">RM {cents / 100}</span>
+                  <span className="text-3xl font-bold">${cents / 100}</span>
                   <span className="text-gray-400 text-sm">{period}</span>
                 </div>
 

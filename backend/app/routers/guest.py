@@ -35,7 +35,7 @@ async def recognize_with_compreface(image_bytes: bytes, api_key: str, det_prob_t
             files = {"file": ("image.jpg", image_bytes, "image/jpeg")}
             params = {
                 "det_prob_threshold": det_prob_threshold,
-                "prediction_count": 100,
+                "prediction_count": 500,
             }
             headers = {"x-api-key": api_key}
 
