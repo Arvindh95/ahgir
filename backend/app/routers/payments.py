@@ -70,6 +70,20 @@ class MyTierResponse(BaseModel):
     activated_at: Optional[str] = None
 
 
+def _g(obj, key, default=None):
+    """Read a field from a Stripe object or dict.
+
+    Stripe's StripeObject supports `obj[key]` but not `obj.get(key, default)`,
+    so this helper unifies access between webhook payloads (StripeObject) and
+    plain dict fixtures used in tests.
+    """
+    try:
+        val = obj[key]
+    except (KeyError, AttributeError, TypeError):
+        return default
+    return val if val is not None else default
+
+
 # ---------- Helpers ----------
 
 def _get_or_create_user_tier(user: User, db: Session) -> UserTier:
@@ -377,19 +391,20 @@ def _handle_checkout_completed(session: dict, db: Session) -> None:
     Subscription handlers fire alongside this and own the UserTier mutation,
     so we just close the Payment loop here.
     """
+    session_id = session["id"]
     payment = (
         db.query(Payment)
-        .filter(Payment.stripe_checkout_session_id == session["id"])
+        .filter(Payment.stripe_checkout_session_id == session_id)
         .with_for_update()
         .first()
     )
     if not payment:
-        logger.info(f"No Payment row for checkout session {session['id']} (likely portal-initiated)")
+        logger.info(f"No Payment row for checkout session {session_id} (likely portal-initiated)")
         return
     if payment.status == "completed":
         return  # idempotent
     payment.status = "completed"
-    payment.stripe_subscription_id = session.get("subscription")
+    payment.stripe_subscription_id = _g(session, "subscription")
     db.commit()
 
 
@@ -398,18 +413,20 @@ def _handle_subscription_upsert(subscription: dict, db: Session) -> None:
     sub_id = subscription["id"]
     customer_id = subscription["customer"]
     sub_status = subscription["status"]
-    cancel_at_period_end = subscription.get("cancel_at_period_end", False)
-    current_period_end = subscription.get("current_period_end")
+    cancel_at_period_end = bool(_g(subscription, "cancel_at_period_end", False))
+    current_period_end = _g(subscription, "current_period_end")
 
-    metadata = subscription.get("metadata") or {}
-    tier_name = metadata.get("tier_name")
-    interval = metadata.get("interval")
+    metadata = _g(subscription, "metadata") or {}
+    tier_name = _g(metadata, "tier_name")
+    interval = _g(metadata, "interval")
 
     # Fall back to deriving tier_name from the price ID if metadata missing
     if not tier_name:
-        items = subscription.get("items", {}).get("data", [])
+        items_obj = _g(subscription, "items") or {}
+        items = _g(items_obj, "data") or []
         if items:
-            price_id = items[0].get("price", {}).get("id")
+            price_obj = _g(items[0], "price") or {}
+            price_id = _g(price_obj, "id")
             for tn in PURCHASABLE_TIERS:
                 cfg = TIER_CONFIG[tn]
                 if price_id in (cfg["stripe_price_monthly"], cfg["stripe_price_yearly"]):
@@ -470,7 +487,7 @@ def _handle_subscription_deleted(subscription: dict, db: Session) -> None:
 def _handle_invoice_paid(invoice: dict, db: Session) -> None:
     """Record successful subscription invoice as a Payment row."""
     invoice_id = invoice["id"]
-    sub_id = invoice.get("subscription")
+    sub_id = _g(invoice, "subscription")
     if not sub_id:
         return  # one-off invoice (not a subscription) — ignore
 
@@ -490,10 +507,10 @@ def _handle_invoice_paid(invoice: dict, db: Session) -> None:
         billing_interval=user_tier.billing_interval,
         stripe_invoice_id=invoice_id,
         stripe_subscription_id=sub_id,
-        amount_cents=invoice.get("amount_paid", 0),
-        currency=invoice.get("currency", "myr"),
+        amount_cents=_g(invoice, "amount_paid", 0),
+        currency=_g(invoice, "currency", "myr"),
         status="completed",
-        metadata_={"invoice_number": invoice.get("number")},
+        metadata_={"invoice_number": _g(invoice, "number")},
     )
     db.add(payment)
     db.commit()
@@ -501,7 +518,7 @@ def _handle_invoice_paid(invoice: dict, db: Session) -> None:
 
 def _handle_invoice_payment_failed(invoice: dict, db: Session) -> None:
     """Mark subscription past_due. Cron will downgrade to free after grace_period_days."""
-    sub_id = invoice.get("subscription")
+    sub_id = _g(invoice, "subscription")
     if not sub_id:
         return
     user_tier = (
