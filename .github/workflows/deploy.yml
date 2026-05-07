@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
 
+# Cancel an in-flight deploy when a new push lands on main, so a fast follow-up
+# commit doesn't queue behind the previous build.
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: true
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -14,9 +20,33 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
+          script_stop: true
+          command_timeout: 30m
           script: |
-            cd /root/ahgir
-            git pull origin main
-            docker compose -f docker-compose.yml -f docker-compose.prod.yml build backend frontend worker
-            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --force-recreate backend frontend worker
+            set -euo pipefail
+            cd /opt/ahgir
+            git fetch origin main
+            git checkout main
+            git pull --ff-only origin main
+
+            COMPOSE_FILES="-f docker-compose.yml -f docker-compose.vps.yml --env-file .env.production"
+
+            # Apply any pending alembic migrations against the running DB before
+            # rebuilding services. Uses the existing backend image so it works
+            # even on the very first deploy of a migration.
+            docker compose $COMPOSE_FILES run --rm --no-deps backend sh -c 'cd /app && alembic upgrade head'
+
+            # Build new images
+            docker compose $COMPOSE_FILES build backend worker frontend
+
+            # Recreate services with new images. Data services (postgres, minio,
+            # redis, compreface-*) intentionally NOT restarted — they're stateful
+            # and don't change between deploys.
+            docker compose $COMPOSE_FILES up -d --force-recreate backend worker frontend retention-scheduler
+
+            # Reclaim disk
             docker image prune -f
+
+            # Smoke check
+            sleep 5
+            curl -fsS https://picur.my/api/health > /dev/null
