@@ -10,11 +10,12 @@ services:
 
   backend:
     volumes: !reset []
-    # --proxy-headers + forwarded-allow-ips=* so X-Forwarded-For from the
-    # host reverse proxy (nginx → 127.0.0.1:8005 → docker bridge) is trusted.
-    # Without this, every request appears to come from the docker bridge IP
-    # and per-IP rate limits collapse to a single global bucket.
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4 --proxy-headers --forwarded-allow-ips='*'
+    # Trust forwarded headers ONLY from the docker bridge gateway (host nginx
+    # connects via 127.0.0.1:8005 which hits the bridge gateway from inside the
+    # container). Edge nginx already overwrites X-Forwarded-For with the real
+    # client IP from CF-Connecting-IP, so this stack rejects attacker-supplied
+    # XFF that bypasses the edge.
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4 --proxy-headers --forwarded-allow-ips=172.18.0.1,127.0.0.1
     ports: !reset []  # do not publish; Caddy proxies /api → backend:8000
     environment:
       COMPREFACE_API_URL: "http://compreface-api:8080,http://compreface-api-2:8080"

@@ -35,6 +35,8 @@ from app.audit import log_action
 from app.config import settings, get_compreface_url
 from app.cache import cache_delete_pattern
 from app.tiers import get_effective_limits
+from app.utils.compreface import delete_compreface_subjects_for_event
+from app.utils.exif import strip_exif_bytes
 import httpx
 
 router = APIRouter(prefix="/events", tags=["events"])
@@ -529,6 +531,15 @@ async def update_event(
     if not current_user.is_superadmin and event.owner_user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to update this event")
 
+    if not current_user.is_superadmin and event.status == 'frozen':
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "event_frozen",
+                "message": "This event is frozen. Upgrade or delete a newer event to reactivate.",
+            },
+        )
+
     old_slug = event.slug
     if update_data.slug is not None:
         existing = db.query(Event).filter(Event.slug == update_data.slug, Event.id != event_uuid).first()
@@ -571,6 +582,15 @@ async def upload_cover_image(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
     if not current_user.is_superadmin and event.owner_user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
+
+    if not current_user.is_superadmin and event.status == 'frozen':
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "event_frozen",
+                "message": "This event is frozen. Upgrade or delete a newer event to reactivate.",
+            },
+        )
 
     # Validate file type
     if not file.content_type or not file.content_type.startswith('image/'):
@@ -983,11 +1003,14 @@ async def upload_photos(
             
             db.add(new_image)
             
-            # Store original in MinIO
+            # Strip EXIF/GPS from bytes before persisting; the DB-side metadata
+            # is sanitized separately, but originals are served back to guests
+            # when allow_downloads is on.
+            original_bytes = strip_exif_bytes(file_data)
             storage_service.upload_photo(
                 event_id=event_uuid,
                 image_id=image_id,
-                photo_data=file_data,
+                photo_data=original_bytes,
                 photo_type='original'
             )
             
@@ -1808,13 +1831,19 @@ async def delete_event(
         }
     )
     
+    # Drop CompreFace subjects before the DB cascade nukes face rows.
+    try:
+        delete_compreface_subjects_for_event(db, event_uuid)
+    except Exception as e:
+        logger.error(f"CompreFace cleanup failed for event {event_uuid}: {e}")
+
     # Delete all photos from MinIO
     try:
         storage_service.delete_event_photos(event_uuid)
     except Exception as e:
         # Log error but continue with database deletion
         logger.error(f"Failed to delete photos from MinIO for event {event_uuid}: {e}")
-    
+
     # Invalidate caches
     slug = event.slug
     cache_delete_pattern(f"event_info:{slug}")

@@ -20,6 +20,7 @@ from app.storage import storage_service
 from app.queue import get_failed_jobs, retry_failed_job
 from app.tiers import get_effective_limits
 from app.cache import cache_delete_pattern
+from app.utils.compreface import delete_compreface_subjects_for_event
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -468,6 +469,11 @@ async def admin_delete_event(
     event = db.query(Event).filter(Event.id == event_uuid).first()
     if not event:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+
+    try:
+        delete_compreface_subjects_for_event(db, event_uuid)
+    except Exception as e:
+        logger.error(f"CompreFace cleanup failed for event {event_uuid}: {e}")
 
     try:
         storage_service.delete_event_photos(event_uuid)

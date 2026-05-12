@@ -86,6 +86,16 @@ class Settings(BaseSettings):
 settings = Settings()
 
 
+_PLACEHOLDER_TOKENS = ("change_me", "changeme", "your-secret", "yourdomain")
+
+
+def _looks_like_placeholder(value: str) -> bool:
+    if not value:
+        return False
+    lowered = value.lower()
+    return any(token in lowered for token in _PLACEHOLDER_TOKENS)
+
+
 def validate_production_secrets():
     """Fail fast if production is missing critical secrets or using dev defaults."""
     if settings.environment.lower() != "production":
@@ -94,6 +104,8 @@ def validate_production_secrets():
     errors = []
     if settings.jwt_secret_key in ("your-secret-key-change-in-production", "dev-only-not-for-prod", ""):
         errors.append("JWT_SECRET_KEY is unset or using dev default")
+    elif _looks_like_placeholder(settings.jwt_secret_key):
+        errors.append("JWT_SECRET_KEY still contains a placeholder (e.g. CHANGE_ME_*)")
     if not settings.stripe_secret_key:
         errors.append("STRIPE_SECRET_KEY is unset")
     if not settings.stripe_webhook_secret:
@@ -106,8 +118,14 @@ def validate_production_secrets():
         errors.append("COMPREFACE_DETECTION_API_KEY is unset")
     if settings.minio_secret_key in ("minioadmin", "minioadmin_dev_only", ""):
         errors.append("MINIO_SECRET_KEY is unset or using dev default")
+    elif _looks_like_placeholder(settings.minio_secret_key):
+        errors.append("MINIO_SECRET_KEY still contains a placeholder (e.g. CHANGE_ME_*)")
     if "localhost" in settings.cors_origins.lower() or "127.0.0.1" in settings.cors_origins:
         errors.append(f"CORS_ORIGINS contains localhost in production: {settings.cors_origins}")
+    if _looks_like_placeholder(settings.cors_origins):
+        errors.append(f"CORS_ORIGINS still contains a placeholder host: {settings.cors_origins}")
+    if _looks_like_placeholder(getattr(settings, "frontend_url", "")):
+        errors.append(f"FRONTEND_URL still contains a placeholder host: {settings.frontend_url}")
 
     if errors:
         raise RuntimeError(
