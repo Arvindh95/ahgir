@@ -10,28 +10,8 @@ from app.main import app
 from app.database import get_db
 from app.models import User, Event
 from app.auth import hash_password, decode_token
-from app.rate_limiter import rate_limiter, auth_rate_limiter, event_passcode_rate_limiter
 
 client = TestClient(app)
-
-
-@pytest.fixture(autouse=True)
-def _disable_rate_limits():
-    """TestClient hits buckets from a single 'testclient' IP and the prod Redis
-    is shared with the application — lift the cap so consecutive guest_auth /
-    passcode calls don't trip the limiter mid-test.
-    """
-    affected = (rate_limiter, auth_rate_limiter, event_passcode_rate_limiter)
-    originals = [(lim, lim.limit) for lim in affected]
-    for lim in affected:
-        lim.limit = 10_000
-        for action in ("scan", "guest_auth", "register", "login", "passcode"):
-            lim.reset_limit("testclient", action)
-    try:
-        yield
-    finally:
-        for lim, original_limit in originals:
-            lim.limit = original_limit
 
 
 def test_get_event_by_valid_slug(db_session: Session):

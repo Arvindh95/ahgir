@@ -8,7 +8,12 @@ import redis
 from app.main import app
 from app.database import Base, get_db
 from app.models import User, Event, Image, Face, GuestSession, AuditLog, RateLimit
-from app.rate_limiter import RateLimiter
+from app.rate_limiter import (
+    RateLimiter,
+    auth_rate_limiter,
+    event_passcode_rate_limiter,
+    share_rate_limiter,
+)
 
 # Configure Hypothesis for faster test runs
 settings.register_profile("ci", max_examples=20, deadline=5000, suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow])
@@ -99,3 +104,32 @@ def rate_limiter(redis_client):
     yield limiter
     # Cleanup: flush between tests
     redis_client.flushdb()
+
+
+@pytest.fixture(autouse=True)
+def _lift_auth_rate_limits():
+    """The TestClient always sources requests from a single 'testclient' IP and
+    we share the production Redis bucket. Without this, sequential auth /
+    guest_auth / passcode calls within a single test (and across tests) trip
+    the per-IP limiter. The scan rate limiter is intentionally NOT touched so
+    test_rate_limiting_integration can still exercise the scan budget.
+    """
+    affected = (auth_rate_limiter, event_passcode_rate_limiter, share_rate_limiter)
+    originals = [(lim, lim.limit) for lim in affected]
+    for lim in affected:
+        lim.limit = 10_000
+        for action in (
+            "guest_auth", "register", "login", "passcode", "share",
+            "forgot_password", "resend_verify",
+        ):
+            try:
+                lim.reset_limit("testclient", action)
+            except Exception:
+                # Redis may be unavailable in some unit-only test runs; the
+                # bumped limit alone is enough to keep tests passing.
+                pass
+    try:
+        yield
+    finally:
+        for lim, original_limit in originals:
+            lim.limit = original_limit

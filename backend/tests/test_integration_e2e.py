@@ -13,7 +13,7 @@ import numpy as np
 from unittest.mock import patch, MagicMock, AsyncMock
 from app.models import User, Event, Image, Face
 from app.auth import create_access_token, hash_password
-from app.rate_limiter import rate_limiter, auth_rate_limiter
+from app.rate_limiter import rate_limiter
 
 
 # Password that satisfies the UserRegister validator (upper/lower/digit/special).
@@ -21,23 +21,11 @@ _VALID_PW = "SecurePass1!"
 
 
 @pytest.fixture(autouse=True)
-def _disable_rate_limits():
-    """e2e tests pile multiple guest_auth/login/scan calls into a single run.
-    Production caps these per IP and TestClient always hits the bucket from
-    'testclient', so raise the ceiling to effectively-infinite for the test
-    and put it back after.
-    """
-    originals = [(lim, lim.limit) for lim in (rate_limiter, auth_rate_limiter)]
-    for lim in (rate_limiter, auth_rate_limiter):
-        lim.limit = 10_000
-        # Also drop any stale "testclient" buckets carried over from earlier runs.
-        for action in ("scan", "guest_auth", "register", "login"):
-            lim.reset_limit("testclient", action)
-    try:
-        yield
-    finally:
-        for lim, original_limit in originals:
-            lim.limit = original_limit
+def _reset_scan_bucket():
+    """conftest already lifts auth-side limits; clear the scan bucket here for
+    e2e flows that call /scan after auth."""
+    rate_limiter.reset_limit("testclient", "scan")
+    yield
 
 
 def _compreface_subject_result(event_id, image_id, similarity: float = 0.95):

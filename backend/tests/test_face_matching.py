@@ -16,25 +16,19 @@ from app.main import app
 from app.database import get_db
 from app.models import User, Event, Image, Face, GuestSession
 from app.auth import hash_password, create_event_token
-from app.rate_limiter import rate_limiter, auth_rate_limiter
+from app.rate_limiter import rate_limiter
 from app.storage import storage_service
 
 client = TestClient(app)
 
 
 @pytest.fixture(autouse=True)
-def _disable_rate_limits():
-    """Lift rate limits for tests; the global Redis bucket is shared with prod."""
-    originals = [(lim, lim.limit) for lim in (rate_limiter, auth_rate_limiter)]
-    for lim in (rate_limiter, auth_rate_limiter):
-        lim.limit = 10_000
-        for action in ("scan", "guest_auth", "register", "login"):
-            lim.reset_limit("testclient", action)
-    try:
-        yield
-    finally:
-        for lim, original_limit in originals:
-            lim.limit = original_limit
+def _reset_scan_bucket():
+    """conftest already lifts auth/passcode/share limits — also flush the scan
+    bucket for these tests because /scan is the focal endpoint here.
+    """
+    rate_limiter.reset_limit("testclient", "scan")
+    yield
 
 
 def _compreface_subject_result(event_id, image_id, similarity: float = 0.95):
