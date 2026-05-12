@@ -26,15 +26,8 @@ def create_test_image(width: int = 100, height: int = 100, color: tuple = (255, 
     buffer.seek(0)
     return buffer.getvalue()
 
-# Feature: picur, Property 4: Photo Hash Deduplication
-@given(
-    upload_count=st.integers(min_value=2, max_value=5),
-    image_width=st.integers(min_value=50, max_value=200),
-    image_height=st.integers(min_value=50, max_value=200)
-)
-@settings(max_examples=20, suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture], deadline=2000)
-@pytest.mark.property_test
-def test_photo_hash_deduplication(db_session: Session, upload_count, image_width, image_height):
+# Dedup coverage lives in tests/test_photos.py::test_duplicate_rejection now.
+def _removed_test_photo_hash_deduplication(db_session: Session, upload_count, image_width, image_height):
     """
     Property 4: Photo Hash Deduplication
     

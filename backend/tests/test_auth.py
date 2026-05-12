@@ -13,6 +13,11 @@ from app.auth import hash_password
 
 client = TestClient(app)
 
+# Password that satisfies the UserRegister validator:
+# >=8 chars, upper, lower, digit, special.
+VALID_PASSWORD = "SecurePass1!"
+
+
 def test_register_success(db_session: Session):
     """Test successful user registration"""
     # Override the get_db dependency
@@ -21,28 +26,28 @@ def test_register_success(db_session: Session):
             yield db_session
         finally:
             pass
-    
+
     app.dependency_overrides[get_db] = override_get_db
-    
+
     response = client.post(
         "/auth/register",
         json={
             "email": "test@example.com",
-            "password": "securepassword123"
+            "password": VALID_PASSWORD
         }
     )
-    
+
     assert response.status_code == 201
     data = response.json()
     assert "user_id" in data
     assert data["email"] == "test@example.com"
     assert "created_at" in data
-    
+
     # Verify user was created in database
     user = db_session.query(User).filter(User.email == "test@example.com").first()
     assert user is not None
     assert user.email == "test@example.com"
-    
+
     app.dependency_overrides.clear()
 
 def test_register_duplicate_email(db_session: Session):
@@ -50,69 +55,71 @@ def test_register_duplicate_email(db_session: Session):
     # Create a user first
     existing_user = User(
         email="duplicate@example.com",
-        password_hash=hash_password("password123")
+        password_hash=hash_password(VALID_PASSWORD)
     )
     db_session.add(existing_user)
     db_session.commit()
-    
+
     # Override the get_db dependency
     def override_get_db():
         try:
             yield db_session
         finally:
             pass
-    
+
     app.dependency_overrides[get_db] = override_get_db
-    
+
     # Try to register with same email
     response = client.post(
         "/auth/register",
         json={
             "email": "duplicate@example.com",
-            "password": "anotherpassword"
+            "password": VALID_PASSWORD
         }
     )
-    
+
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "DUPLICATE_EMAIL"
     assert "Email already registered" in response.json()["error"]["message"]
-    
+
     app.dependency_overrides.clear()
 
 def test_login_success(db_session: Session):
     """Test successful login"""
-    # Create a user
+    # Create a user (verified — register flow now requires email verification
+    # before login succeeds).
     user = User(
         email="login@example.com",
-        password_hash=hash_password("mypassword")
+        password_hash=hash_password(VALID_PASSWORD),
+        is_verified=True,
     )
     db_session.add(user)
     db_session.commit()
-    
+
     # Override the get_db dependency
     def override_get_db():
         try:
             yield db_session
         finally:
             pass
-    
+
     app.dependency_overrides[get_db] = override_get_db
-    
+
     # Login
     response = client.post(
         "/auth/login",
         json={
             "email": "login@example.com",
-            "password": "mypassword"
+            "password": VALID_PASSWORD
         }
     )
-    
+
     assert response.status_code == 200
     data = response.json()
     assert "access_token" in data
     assert data["token_type"] == "bearer"
     assert "expires_in" in data
-    
+
     app.dependency_overrides.clear()
 
 def test_login_invalid_email(db_session: Session):
@@ -144,7 +151,8 @@ def test_login_invalid_password(db_session: Session):
     # Create a user
     user = User(
         email="wrongpass@example.com",
-        password_hash=hash_password("correctpassword")
+        password_hash=hash_password(VALID_PASSWORD),
+        is_verified=True,
     )
     db_session.add(user)
     db_session.commit()
@@ -163,10 +171,10 @@ def test_login_invalid_password(db_session: Session):
         "/auth/login",
         json={
             "email": "wrongpass@example.com",
-            "password": "wrongpassword"
+            "password": "WrongPass1!"
         }
     )
-    
+
     assert response.status_code == 401
     assert "Invalid credentials" in response.json()["detail"]
     
@@ -177,26 +185,27 @@ def test_get_me_success(db_session: Session):
     # Create a user
     user = User(
         email="getme@example.com",
-        password_hash=hash_password("password")
+        password_hash=hash_password(VALID_PASSWORD),
+        is_verified=True,
     )
     db_session.add(user)
     db_session.commit()
-    
+
     # Override the get_db dependency
     def override_get_db():
         try:
             yield db_session
         finally:
             pass
-    
+
     app.dependency_overrides[get_db] = override_get_db
-    
+
     # Login to get token
     login_response = client.post(
         "/auth/login",
         json={
             "email": "getme@example.com",
-            "password": "password"
+            "password": VALID_PASSWORD
         }
     )
     token = login_response.json()["access_token"]

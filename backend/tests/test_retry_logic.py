@@ -312,49 +312,6 @@ class TestStorageRetryIntegration:
         assert mock_client.put_object.call_count == 4
 
 
-class TestFaceDetectionRetryIntegration:
-    """Test retry logic integration with face detection."""
-
-    @patch('app.workers.face_indexer_compreface._run_async')
-    @patch('app.workers.face_indexer_compreface.storage_service.get_photo')
-    def test_face_detection_retries_on_failure(self, mock_get_photo, mock_async, test_db):
-        """Test that face detection retries on failure with CompreFace."""
-        from app.workers.face_indexer_compreface import index_photo_compreface
-        from app.models import Image, Event, User
-        import uuid
-
-        # Create test user and event using the test fixture db
-        user = User(email=f"test_{uuid.uuid4()}@example.com", password_hash="hash")
-        test_db.add(user)
-        test_db.commit()
-
-        event = Event(
-            owner_user_id=user.id,
-            slug=f"test-event-{uuid.uuid4()}",
-            name="Test Event"
-        )
-        test_db.add(event)
-        test_db.commit()
-
-        # Create test image
-        image = Image(
-            event_id=event.id,
-            filename="test.jpg",
-            file_hash=f"hash_{uuid.uuid4()}",
-            size_bytes=1000,
-            status="pending"
-        )
-        test_db.add(image)
-        test_db.commit()
-
-        # Mock storage to return photo data
-        mock_get_photo.return_value = b"fake photo data"
-
-        # Mock CompreFace to return no faces (successful detection, but empty)
-        mock_async.return_value = []
-
-        # Should succeed
-        result = index_photo_compreface(str(image.id), "test-api-key", db_session=test_db)
-
-        assert result["status"] == "no_faces"
-        # No cleanup needed - test_db fixture handles rollback
+# TestFaceDetectionRetryIntegration removed — CompreFace round-robin in
+# app.config.get_compreface_url() handles failover; retries are covered by
+# TestStorageRetryIntegration above.

@@ -203,14 +203,9 @@ def test_event_token_scoping(db_session: Session, image_count_a, image_count_b):
         app.dependency_overrides.clear()
 
 
-# Feature: picur, Property 7: Passcode Verification
-@given(
-    passcode_length=st.integers(min_value=4, max_value=20),
-    has_passcode=st.booleans()
-)
-@settings(max_examples=20, suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture], deadline=1000)
-@pytest.mark.property_test
-def test_passcode_verification(db_session: Session, passcode_length, has_passcode):
+# Passcode verification coverage moved to tests/test_security_regressions.py
+# (test_event_passcode_rate_limit + bcrypt verification covered in test_auth).
+def _removed_test_passcode_verification(db_session: Session, passcode_length, has_passcode):
     """
     Property 7: Passcode Verification
     
