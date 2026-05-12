@@ -21,13 +21,23 @@ _VALID_PW = "SecurePass1!"
 
 
 @pytest.fixture(autouse=True)
-def _reset_rate_limiters():
-    """TestClient always reports IP 'testclient' — flush its bucket between tests."""
-    rate_limiter.reset_limit("testclient", "scan")
-    auth_rate_limiter.reset_limit("testclient", "guest_auth")
-    auth_rate_limiter.reset_limit("testclient", "register")
-    auth_rate_limiter.reset_limit("testclient", "login")
-    yield
+def _disable_rate_limits():
+    """e2e tests pile multiple guest_auth/login/scan calls into a single run.
+    Production caps these per IP and TestClient always hits the bucket from
+    'testclient', so raise the ceiling to effectively-infinite for the test
+    and put it back after.
+    """
+    originals = [(lim, lim.limit) for lim in (rate_limiter, auth_rate_limiter)]
+    for lim in (rate_limiter, auth_rate_limiter):
+        lim.limit = 10_000
+        # Also drop any stale "testclient" buckets carried over from earlier runs.
+        for action in ("scan", "guest_auth", "register", "login"):
+            lim.reset_limit("testclient", action)
+    try:
+        yield
+    finally:
+        for lim, original_limit in originals:
+            lim.limit = original_limit
 
 
 def _compreface_subject_result(event_id, image_id, similarity: float = 0.95):

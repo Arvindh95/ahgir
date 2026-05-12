@@ -23,11 +23,18 @@ client = TestClient(app)
 
 
 @pytest.fixture(autouse=True)
-def _reset_rate_limiters():
-    """Clear scan + auth rate buckets so test order doesn't leak through Redis."""
-    rate_limiter.reset_limit("testclient", "scan")
-    auth_rate_limiter.reset_limit("testclient", "guest_auth")
-    yield
+def _disable_rate_limits():
+    """Lift rate limits for tests; the global Redis bucket is shared with prod."""
+    originals = [(lim, lim.limit) for lim in (rate_limiter, auth_rate_limiter)]
+    for lim in (rate_limiter, auth_rate_limiter):
+        lim.limit = 10_000
+        for action in ("scan", "guest_auth", "register", "login"):
+            lim.reset_limit("testclient", action)
+    try:
+        yield
+    finally:
+        for lim, original_limit in originals:
+            lim.limit = original_limit
 
 
 def _compreface_subject_result(event_id, image_id, similarity: float = 0.95):
