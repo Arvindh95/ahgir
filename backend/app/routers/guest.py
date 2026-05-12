@@ -342,7 +342,8 @@ async def _scan_with_compreface(
         result_image_id = match_data["image_id"]
         image_exists = db.query(Image.id).filter(
             Image.id == uuid.UUID(result_image_id),
-            Image.event_id == event_id
+            Image.event_id == event_id,
+            Image.status == 'indexed'
         ).first()
         if not image_exists:
             continue
@@ -358,6 +359,7 @@ async def _scan_with_compreface(
             "face_bbox": bbox
         })
 
+    matches.sort(key=lambda match: match["similarity"], reverse=True)
     logger.info(f"Found {len(matches)} matches from {len(all_frames)} frames")
 
     scan_id = str(uuid.uuid4())

@@ -205,13 +205,12 @@ def index_photo_compreface(image_id: str, api_key: str, db_session: Optional[Ses
 
         # Step 1: Detect all faces using Detection service
         logger.info(f"Detecting faces in image {image_id} using CompreFace Detection")
-        faces = _run_async(_detect_faces_compreface(oriented_bytes, detection_api_key, det_prob_threshold=0.5))
+        faces = _run_async(_detect_faces_compreface(
+            oriented_bytes,
+            detection_api_key,
+            det_prob_threshold=settings.face_min_detection_probability
+        ))
         logger.info(f"Detected {len(faces)} faces in image {image_id}")
-
-        # If no faces detected, try with lower threshold
-        if len(faces) == 0:
-            faces = _run_async(_detect_faces_compreface(oriented_bytes, detection_api_key, det_prob_threshold=0.3))
-            logger.info(f"Detected {len(faces)} faces with lower threshold")
 
         # Step 2: Crop and add each detected face to Recognition service
         # Use the EXIF-corrected image for cropping
@@ -221,11 +220,9 @@ def index_photo_compreface(image_id: str, api_key: str, db_session: Optional[Ses
         skipped_low_quality = 0
         for idx, face_data in enumerate(faces):
             box = face_data.get("box", {})
-            # CompreFace nests detection probability under "box", not at the top
-            # level. Reading it from face_data returned 0 for every face, which
-            # tripped the face_min_detection_probability gate added in b9ffe5c
-            # and caused every newly-uploaded photo to land as 'no_faces'.
-            probability = box.get("probability", 0)
+            # CompreFace normally nests probability under "box", but some mocks
+            # and older deployments expose it at the top level.
+            probability = box.get("probability", face_data.get("probability", 0))
 
             x_min = int(box.get("x_min", 0))
             y_min = int(box.get("y_min", 0))

@@ -4,16 +4,16 @@ Levers to improve recall (% of a guest's photos surfaced) and precision
 (no strangers in results), ordered by effort. Defer until real-user
 signal says which problem actually exists.
 
-## Current State (prod, 2026-05-07)
+## Current State (prod defaults, 2026-05-12)
 
 | Setting | Value | Where |
 |---|---|---|
-| `face_similarity_threshold` | **0.90** | `.env.production` (was 0.85, reverted at user request) |
-| Detection probability threshold | 0.5 (fallback 0.3) | `face_indexer_compreface.py`, `guest.py` |
-| `prediction_count` (scan-side top-K) | 100 | `guest.py:37` |
-| Indexing quality gate: min detection prob | 0.7 | `config.py:face_min_detection_probability` |
-| Indexing quality gate: min crop pixels | 80 | `config.py:face_min_crop_pixels` |
-| Multi-frame scan | 3 frames, **pose-gated** (yaw-detected) | `scan.tsx` on `feat/pose-gated-scan` |
+| `face_similarity_threshold` | **0.80** | `config.py`, `docker-compose.yml` |
+| Detection probability threshold | 0.3 for indexing; scan retries at 0.3 when 0.5 finds nothing | `face_indexer_compreface.py`, `guest.py` |
+| `prediction_count` (scan-side top-K) | 500 | `guest.py:37` |
+| Indexing quality gate: min detection prob | 0.3 | `config.py:face_min_detection_probability` |
+| Indexing quality gate: min crop pixels | 32 | `config.py:face_min_crop_pixels` |
+| Multi-frame scan | 3 frames, **pose-gated** (yaw-detected) | `scan.tsx` |
 | Engine | CompreFace 1.2.0 (ArcFace under hood) | `docker-compose.yml` |
 | API replicas | 2× `compreface-api` in prod | `docker-compose.prod.yml` |
 | Subject model | One CompreFace subject per face crop (not clustered) | `face_indexer_compreface.py:255` |
@@ -24,9 +24,9 @@ signal says which problem actually exists.
 
 | # | Lever | Effort | Recall impact | Risk |
 |---|---|---|---|---|
-| 1 | Bump `prediction_count` 100 → 200 in `guest.py:37` | 5 min | Marginal: catches edge candidates that 0.90 threshold then filters anyway | None |
+| 1 | Add scan telemetry for score distributions and false-positive reports | 30 min | Lets thresholds be calibrated from real events instead of guesswork | Low |
 | 2 | Bump capture JPEG quality 0.9 → 0.95 in `scan.tsx:263` | 5 min | +3-5% on small faces | Larger upload payload (already capped at 8MB/frame) |
-| 3 | Default detection threshold 0.5 → 0.3 (drop fallback) in `face_indexer_compreface.py:207` | 10 min | More face crops indexed | Junk faces if quality gate (`min_prob=0.7`) doesn't catch them |
+| 3 | Default detection threshold 0.5 → 0.3 in `face_indexer_compreface.py` | Done | More face crops indexed | Junk faces if downstream add-face gate doesn't catch them |
 | 4 | Increase scan frames 3 → 5 (add look-up + look-down phases to pose-gated flow) | 30 min | +5-10% on hard angles, especially candid downward shots | Scan UX 5s vs 3.5s |
 
 ### Medium (1-4 hrs)
@@ -51,7 +51,7 @@ Don't tune blind. Watch for these signals:
 
 | Signal | Probable lever |
 |---|---|
-| Guests in real events report "I'm in 50 photos but only see 30" (≥30% recall miss) | Drop threshold to 0.85, or do #7 subject clustering |
+| Guests in real events report "I'm in 50 photos but only see 30" (≥30% recall miss) | Check indexing status, reindex, then consider #7 subject clustering |
 | Guests report seeing strangers' photos | Keep threshold ≥ 0.90, investigate quality gate (#3 may be too aggressive) |
 | Scan times >5s on mobile network | Reduce frames or compress capture (don't do #2/#4) |
 | "Why isn't my child showing up" | #5 UI hints or #10 InsightFace |
@@ -61,14 +61,14 @@ Don't tune blind. Watch for these signals:
 
 ## What's Already Shipped (don't redo)
 
-- Threshold lowered to 0.85 then **reverted to 0.90** at user request (2026-05-07)
-- Quality gate at indexing (min_prob 0.7, min_crop 80px) added 2026-05-07
-- Multi-frame scan upgraded from timer-based to **pose-gated** capture using face-api 68-point landmarks (`feat/pose-gated-scan`, 2026-05-07) — guarantees 3 frames span real angles
+- Threshold lowered to 0.80 for recall after missing-photo reports (2026-05-12)
+- Quality gate relaxed to min_prob 0.3 and min_crop 32px (2026-05-12)
+- Multi-frame scan upgraded from timer-based to **pose-gated** capture using face-api 68-point landmarks — captures straight, left, and right frames
 - Retention now deletes CompreFace subjects (no orphan accumulation)
 
 ## Recommended Sequence
 
 1. **Ship pose-gated scan** ✓ done
-2. **Run first real wedding** — gather signal
-3. Pick **one** lever based on what actually broke
-4. Don't preemptively stack changes — each change masks the impact of the next
+2. **Reindex existing events** so relaxed indexing can register previously skipped faces
+3. Run a real event sample and inspect false positives vs missed photos
+4. If recall is still weak, prioritize subject clustering over further threshold drops

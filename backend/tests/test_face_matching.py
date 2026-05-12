@@ -192,6 +192,56 @@ def test_successful_face_scan_with_matches(db_session: Session, setup_event_with
         app.dependency_overrides.clear()
 
 
+def test_face_scan_returns_all_matches_sorted_by_similarity(db_session: Session, setup_event_with_faces):
+    """A scan can match several event photos; return all above-threshold matches in confidence order."""
+    def override_get_db():
+        try:
+            yield db_session
+        finally:
+            pass
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    try:
+        data = setup_event_with_faces
+        event = data["event"]
+        event_token = data["event_token"]
+        images = data["images"]
+
+        image_bytes = create_dummy_image_bytes()
+        image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+
+        recognition_result = [{
+            "box": {"x_min": 10, "y_min": 10, "x_max": 60, "y_max": 60, "probability": 0.99},
+            "subjects": [
+                {"subject": f"{event.id}/{images[1].id}", "similarity": 0.87},
+                {"subject": f"{event.id}/{images[0].id}", "similarity": 0.96},
+                {"subject": f"{event.id}/{images[2].id}", "similarity": 0.86},
+                {"subject": f"{event.id}/{images[1].id}", "similarity": 0.92},
+            ],
+        }]
+
+        mock_frame = AsyncMock(return_value=recognition_result)
+        with patch("app.routers.guest._recognize_single_frame", mock_frame):
+            response = client.post(
+                "/scan",
+                json={"image": image_b64},
+                headers={"Authorization": f"Bearer {event_token}"},
+            )
+
+        assert response.status_code == 200, response.text
+        matches = response.json()["matches"]
+
+        assert [m["image_id"] for m in matches] == [
+            str(images[0].id),
+            str(images[1].id),
+            str(images[2].id),
+        ]
+        assert [m["similarity"] for m in matches] == [0.96, 0.92, 0.86]
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_download_url_generation_based_on_allow_downloads(db_session: Session):
     """When allow_downloads is False, /scan responses must not expose download_url."""
     def override_get_db():

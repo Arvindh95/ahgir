@@ -26,15 +26,19 @@ class Settings(BaseSettings):
     jwt_expiration_hours: int = 24
     
     # Face Recognition
-    face_similarity_threshold: float = 0.90
-    face_min_detection_probability: float = 0.7
+    # Real event photos vary by lighting, angle, and expression; 0.90 misses too
+    # many same-person matches. Keep this env-tunable and calibrate per event set.
+    face_similarity_threshold: float = 0.80
+    # Index broadly, then let CompreFace's add-face detection gate and scan
+    # similarity threshold reject unusable or unrelated faces.
+    face_min_detection_probability: float = 0.3
     # Minimum bounding-box side (px) for a detected face to be registered. 80
     # was originally chosen for selfie-style portraits, but event galleries
     # are dominated by group/crowd shots where faces are commonly 40-60 px
     # at modest source resolutions (1280-2000 wide). CompreFace's recognition
     # step still re-runs detection on the crop (det_prob_threshold=0.5), so
     # crops that are too blurry to embed are rejected at that second gate.
-    face_min_crop_pixels: int = 40
+    face_min_crop_pixels: int = 32
 
     # CompreFace (comma-separated URLs for round-robin load balancing)
     compreface_api_url: str = "http://compreface-api:8080"

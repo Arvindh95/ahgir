@@ -62,9 +62,9 @@ def create_mock_compreface_detect_response(num_faces: int = 1):
                 "x_min": 50 + (i * 100),
                 "y_min": 50 + (i * 100),
                 "x_max": 150 + (i * 100),
-                "y_max": 150 + (i * 100)
-            },
-            "probability": 0.95
+                "y_max": 150 + (i * 100),
+                "probability": 0.95,
+            }
         })
     return faces
 
@@ -164,6 +164,74 @@ class TestFaceIndexingWorker:
             assert face.compreface_subject_id is not None, "Should have CompreFace subject ID"
 
         # Cleanup
+        storage_service.delete_photo(event.id, image.id)
+
+    @patch('app.workers.face_indexer_compreface._run_async')
+    def test_index_photo_keeps_usable_group_photo_faces(self, mock_run_async, test_db):
+        """Faces CompreFace can register should not be dropped by a stricter prefilter."""
+        mock_detect = [{
+            "box": {
+                "x_min": 50,
+                "y_min": 50,
+                "x_max": 130,
+                "y_max": 130,
+                "probability": 0.35,
+            }
+        }]
+        mock_run_async.side_effect = [
+            mock_detect,
+            create_mock_compreface_add_response(),
+        ]
+
+        user = User(
+            email=f"test_{uuid.uuid4()}@example.com",
+            password_hash=hash_password("password")
+        )
+        test_db.add(user)
+        test_db.commit()
+
+        event = Event(
+            owner_user_id=user.id,
+            slug=f"test-event-{uuid.uuid4()}",
+            name="Test Event",
+            allow_downloads=True,
+            retention_days=90
+        )
+        test_db.add(event)
+        test_db.commit()
+
+        image = Image(
+            event_id=event.id,
+            filename="group.jpg",
+            file_hash=f"hash_{uuid.uuid4()}",
+            size_bytes=1024,
+            width=400,
+            height=400,
+            status='pending',
+            face_count=0
+        )
+        test_db.add(image)
+        test_db.commit()
+
+        image_bytes = create_test_image_with_faces(num_faces=1)
+        storage_service.upload_photo(
+            event_id=event.id,
+            image_id=image.id,
+            photo_data=image_bytes,
+            photo_type='original'
+        )
+
+        result = index_photo_compreface(str(image.id), "test-api-key", db_session=test_db)
+        test_db.refresh(image)
+
+        assert result['status'] == 'indexed'
+        assert result['face_count'] == 1
+        assert image.status == 'indexed'
+        assert image.face_count == 1
+
+        face = test_db.query(Face).filter(Face.image_id == image.id).one()
+        assert face.quality_score == 0.35
+
         storage_service.delete_photo(event.id, image.id)
 
     @patch('app.workers.face_indexer_compreface._run_async')
