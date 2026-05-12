@@ -1,7 +1,34 @@
 import { useState, FormEvent } from 'react'
 import Head from 'next/head'
 import { authService } from '@/lib/auth'
-import { Loader2, Lock, Mail, UserPlus, CheckCircle } from 'lucide-react'
+import { Loader2, Lock, Mail, UserPlus, CheckCircle, Check, Circle } from 'lucide-react'
+
+const PASSWORD_RULES = [
+  { label: 'At least 8 characters', test: (p: string) => p.length >= 8 },
+  { label: 'One uppercase letter (A-Z)', test: (p: string) => /[A-Z]/.test(p) },
+  { label: 'One lowercase letter (a-z)', test: (p: string) => /[a-z]/.test(p) },
+  { label: 'One digit (0-9)', test: (p: string) => /\d/.test(p) },
+  { label: 'One special character (!@#$%^&*…)', test: (p: string) => /[!@#$%^&*(),.?":{}|<>]/.test(p) },
+]
+
+function PasswordChecklist({ password }: { password: string }) {
+  return (
+    <ul className="space-y-1 text-xs">
+      {PASSWORD_RULES.map((rule) => {
+        const ok = rule.test(password)
+        return (
+          <li
+            key={rule.label}
+            className={`flex items-center gap-2 ${ok ? 'text-green-400' : 'text-gray-500'}`}
+          >
+            {ok ? <Check className="w-3.5 h-3.5" /> : <Circle className="w-3.5 h-3.5" />}
+            <span>{rule.label}</span>
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
 
 export default function Register() {
   const [email, setEmail] = useState('')
@@ -172,6 +199,7 @@ export default function Register() {
                 disabled={isLoading}
               />
             </div>
+            <PasswordChecklist password={password} />
           </div>
 
           <div className="space-y-2">
