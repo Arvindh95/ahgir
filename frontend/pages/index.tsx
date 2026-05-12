@@ -310,6 +310,27 @@ export default function Home() {
           </FadeInStagger>
 
           <FadeIn>
+            <div className="max-w-3xl mx-auto mt-16">
+              <div className="glass-card rounded-2xl p-8 text-center">
+                <div className="text-xs font-bold text-blue-400 mb-3 tracking-wider">SHOOTING ONE EVENT?</div>
+                <h3 className="text-2xl font-bold mb-3">One-time event packages</h3>
+                <p className="text-gray-400 mb-6 max-w-xl mx-auto">
+                  Shooting a single event and don&apos;t need a recurring subscription?
+                  We offer one-time event packages tailored to your photo count and retention needs.
+                  Contact us with your event details and we&apos;ll send a custom quote.
+                </p>
+                <a
+                  href="mailto:support@picur.my?subject=One-time%20event%20package&body=Hi%2C%20I'd%20like%20a%20quote%20for%20a%20one-time%20event.%0A%0AEvent%20date%3A%0AEstimated%20guest%20count%3A%0AEstimated%20photo%20count%3A%0AAccess%20duration%20needed%3A"
+                  className="inline-flex items-center gap-2 bg-white text-black px-6 py-3 rounded-xl font-semibold text-sm hover:bg-gray-100 transition-colors"
+                >
+                  Request a quote
+                  <ArrowRight className="w-4 h-4" />
+                </a>
+              </div>
+            </div>
+          </FadeIn>
+
+          <FadeIn>
             <div className="text-center mt-12">
               <Link
                 href="/pricing"
