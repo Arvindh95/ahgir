@@ -79,7 +79,6 @@ services:
     container_name: compreface-core-2
     environment:
       ML_PORT: "3000"
-      ML_PLUGINS_LIST: "calculator,gender"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/healthcheck"]
       interval: 30s
