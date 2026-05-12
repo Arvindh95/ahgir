@@ -296,39 +296,29 @@ async def _scan_with_compreface(
     logger.info(f"Multi-scan: processed {len(all_frames)} frames, "
                 f"faces found in {sum(1 for r in frame_results if r)} frames")
 
-    # Collect all subjects across all frames, keeping highest similarity per image
-    # key: image_id -> {similarity, subject_id, face_bbox}
-    best_matches: dict = {}
-    similarity_threshold = settings.face_similarity_threshold
+    # Collect every candidate match that clears the LOWEST tier — we will
+    # re-check each against a stricter, size-aware threshold once we look up
+    # the indexed Face row.
+    baseline_threshold = settings.face_similarity_threshold
+    candidates: list[dict] = []
 
     for recognition_results in frame_results:
         for face_result in recognition_results:
-            subjects = face_result.get("subjects", [])
-            for subject in subjects:
-                subject_id = subject.get("subject", "")
+            for subject in face_result.get("subjects", []):
                 similarity = subject.get("similarity", 0)
-
-                if similarity < similarity_threshold:
+                if similarity < baseline_threshold:
                     continue
-
+                subject_id = subject.get("subject", "")
                 parts = subject_id.split("/")
-                if len(parts) >= 2:
-                    result_event_id = parts[0]
-                    result_image_id = parts[1]
+                if len(parts) < 2 or parts[0] != str(event_id):
+                    continue
+                candidates.append({
+                    "subject_id": subject_id,
+                    "image_id": parts[1],
+                    "similarity": similarity,
+                })
 
-                    if result_event_id != str(event_id):
-                        continue
-
-                    # Keep highest similarity per image across all frames
-                    existing = best_matches.get(result_image_id)
-                    if existing is None or similarity > existing["similarity"]:
-                        best_matches[result_image_id] = {
-                            "image_id": result_image_id,
-                            "similarity": similarity,
-                            "subject_id": subject_id,
-                        }
-
-    if not best_matches:
+    if not candidates:
         logger.warning("No matching faces found across all frames")
         return FaceScanResponse(
             matches=[],
@@ -336,7 +326,55 @@ async def _scan_with_compreface(
             total_matches=0
         )
 
-    # Verify images exist and get bboxes
+    # Batch-fetch the Face rows so we can compute per-face min_side without N
+    # queries.
+    subject_ids = list({c["subject_id"] for c in candidates})
+    faces_by_subject = {
+        f.compreface_subject_id: f
+        for f in db.query(Face).filter(Face.compreface_subject_id.in_(subject_ids)).all()
+    }
+
+    def _required_threshold(min_side_px: float) -> float:
+        """Size-aware similarity floor for false-positive suppression."""
+        if min_side_px >= settings.face_size_large_px:
+            return settings.face_similarity_threshold
+        if min_side_px >= settings.face_size_medium_px:
+            return settings.face_similarity_threshold_medium
+        return settings.face_similarity_threshold_small
+
+    # Image-id -> best (highest-similarity) qualifying match.
+    best_matches: dict = {}
+    for c in candidates:
+        face = faces_by_subject.get(c["subject_id"])
+        if face is None or not face.bbox or len(face.bbox) < 4:
+            # No bbox = can't tier; require strictest floor.
+            min_side = 0.0
+        else:
+            min_side = min(face.bbox[2] - face.bbox[0], face.bbox[3] - face.bbox[1])
+
+        if c["similarity"] < _required_threshold(min_side):
+            continue
+
+        existing = best_matches.get(c["image_id"])
+        if existing is None or c["similarity"] > existing["similarity"]:
+            best_matches[c["image_id"]] = {
+                "image_id": c["image_id"],
+                "similarity": c["similarity"],
+                "subject_id": c["subject_id"],
+                "bbox": face.bbox if face and face.bbox else [0, 0, 0, 0],
+            }
+
+    if not best_matches:
+        logger.info(
+            f"All {len(candidates)} candidates filtered out by size-tiered threshold"
+        )
+        return FaceScanResponse(
+            matches=[],
+            scan_id=str(uuid.uuid4()),
+            total_matches=0
+        )
+
+    # Verify images still exist + status is indexed.
     matches = []
     for match_data in best_matches.values():
         result_image_id = match_data["image_id"]
@@ -347,16 +385,10 @@ async def _scan_with_compreface(
         ).first()
         if not image_exists:
             continue
-
-        face = db.query(Face).filter(
-            Face.compreface_subject_id == match_data["subject_id"]
-        ).first()
-        bbox = face.bbox if face else [0, 0, 0, 0]
-
         matches.append({
             "image_id": result_image_id,
             "similarity": match_data["similarity"],
-            "face_bbox": bbox
+            "face_bbox": match_data["bbox"],
         })
 
     matches.sort(key=lambda match: match["similarity"], reverse=True)

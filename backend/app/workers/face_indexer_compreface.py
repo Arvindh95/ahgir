@@ -241,11 +241,14 @@ def index_photo_compreface(image_id: str, api_key: str, db_session: Optional[Ses
                 )
                 continue
 
-            # Add 20% padding around face
+            # Pad each face crop so the embedder gets more context (hair,
+            # ears, jaw line). 0.4 = 40% on each side; tuned via
+            # settings.face_crop_padding_factor.
             width = x_max - x_min
             height = y_max - y_min
-            padding_x = int(width * 0.2)
-            padding_y = int(height * 0.2)
+            pad_factor = settings.face_crop_padding_factor
+            padding_x = int(width * pad_factor)
+            padding_y = int(height * pad_factor)
 
             crop_x1 = max(0, x_min - padding_x)
             crop_y1 = max(0, y_min - padding_y)

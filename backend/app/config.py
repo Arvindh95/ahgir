@@ -26,19 +26,24 @@ class Settings(BaseSettings):
     jwt_expiration_hours: int = 24
     
     # Face Recognition
-    # Real event photos vary by lighting, angle, and expression; 0.90 misses too
-    # many same-person matches. Keep this env-tunable and calibrate per event set.
+    # Cosine-similarity floor applied to LARGE indexed faces (>= face_size_large_px).
+    # Tiny crops produce noisier embeddings and need a stricter floor — set those
+    # via the *_medium / *_small variants below.
     face_similarity_threshold: float = 0.80
-    # Index broadly, then let CompreFace's add-face detection gate and scan
-    # similarity threshold reject unusable or unrelated faces.
+    face_similarity_threshold_medium: float = 0.85
+    face_similarity_threshold_small: float = 0.90
+    # Indexed-face min_side (px) boundaries selecting which threshold applies.
+    face_size_medium_px: int = 60
+    face_size_large_px: int = 150
+    # Index broadly, then let CompreFace's add-face detection gate and the
+    # tiered scan similarity threshold reject unusable or unrelated faces.
     face_min_detection_probability: float = 0.3
-    # Minimum bounding-box side (px) for a detected face to be registered. 80
-    # was originally chosen for selfie-style portraits, but event galleries
-    # are dominated by group/crowd shots where faces are commonly 40-60 px
-    # at modest source resolutions (1280-2000 wide). CompreFace's recognition
-    # step still re-runs detection on the crop (det_prob_threshold=0.5), so
-    # crops that are too blurry to embed are rejected at that second gate.
+    # Minimum bounding-box side (px) for a detected face to be registered.
     face_min_crop_pixels: int = 32
+    # Fraction of the bbox width/height padded onto each crop before sending to
+    # the recognition embedder. More context (hair, ears, jaw) yields a more
+    # stable embedding; 0.4 ≈ 40% on each side.
+    face_crop_padding_factor: float = 0.4
 
     # CompreFace (comma-separated URLs for round-robin load balancing)
     compreface_api_url: str = "http://compreface-api:8080"
