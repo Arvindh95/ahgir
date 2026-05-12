@@ -222,6 +222,21 @@ def get_event_status(event_id: uuid.UUID, db: Session) -> EventStatusResponse:
         indexing_percentage=indexing_percentage
     )
 
+
+def ensure_event_mutable(event: Event, current_user: User) -> None:
+    """Block owner-side mutations for frozen or otherwise inactive events."""
+    if current_user.is_superadmin or event.status == "active":
+        return
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={
+            "code": "EVENT_NOT_ACTIVE",
+            "message": "This event is not active. Upgrade or delete a newer event to reactivate it before making changes.",
+            "event_status": event.status,
+        },
+    )
+
 # Endpoints
 @router.post("", response_model=EventResponse, status_code=status.HTTP_201_CREATED)
 async def create_event(
@@ -531,14 +546,7 @@ async def update_event(
     if not current_user.is_superadmin and event.owner_user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to update this event")
 
-    if not current_user.is_superadmin and event.status == 'frozen':
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "code": "event_frozen",
-                "message": "This event is frozen. Upgrade or delete a newer event to reactivate.",
-            },
-        )
+    ensure_event_mutable(event, current_user)
 
     old_slug = event.slug
     if update_data.slug is not None:
@@ -583,14 +591,7 @@ async def upload_cover_image(
     if not current_user.is_superadmin and event.owner_user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
 
-    if not current_user.is_superadmin and event.status == 'frozen':
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "code": "event_frozen",
-                "message": "This event is frozen. Upgrade or delete a newer event to reactivate.",
-            },
-        )
+    ensure_event_mutable(event, current_user)
 
     # Validate file type
     if not file.content_type or not file.content_type.startswith('image/'):
@@ -839,17 +840,7 @@ async def upload_photos(
             detail="You do not have permission to upload photos to this event"
         )
 
-    # Frozen events are read-only. Caused by tier downgrade where active-event
-    # quota dropped below current count - oldest events freeze. Upgrade or
-    # delete a newer event to reactivate.
-    if not current_user.is_superadmin and event.status == 'frozen':
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "code": "EVENT_FROZEN",
-                "message": "This event is frozen because your subscription doesn't cover this many active events. Upgrade or delete a newer event to reactivate.",
-            }
-        )
+    ensure_event_mutable(event, current_user)
 
     def _lock_and_get_photo_capacity():
         event_tier = (
@@ -969,6 +960,17 @@ async def upload_photos(
             
             # Extract EXIF data
             exif_data = extract_exif_data(file_data)
+            # Strip EXIF/GPS from bytes before persisting; the DB-side metadata
+            # is sanitized separately, but originals are served back to guests
+            # when allow_downloads is on.
+            original_bytes = strip_exif_bytes(file_data)
+            if len(original_bytes) > max_bytes:
+                failed.append(PhotoUploadFailure(
+                    filename=file.filename,
+                    reason=f"Processed file exceeds {max_bytes // (1024*1024)}MB upload limit",
+                    category="oversize",
+                ))
+                continue
 
             if not current_user.is_superadmin:
                 current_count, effective_limit, tier_label = _lock_and_get_photo_capacity()
@@ -993,7 +995,7 @@ async def upload_photos(
                 event_id=event_uuid,
                 filename=file.filename,
                 file_hash=file_hash,
-                size_bytes=len(file_data),
+                size_bytes=len(original_bytes),
                 width=width,
                 height=height,
                 exif_data=exif_data,
@@ -1002,11 +1004,6 @@ async def upload_photos(
             )
             
             db.add(new_image)
-            
-            # Strip EXIF/GPS from bytes before persisting; the DB-side metadata
-            # is sanitized separately, but originals are served back to guests
-            # when allow_downloads is on.
-            original_bytes = strip_exif_bytes(file_data)
             storage_service.upload_photo(
                 event_id=event_uuid,
                 image_id=image_id,
@@ -1036,7 +1033,7 @@ async def upload_photos(
                 metadata={
                     'filename': file.filename,
                     'image_id': str(image_id),
-                    'size_bytes': len(file_data)
+                    'size_bytes': len(original_bytes)
                 }
             )
             
@@ -1624,14 +1621,7 @@ async def reindex_event(
             detail="You do not have permission to reindex this event"
         )
 
-    if not current_user.is_superadmin and event.status == 'frozen':
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "code": "EVENT_FROZEN",
-                "message": "This event is frozen. Upgrade or delete a newer event to reactivate.",
-            }
-        )
+    ensure_event_mutable(event, current_user)
 
     # Get all images for this event
     images = db.query(Image).filter(Image.event_id == event_uuid).all()

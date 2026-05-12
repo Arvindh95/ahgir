@@ -86,7 +86,7 @@ class Settings(BaseSettings):
 settings = Settings()
 
 
-_PLACEHOLDER_TOKENS = ("change_me", "changeme", "your-secret", "yourdomain")
+_PLACEHOLDER_TOKENS = ("change_me", "changeme", "your-secret", "yourdomain", "example.com")
 
 
 def _looks_like_placeholder(value: str) -> bool:
@@ -104,18 +104,30 @@ def validate_production_secrets():
     errors = []
     if settings.jwt_secret_key in ("your-secret-key-change-in-production", "dev-only-not-for-prod", ""):
         errors.append("JWT_SECRET_KEY is unset or using dev default")
+    elif len(settings.jwt_secret_key) < 32:
+        errors.append("JWT_SECRET_KEY must be at least 32 characters")
     elif _looks_like_placeholder(settings.jwt_secret_key):
         errors.append("JWT_SECRET_KEY still contains a placeholder (e.g. CHANGE_ME_*)")
     if not settings.stripe_secret_key:
         errors.append("STRIPE_SECRET_KEY is unset")
+    elif _looks_like_placeholder(settings.stripe_secret_key):
+        errors.append("STRIPE_SECRET_KEY still contains a placeholder (e.g. CHANGE_ME_*)")
     if not settings.stripe_webhook_secret:
         errors.append("STRIPE_WEBHOOK_SECRET is unset")
+    elif _looks_like_placeholder(settings.stripe_webhook_secret):
+        errors.append("STRIPE_WEBHOOK_SECRET still contains a placeholder (e.g. CHANGE_ME_*)")
     if not settings.smtp_username or not settings.smtp_password:
         errors.append("SMTP_USERNAME or SMTP_PASSWORD is unset")
+    elif _looks_like_placeholder(settings.smtp_username) or _looks_like_placeholder(settings.smtp_password):
+        errors.append("SMTP_USERNAME or SMTP_PASSWORD still contains a placeholder")
     if not settings.compreface_api_key:
         errors.append("COMPREFACE_API_KEY is unset")
+    elif _looks_like_placeholder(settings.compreface_api_key):
+        errors.append("COMPREFACE_API_KEY still contains a placeholder (e.g. CHANGE_ME_*)")
     if not settings.compreface_detection_api_key:
         errors.append("COMPREFACE_DETECTION_API_KEY is unset")
+    elif _looks_like_placeholder(settings.compreface_detection_api_key):
+        errors.append("COMPREFACE_DETECTION_API_KEY still contains a placeholder (e.g. CHANGE_ME_*)")
     if settings.minio_secret_key in ("minioadmin", "minioadmin_dev_only", ""):
         errors.append("MINIO_SECRET_KEY is unset or using dev default")
     elif _looks_like_placeholder(settings.minio_secret_key):

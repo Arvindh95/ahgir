@@ -7,8 +7,10 @@ import uuid
 import pytest
 from fastapi import HTTPException
 
-from app.models import Payment, User, UserTier
-from app.routers import auth, guest, payments
+from app import config
+from app.models import Event, Face, Image, Payment, User, UserTier
+from app.routers import auth, events, guest, payments
+from app.utils import compreface as compreface_utils
 
 
 def _user(db_session):
@@ -216,3 +218,103 @@ def test_forgot_password_rate_limits_by_ip_and_email(db_session, monkeypatch):
 
     assert ("203.0.113.10", "forgot_password_ip") in calls
     assert ("victim@example.com", "forgot_password_email") in calls
+
+
+def test_event_owner_mutations_require_active_event(db_session):
+    user = _user(db_session)
+    frozen_event = Event(
+        owner_user_id=user.id,
+        slug=f"frozen-{uuid.uuid4().hex}",
+        name="Frozen Event",
+        status="frozen",
+    )
+    db_session.add(frozen_event)
+    db_session.flush()
+
+    with pytest.raises(HTTPException) as exc:
+        events.ensure_event_mutable(frozen_event, user)
+
+    assert exc.value.status_code == 403
+    assert exc.value.detail["code"] == "EVENT_NOT_ACTIVE"
+
+
+def test_compreface_event_cleanup_deletes_unique_subjects(db_session, monkeypatch):
+    user = _user(db_session)
+    event = Event(
+        owner_user_id=user.id,
+        slug=f"cleanup-{uuid.uuid4().hex}",
+        name="Cleanup Event",
+    )
+    image = Image(
+        event=event,
+        filename="photo.jpg",
+        file_hash="h",
+        size_bytes=1,
+        status="indexed",
+    )
+    db_session.add_all([
+        event,
+        image,
+        Face(
+            image=image,
+            event=event,
+            embedding=[0.0] * 512,
+            bbox=[0, 0, 10, 10],
+            quality_score=0.9,
+            compreface_subject_id="subject-1",
+        ),
+        Face(
+            image=image,
+            event=event,
+            embedding=[0.0] * 512,
+            bbox=[0, 0, 10, 10],
+            quality_score=0.9,
+            compreface_subject_id="subject-1",
+        ),
+    ])
+    db_session.flush()
+
+    calls = []
+
+    class Response:
+        status_code = 200
+        text = "ok"
+
+    monkeypatch.setattr(compreface_utils.settings, "compreface_api_key", "key")
+    monkeypatch.setattr(compreface_utils, "get_compreface_url", lambda: "http://compreface")
+    monkeypatch.setattr(
+        compreface_utils.httpx,
+        "delete",
+        lambda url, params, headers, timeout: calls.append(params["subject"]) or Response(),
+    )
+
+    deleted, failed = compreface_utils.delete_compreface_subjects_for_event(db_session, event.id)
+
+    assert deleted == 1
+    assert failed == 0
+    assert calls == ["subject-1"]
+
+
+def test_production_validation_rejects_placeholder_values(monkeypatch):
+    valid_values = {
+        "environment": "production",
+        "jwt_secret_key": "x" * 32,
+        "stripe_secret_key": "sk_live_real",
+        "stripe_webhook_secret": "whsec_real",
+        "smtp_username": "mailer",
+        "smtp_password": "smtp-secret",
+        "compreface_api_key": "recognition-key",
+        "compreface_detection_api_key": "detection-key",
+        "minio_secret_key": "minio-secret",
+        "cors_origins": "https://picur.my",
+        "frontend_url": "https://picur.my",
+    }
+    for key, value in valid_values.items():
+        monkeypatch.setattr(config.settings, key, value)
+
+    monkeypatch.setattr(config.settings, "stripe_secret_key", "CHANGE_ME_STRIPE")
+
+    with pytest.raises(RuntimeError) as exc:
+        config.validate_production_secrets()
+
+    assert "STRIPE_SECRET_KEY" in str(exc.value)
