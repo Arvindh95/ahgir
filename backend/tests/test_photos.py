@@ -116,8 +116,8 @@ def test_successful_upload(setup_admin_and_event):
     data_response = response.json()
     
     assert len(data_response["uploaded"]) == 1
-    assert len(data_response["duplicates"]) == 0
-    
+    assert len(data_response["failed"]) == 0
+
     uploaded = data_response["uploaded"][0]
     assert uploaded["filename"] == "test_image.jpg"
     assert uploaded["status"] == "pending"
@@ -153,49 +153,51 @@ def test_upload_multiple_photos(setup_admin_and_event):
     data_response = response.json()
     
     assert len(data_response["uploaded"]) == 3
-    assert len(data_response["duplicates"]) == 0
+    assert len(data_response["failed"]) == 0
 
 
 def test_duplicate_rejection(setup_admin_and_event):
-    """Test duplicate photo rejection"""
+    """Test duplicate photo rejection — same filename within an event."""
     data = setup_admin_and_event
     event = data["event"]
     token = data["token"]
-    
-    # Create test image
+
     image_data = create_test_image()
-    
+
     # Upload first time
     files = [
         ("files", ("test_image.jpg", BytesIO(image_data), "image/jpeg"))
     ]
-    
+
     response = client.post(
         f"/events/{event.id}/photos",
         headers={"Authorization": f"Bearer {token}"},
         files=files
     )
-    
+
     assert response.status_code == 201
     assert len(response.json()["uploaded"]) == 1
-    
-    # Upload same image again
+
+    # Upload again with the same filename — current dedup is filename-scoped
+    # per event (see unique_filename_per_event index).
     files = [
-        ("files", ("test_image_duplicate.jpg", BytesIO(image_data), "image/jpeg"))
+        ("files", ("test_image.jpg", BytesIO(image_data), "image/jpeg"))
     ]
-    
+
     response = client.post(
         f"/events/{event.id}/photos",
         headers={"Authorization": f"Bearer {token}"},
         files=files
     )
-    
+
     assert response.status_code == 201
     data_response = response.json()
-    
+
     assert len(data_response["uploaded"]) == 0
-    assert len(data_response["duplicates"]) == 1
-    assert "hash match" in data_response["duplicates"][0]["reason"].lower()
+    assert len(data_response["failed"]) == 1
+    failure = data_response["failed"][0]
+    assert failure["category"] == "duplicate"
+    assert "already exists" in failure["reason"].lower()
 
 
 def test_invalid_format_rejection(setup_admin_and_event):
@@ -219,10 +221,12 @@ def test_invalid_format_rejection(setup_admin_and_event):
     
     assert response.status_code == 201
     data_response = response.json()
-    
+
     assert len(data_response["uploaded"]) == 0
-    assert len(data_response["duplicates"]) == 1
-    assert "invalid image format" in data_response["duplicates"][0]["reason"].lower()
+    assert len(data_response["failed"]) == 1
+    failure = data_response["failed"][0]
+    assert failure["category"] == "invalid_format"
+    assert "invalid image format" in failure["reason"].lower()
 
 
 def test_png_format_accepted(setup_admin_and_event):
@@ -248,7 +252,7 @@ def test_png_format_accepted(setup_admin_and_event):
     data_response = response.json()
     
     assert len(data_response["uploaded"]) == 1
-    assert len(data_response["duplicates"]) == 0
+    assert len(data_response["failed"]) == 0
 
 
 def test_unauthorized_upload_attempt(setup_admin_and_event):

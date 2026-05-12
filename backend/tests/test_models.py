@@ -146,35 +146,37 @@ class TestImageModel:
         assert image.status == "pending"
         assert image.face_count == 0
     
-    def test_image_hash_unique_per_event(self, db_session):
-        """Test that duplicate hashes within same event are rejected"""
+    def test_image_filename_unique_per_event(self, db_session):
+        """Image filename is unique per event — file_hash is NOT (dedup is
+        filename-scoped via the unique_filename_per_event index)."""
         user = User(email="hash_owner@example.com", password_hash="hash")
         db_session.add(user)
         db_session.commit()
-        
+
         event = Event(owner_user_id=user.id, slug="hash-event", name="Hash Event")
         db_session.add(event)
         db_session.commit()
-        
+
         image1 = Image(
             event_id=event.id,
             filename="photo1.jpg",
-            file_hash="samehash123",
+            file_hash="hashA",
             size_bytes=1024,
             status="pending"
         )
         db_session.add(image1)
         db_session.commit()
-        
+
+        # Same filename within the same event → unique-index violation.
         image2 = Image(
             event_id=event.id,
-            filename="photo2.jpg",
-            file_hash="samehash123",
+            filename="photo1.jpg",
+            file_hash="hashB",
             size_bytes=1024,
             status="pending"
         )
         db_session.add(image2)
-        
+
         with pytest.raises(IntegrityError):
             db_session.commit()
         db_session.rollback()

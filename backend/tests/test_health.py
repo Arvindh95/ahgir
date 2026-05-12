@@ -1,7 +1,7 @@
 """Unit tests for health check endpoints."""
 
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 from sqlalchemy.exc import OperationalError
 from minio.error import S3Error
 import redis
@@ -12,159 +12,130 @@ from app.main import app
 client = TestClient(app)
 
 
-def test_health_check_all_services_healthy():
-    """Test health check when all services are healthy."""
+def _build_s3_error() -> S3Error:
+    return S3Error(
+        code="ServiceUnavailable",
+        message="Service unavailable",
+        resource="",
+        request_id="",
+        host_id="",
+        response="",
+    )
+
+
+@pytest.fixture
+def health_mocks():
+    """Patch every external dependency the /health endpoint touches.
+
+    Yields a dict so each test can override individual mocks (e.g. flip a
+    side_effect) without re-declaring all four patch lines.
+
+    settings.environment is forced to 'test' so the production error-string
+    stripper in health.py does not remove the fields tests assert on.
+    """
     with patch('app.routers.health.engine.connect') as mock_db, \
          patch('app.routers.health.storage_service.client.bucket_exists') as mock_minio, \
-         patch('app.routers.health.redis_client.ping') as mock_redis:
-        
-        # Mock successful connections
+         patch('app.routers.health.redis_client.ping') as mock_redis, \
+         patch('app.routers.health.CompreFaceClient') as mock_cf_cls, \
+         patch('app.routers.health.settings.environment', 'test'):
+        # Default: every service healthy.
         mock_db.return_value.__enter__ = MagicMock()
         mock_db.return_value.__exit__ = MagicMock()
         mock_minio.return_value = True
         mock_redis.return_value = True
-        
-        response = client.get("/health")
-        
-        assert response.status_code == 200
-        data = response.json()
-        
-        assert data["status"] == "healthy"
-        assert data["services"]["database"]["status"] == "healthy"
-        assert data["services"]["minio"]["status"] == "healthy"
-        assert data["services"]["redis"]["status"] == "healthy"
+        cf_instance = mock_cf_cls.return_value
+        cf_instance.health_check = AsyncMock(return_value=True)
+        yield {
+            "db": mock_db,
+            "minio": mock_minio,
+            "redis": mock_redis,
+            "compreface": cf_instance,
+        }
 
 
-def test_health_check_database_unhealthy():
-    """Test health check when database is unhealthy."""
-    with patch('app.routers.health.engine.connect') as mock_db, \
-         patch('app.routers.health.storage_service.client.bucket_exists') as mock_minio, \
-         patch('app.routers.health.redis_client.ping') as mock_redis:
-        
-        # Mock database failure
-        mock_db.side_effect = OperationalError("Connection failed", None, None)
-        mock_minio.return_value = True
-        mock_redis.return_value = True
-        
-        response = client.get("/health")
-        
-        assert response.status_code == 200
-        data = response.json()
-        
-        assert data["status"] == "unhealthy"
-        assert data["services"]["database"]["status"] == "unhealthy"
-        assert "error" in data["services"]["database"]
-        assert data["services"]["minio"]["status"] == "healthy"
-        assert data["services"]["redis"]["status"] == "healthy"
+def test_health_check_all_services_healthy(health_mocks):
+    response = client.get("/health")
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["status"] == "healthy"
+    assert data["services"]["database"]["status"] == "healthy"
+    assert data["services"]["minio"]["status"] == "healthy"
+    assert data["services"]["redis"]["status"] == "healthy"
+    assert data["services"]["compreface"]["status"] == "healthy"
 
 
-def test_health_check_minio_unhealthy():
-    """Test health check when MinIO is unhealthy."""
-    with patch('app.routers.health.engine.connect') as mock_db, \
-         patch('app.routers.health.storage_service.client.bucket_exists') as mock_minio, \
-         patch('app.routers.health.redis_client.ping') as mock_redis:
-        
-        # Mock MinIO failure
-        mock_db.return_value.__enter__ = MagicMock()
-        mock_db.return_value.__exit__ = MagicMock()
-        mock_minio.side_effect = S3Error(
-            code="ServiceUnavailable",
-            message="Service unavailable",
-            resource="",
-            request_id="",
-            host_id="",
-            response=""
-        )
-        mock_redis.return_value = True
-        
-        response = client.get("/health")
-        
-        assert response.status_code == 200
-        data = response.json()
-        
-        assert data["status"] == "unhealthy"
-        assert data["services"]["database"]["status"] == "healthy"
-        assert data["services"]["minio"]["status"] == "unhealthy"
-        assert "error" in data["services"]["minio"]
-        assert data["services"]["redis"]["status"] == "healthy"
+def test_health_check_database_unhealthy(health_mocks):
+    health_mocks["db"].side_effect = OperationalError("Connection failed", None, None)
+
+    response = client.get("/health")
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["status"] == "unhealthy"
+    assert data["services"]["database"]["status"] == "unhealthy"
+    assert "error" in data["services"]["database"]
+    assert data["services"]["minio"]["status"] == "healthy"
+    assert data["services"]["redis"]["status"] == "healthy"
 
 
-def test_health_check_redis_unhealthy():
-    """Test health check when Redis is unhealthy."""
-    with patch('app.routers.health.engine.connect') as mock_db, \
-         patch('app.routers.health.storage_service.client.bucket_exists') as mock_minio, \
-         patch('app.routers.health.redis_client.ping') as mock_redis:
-        
-        # Mock Redis failure
-        mock_db.return_value.__enter__ = MagicMock()
-        mock_db.return_value.__exit__ = MagicMock()
-        mock_minio.return_value = True
-        mock_redis.side_effect = redis.RedisError("Connection refused")
-        
-        response = client.get("/health")
-        
-        assert response.status_code == 200
-        data = response.json()
-        
-        assert data["status"] == "unhealthy"
-        assert data["services"]["database"]["status"] == "healthy"
-        assert data["services"]["minio"]["status"] == "healthy"
-        assert data["services"]["redis"]["status"] == "unhealthy"
-        assert "error" in data["services"]["redis"]
+def test_health_check_minio_unhealthy(health_mocks):
+    health_mocks["minio"].side_effect = _build_s3_error()
+
+    response = client.get("/health")
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["status"] == "unhealthy"
+    assert data["services"]["database"]["status"] == "healthy"
+    assert data["services"]["minio"]["status"] == "unhealthy"
+    assert "error" in data["services"]["minio"]
+    assert data["services"]["redis"]["status"] == "healthy"
 
 
-def test_health_check_multiple_services_unhealthy():
-    """Test health check when multiple services are unhealthy."""
-    with patch('app.routers.health.engine.connect') as mock_db, \
-         patch('app.routers.health.storage_service.client.bucket_exists') as mock_minio, \
-         patch('app.routers.health.redis_client.ping') as mock_redis:
-        
-        # Mock multiple failures
-        mock_db.side_effect = OperationalError("DB Connection failed", None, None)
-        mock_minio.side_effect = S3Error(
-            code="ServiceUnavailable",
-            message="Service unavailable",
-            resource="",
-            request_id="",
-            host_id="",
-            response=""
-        )
-        mock_redis.side_effect = redis.RedisError("Connection refused")
-        
-        response = client.get("/health")
-        
-        assert response.status_code == 200
-        data = response.json()
-        
-        assert data["status"] == "unhealthy"
-        assert data["services"]["database"]["status"] == "unhealthy"
-        assert data["services"]["minio"]["status"] == "unhealthy"
-        assert data["services"]["redis"]["status"] == "unhealthy"
-        assert "error" in data["services"]["database"]
-        assert "error" in data["services"]["minio"]
-        assert "error" in data["services"]["redis"]
+def test_health_check_redis_unhealthy(health_mocks):
+    health_mocks["redis"].side_effect = redis.RedisError("Connection refused")
+
+    response = client.get("/health")
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["status"] == "unhealthy"
+    assert data["services"]["database"]["status"] == "healthy"
+    assert data["services"]["minio"]["status"] == "healthy"
+    assert data["services"]["redis"]["status"] == "unhealthy"
+    assert "error" in data["services"]["redis"]
 
 
-def test_health_check_generic_exception_handling():
-    """Test health check handles generic exceptions gracefully."""
-    with patch('app.routers.health.engine.connect') as mock_db, \
-         patch('app.routers.health.storage_service.client.bucket_exists') as mock_minio, \
-         patch('app.routers.health.redis_client.ping') as mock_redis:
-        
-        # Mock generic exceptions
-        mock_db.return_value.__enter__ = MagicMock()
-        mock_db.return_value.__exit__ = MagicMock()
-        mock_minio.side_effect = Exception("Unexpected error")
-        mock_redis.side_effect = Exception("Unexpected error")
-        
-        response = client.get("/health")
-        
-        assert response.status_code == 200
-        data = response.json()
-        
-        assert data["status"] == "unhealthy"
-        assert data["services"]["database"]["status"] == "healthy"
-        assert data["services"]["minio"]["status"] == "unhealthy"
-        assert data["services"]["redis"]["status"] == "unhealthy"
-        assert "Unexpected error" in data["services"]["minio"]["error"]
-        assert "Unexpected error" in data["services"]["redis"]["error"]
+def test_health_check_multiple_services_unhealthy(health_mocks):
+    health_mocks["db"].side_effect = OperationalError("DB Connection failed", None, None)
+    health_mocks["minio"].side_effect = _build_s3_error()
+    health_mocks["redis"].side_effect = redis.RedisError("Connection refused")
+
+    response = client.get("/health")
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["status"] == "unhealthy"
+    assert data["services"]["database"]["status"] == "unhealthy"
+    assert data["services"]["minio"]["status"] == "unhealthy"
+    assert data["services"]["redis"]["status"] == "unhealthy"
+    assert "error" in data["services"]["database"]
+    assert "error" in data["services"]["minio"]
+    assert "error" in data["services"]["redis"]
+
+
+def test_health_check_generic_exception_handling(health_mocks):
+    health_mocks["minio"].side_effect = Exception("Unexpected error")
+    health_mocks["redis"].side_effect = Exception("Unexpected error")
+
+    response = client.get("/health")
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["status"] == "unhealthy"
+    assert data["services"]["database"]["status"] == "healthy"
+    assert data["services"]["minio"]["status"] == "unhealthy"
+    assert data["services"]["redis"]["status"] == "unhealthy"
+    assert "Unexpected error" in data["services"]["minio"]["error"]
+    assert "Unexpected error" in data["services"]["redis"]["error"]

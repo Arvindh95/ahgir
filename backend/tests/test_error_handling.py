@@ -336,18 +336,20 @@ class TestAuthErrorHandling:
         """Test registration with duplicate email returns proper error format."""
         import uuid
         unique_email = f"test-{uuid.uuid4()}@example.com"
+        # UserRegister validator now requires upper/lower/digit/special.
+        password = "SecurePass1!"
 
         # First registration
         response1 = client.post("/auth/register", json={
             "email": unique_email,
-            "password": "password123"
+            "password": password,
         })
         assert response1.status_code == 201
 
         # Duplicate registration
         response2 = client.post("/auth/register", json={
             "email": unique_email,
-            "password": "password456"
+            "password": password,
         })
         assert response2.status_code == 400
         data = response2.json()

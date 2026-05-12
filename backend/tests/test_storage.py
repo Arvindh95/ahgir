@@ -207,14 +207,10 @@ def test_delete_photo_ignores_missing_files(storage):
 
 
 def test_generate_presigned_url_success(storage):
-    """Test successful presigned URL generation."""
+    """generate_presigned_url now delegates to the HMAC signer — verify URL shape."""
     event_id = uuid.uuid4()
     image_id = uuid.uuid4()
-    expected_url = f"https://minio/photos/events/{event_id}/original/{image_id}.jpg?signature=xyz"
-    
-    storage._client.presigned_get_object.return_value = expected_url
-    
-    # Generate URL without validation
+
     result = storage.generate_presigned_url(
         event_id,
         image_id,
@@ -222,26 +218,27 @@ def test_generate_presigned_url_success(storage):
         expiry_minutes=15,
         validate_event=False
     )
-    
-    assert result == expected_url
-    expected_path = f"events/{event_id}/original/{image_id}.jpg"
-    storage._client.presigned_get_object.assert_called_once()
+
+    # New URL points at /api/photos/{event}/{image}/{type}?expires=...&sig=...
+    assert f"/api/photos/{event_id}/{image_id}/original" in result
+    assert "expires=" in result
+    assert "sig=" in result
+    # MinIO presigned-get is no longer involved.
+    storage._client.presigned_get_object.assert_not_called()
 
 
 def test_generate_presigned_url_with_validation(storage, db_session):
-    """Test presigned URL generation with event validation."""
+    """Test presigned URL generation with event-ownership validation."""
     event_id = uuid.uuid4()
     image_id = uuid.uuid4()
-    expected_url = f"https://minio/photos/events/{event_id}/original/{image_id}.jpg?signature=xyz"
-    
-    # Create test data
+
     user = User(
         id=uuid.uuid4(),
         email="test@example.com",
         password_hash="hashed"
     )
     db_session.add(user)
-    
+
     event = Event(
         id=event_id,
         owner_user_id=user.id,
@@ -251,7 +248,7 @@ def test_generate_presigned_url_with_validation(storage, db_session):
         retention_days=90
     )
     db_session.add(event)
-    
+
     image = Image(
         id=image_id,
         event_id=event_id,
@@ -262,10 +259,7 @@ def test_generate_presigned_url_with_validation(storage, db_session):
     )
     db_session.add(image)
     db_session.commit()
-    
-    storage._client.presigned_get_object.return_value = expected_url
-    
-    # Generate URL with validation
+
     result = storage.generate_presigned_url(
         event_id,
         image_id,
@@ -273,8 +267,9 @@ def test_generate_presigned_url_with_validation(storage, db_session):
         db=db_session,
         validate_event=True
     )
-    
-    assert result == expected_url
+
+    assert f"/api/photos/{event_id}/{image_id}/original" in result
+    assert "sig=" in result
 
 
 def test_generate_presigned_url_validation_wrong_event(storage, db_session):
@@ -353,26 +348,17 @@ def test_generate_presigned_url_validation_image_not_found(storage, db_session):
     assert "not found" in str(exc_info.value)
 
 
-def test_generate_presigned_url_failure(storage):
-    """Test presigned URL generation failure."""
+def test_generate_presigned_url_rejects_invalid_photo_type(storage):
+    """Invalid photo_type must raise rather than minting a forgeable URL."""
     event_id = uuid.uuid4()
     image_id = uuid.uuid4()
-    
-    # Mock S3 error
-    storage._client.presigned_get_object.side_effect = S3Error(
-        "PresignedGetObject",
-        "Failed",
-        "resource",
-        "request_id",
-        "host_id",
-        Mock()
-    )
-    
-    with pytest.raises(Exception) as exc_info:
+
+    with pytest.raises(ValueError) as exc_info:
         storage.generate_presigned_url(
             event_id,
             image_id,
-            validate_event=False
+            "bogus_type",
+            validate_event=False,
         )
-    
-    assert "Failed to generate presigned URL" in str(exc_info.value)
+
+    assert "photo_type" in str(exc_info.value)
