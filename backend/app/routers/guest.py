@@ -29,15 +29,27 @@ import asyncio
 logger = logging.getLogger(__name__)
 
 
-async def recognize_with_compreface(image_bytes: bytes, api_key: str, det_prob_threshold: float = 0.5) -> list:
-    """Recognize faces using CompreFace API."""
+async def recognize_with_compreface(
+    image_bytes: bytes,
+    api_key: str,
+    det_prob_threshold: float = 0.5,
+    face_plugins: Optional[str] = "gender",
+) -> list:
+    """Recognize faces using CompreFace API.
+
+    Passes ``face_plugins`` through to CompreFace so each face result
+    carries plugin output (``gender``: {value, probability}) that the
+    scan handler uses to reject cross-gender false positives.
+    """
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             files = {"file": ("image.jpg", image_bytes, "image/jpeg")}
-            params = {
+            params: dict = {
                 "det_prob_threshold": det_prob_threshold,
                 "prediction_count": 500,
             }
+            if face_plugins:
+                params["face_plugins"] = face_plugins
             headers = {"x-api-key": api_key}
 
             response = await client.post(
@@ -296,6 +308,26 @@ async def _scan_with_compreface(
     logger.info(f"Multi-scan: processed {len(all_frames)} frames, "
                 f"faces found in {sum(1 for r in frame_results if r)} frames")
 
+    # Determine the guest's gender from CompreFace plugin output across all
+    # frames. Each frame already filtered to its largest face, so we take a
+    # simple majority vote; ties or all-null leave guest_gender = None, in
+    # which case gender filtering is skipped.
+    guest_gender_votes: list[str] = []
+    for recognition_results in frame_results:
+        for face_result in recognition_results:
+            gender_payload = face_result.get("gender")
+            if isinstance(gender_payload, dict):
+                value = gender_payload.get("value")
+                if isinstance(value, str):
+                    guest_gender_votes.append(value.lower())
+    guest_gender: Optional[str] = None
+    if guest_gender_votes:
+        from collections import Counter
+        guest_gender = Counter(guest_gender_votes).most_common(1)[0][0]
+    logger.info(
+        f"Guest gender vote: {guest_gender_votes} -> {guest_gender}"
+    )
+
     # Collect every candidate match that clears the LOWEST tier — we will
     # re-check each against a stricter, size-aware threshold once we look up
     # the indexed Face row.
@@ -344,6 +376,7 @@ async def _scan_with_compreface(
 
     # Image-id -> best (highest-similarity) qualifying match.
     best_matches: dict = {}
+    rejected_by_gender = 0
     for c in candidates:
         face = faces_by_subject.get(c["subject_id"])
         if face is None or not face.bbox or len(face.bbox) < 4:
@@ -355,6 +388,20 @@ async def _scan_with_compreface(
         if c["similarity"] < _required_threshold(min_side):
             continue
 
+        # Cross-gender filter: reject matches where guest's gender is known
+        # AND the indexed face has a different gender. Both must be set —
+        # missing values leave the candidate alone so we don't break events
+        # indexed before the gender plugin was enabled.
+        if (
+            settings.face_gender_filter_enabled
+            and guest_gender
+            and face is not None
+            and face.gender
+            and face.gender != guest_gender
+        ):
+            rejected_by_gender += 1
+            continue
+
         existing = best_matches.get(c["image_id"])
         if existing is None or c["similarity"] > existing["similarity"]:
             best_matches[c["image_id"]] = {
@@ -363,6 +410,8 @@ async def _scan_with_compreface(
                 "subject_id": c["subject_id"],
                 "bbox": face.bbox if face and face.bbox else [0, 0, 0, 0],
             }
+    if rejected_by_gender:
+        logger.info(f"Rejected {rejected_by_gender} candidates via gender filter")
 
     if not best_matches:
         logger.info(

@@ -67,16 +67,24 @@ async def _add_face_to_compreface(
 async def _detect_faces_compreface(
     image_data: bytes,
     api_key: str,
-    det_prob_threshold: float = 0.5
+    det_prob_threshold: float = 0.5,
+    face_plugins: Optional[str] = "gender",
 ) -> list:
-    """Detect faces in an image using CompreFace Detection service."""
+    """Detect faces in an image using CompreFace Detection service.
+
+    ``face_plugins`` is forwarded to CompreFace; when "gender" is included
+    (and the gender plugin is loaded in compreface-core) each result has a
+    ``gender`` field we can use to filter cross-gender false matches.
+    """
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
             files = {"file": ("image.jpg", image_data, "image/jpeg")}
-            params = {
+            params: dict = {
                 "det_prob_threshold": det_prob_threshold,
                 "limit": 200,  # Support large group photos
             }
+            if face_plugins:
+                params["face_plugins"] = face_plugins
             headers = {"x-api-key": api_key}
 
             response = await client.post(
@@ -299,6 +307,16 @@ def index_photo_compreface(image_id: str, api_key: str, db_session: Optional[Ses
                 # Store face metadata in our database
                 bbox = [x_min, y_min, x_max, y_max]
 
+                # Pull the gender plugin output if present. CompreFace returns:
+                #   { "gender": { "value": "male", "probability": 0.98 } }
+                # We persist only the label; the probability is informational.
+                gender_payload = face_data.get("gender") or {}
+                gender_value = gender_payload.get("value") if isinstance(gender_payload, dict) else None
+                if isinstance(gender_value, str):
+                    gender_value = gender_value.lower()
+                else:
+                    gender_value = None
+
                 # We store the CompreFace subject_id as the embedding reference
                 # (CompreFace manages actual embeddings internally)
                 face = Face(
@@ -307,11 +325,15 @@ def index_photo_compreface(image_id: str, api_key: str, db_session: Optional[Ses
                     embedding=[0.0] * 512,  # Placeholder - CompreFace manages embeddings
                     bbox=bbox,
                     quality_score=probability,
-                    compreface_subject_id=subject_id  # Store CompreFace reference
+                    compreface_subject_id=subject_id,  # Store CompreFace reference
+                    gender=gender_value,
                 )
                 db.add(face)
                 face_count += 1
-                logger.info(f"Added face {idx} for image {image_id} (subject: {subject_id})")
+                logger.info(
+                    f"Added face {idx} for image {image_id} "
+                    f"(subject: {subject_id}, gender: {gender_value})"
+                )
             else:
                 logger.warning(f"Failed to add face {idx} to CompreFace: {result.get('error')}")
 

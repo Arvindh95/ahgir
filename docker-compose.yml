@@ -73,6 +73,7 @@ services:
       FACE_MIN_DETECTION_PROBABILITY: ${FACE_MIN_DETECTION_PROBABILITY:-0.3}
       FACE_MIN_CROP_PIXELS: ${FACE_MIN_CROP_PIXELS:-32}
       FACE_CROP_PADDING_FACTOR: ${FACE_CROP_PADDING_FACTOR:-0.4}
+      FACE_GENDER_FILTER_ENABLED: ${FACE_GENDER_FILTER_ENABLED:-true}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-only-not-for-prod}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
       ENVIRONMENT: ${ENVIRONMENT:-development}
@@ -155,6 +156,7 @@ services:
       FACE_MIN_DETECTION_PROBABILITY: ${FACE_MIN_DETECTION_PROBABILITY:-0.3}
       FACE_MIN_CROP_PIXELS: ${FACE_MIN_CROP_PIXELS:-32}
       FACE_CROP_PADDING_FACTOR: ${FACE_CROP_PADDING_FACTOR:-0.4}
+      FACE_GENDER_FILTER_ENABLED: ${FACE_GENDER_FILTER_ENABLED:-true}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-only-not-for-prod}
       ENVIRONMENT: ${ENVIRONMENT:-development}
       SMTP_HOST: ${SMTP_HOST:-smtp-relay.brevo.com}
@@ -268,6 +270,10 @@ services:
     container_name: compreface-core
     environment:
       ML_PORT: "3000"
+      # Enable the demographics plugin so /api/v1/detection/detect can return
+      # gender per face. "calculator" is the recognition embedder and stays
+      # default; "gender" is what we filter scan matches against.
+      ML_PLUGINS_LIST: "calculator,gender"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/healthcheck"]
       interval: 30s

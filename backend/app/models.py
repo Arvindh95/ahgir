@@ -93,6 +93,9 @@ class Face(Base):
     bbox = Column(ARRAY(Float), nullable=False)  # [x1, y1, x2, y2]
     quality_score = Column(Float, nullable=False)
     compreface_subject_id = Column(String(255), nullable=True, index=True)  # CompreFace reference
+    # Gender label from the CompreFace demographics plugin ('male' / 'female').
+    # NULL when the plugin is disabled or inconclusive.
+    gender = Column(String(16), nullable=True)
     created_at = Column(TIMESTAMP, server_default=func.now(), nullable=False)
 
     # Relationships

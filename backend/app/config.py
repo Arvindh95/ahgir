@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     # the recognition embedder. More context (hair, ears, jaw) yields a more
     # stable embedding; 0.4 ≈ 40% on each side.
     face_crop_padding_factor: float = 0.4
+    # Cross-gender filter — when the CompreFace gender plugin is loaded and
+    # ML_PLUGINS_LIST contains 'gender', the scan handler rejects matches
+    # whose indexed face gender differs from the guest's voted gender. Both
+    # values must be non-null for the filter to apply.
+    face_gender_filter_enabled: bool = True
 
     # CompreFace (comma-separated URLs for round-robin load balancing)
     compreface_api_url: str = "http://compreface-api:8080"
