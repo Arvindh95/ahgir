@@ -62,12 +62,15 @@ export default function FaceScanner() {
   const [poseProgress, setPoseProgress] = useState<{ side: 'straight' | 'left' | 'right' | null; hit: boolean }>({ side: null, hit: false })
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // Load face-api.js models
+  // Load @vladmandic/face-api models
   useEffect(() => {
     const loadFaceApi = async () => {
       try {
-        // Dynamically import face-api.js (only works in browser)
-        const faceapi = await import('face-api.js')
+        // Dynamically import face-api (browser-only). Vladmandic's fork is
+        // API-compatible with the original face-api.js but drops the
+        // node-fetch / @tensorflow/tfjs-core dependency chain that pinned us
+        // to the legacy package.
+        const faceapi = await import('@vladmandic/face-api')
         faceApiRef.current = faceapi
 
         // Load models from CDN
