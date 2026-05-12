@@ -10,7 +10,7 @@ import numpy as np
 from datetime import datetime, timedelta
 from io import BytesIO
 from PIL import Image as PILImage
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 
 from app.main import app
 from app.database import get_db
@@ -19,6 +19,22 @@ from app.auth import hash_password, create_event_token
 from app.storage import storage_service
 
 client = TestClient(app)
+
+
+def _compreface_subject_result(event_id, image_id, similarity: float = 0.95):
+    """Build a CompreFace-shaped recognize() result containing one matching subject.
+
+    The recognizer stores subjects as ``{event_id}/{image_id}`` and the scan
+    handler filters by similarity >= ``settings.face_similarity_threshold``.
+    """
+    return [
+        {
+            "box": {"x_min": 10, "y_min": 10, "x_max": 60, "y_max": 60, "probability": 0.99},
+            "subjects": [
+                {"subject": f"{event_id}/{image_id}", "similarity": similarity}
+            ],
+        }
+    ]
 
 
 def create_dummy_image_bytes() -> bytes:
@@ -37,35 +53,33 @@ def create_test_embedding() -> np.ndarray:
 
 @pytest.fixture
 def setup_event_with_faces(db_session: Session):
-    """Setup an event with images and faces for testing."""
-    # Create admin user
+    """Setup an event with images and faces for testing.
+
+    Each Face stores a ``compreface_subject_id`` of ``{event_id}/{image_id}``
+    so a mocked CompreFace response matching that subject yields a real DB
+    lookup and a populated FaceMatch.
+    """
     admin = User(
         email=f"admin_{uuid.uuid4()}@example.com",
-        password_hash=hash_password("password")
+        password_hash=hash_password("password"),
     )
     db_session.add(admin)
     db_session.commit()
     db_session.refresh(admin)
-    
-    # Create event
+
     event = Event(
         owner_user_id=admin.id,
         slug=f"event-{uuid.uuid4().hex[:8]}",
         name="Test Event",
         allow_downloads=True,
-        retention_days=90
+        retention_days=90,
     )
     db_session.add(event)
     db_session.commit()
     db_session.refresh(event)
-    
-    # Create query embedding
-    query_embedding = create_test_embedding()
-    
-    # Create images and faces
+
     images = []
     faces = []
-    
     for i in range(3):
         image = Image(
             event_id=event.id,
@@ -73,240 +87,187 @@ def setup_event_with_faces(db_session: Session):
             file_hash=f"hash_{uuid.uuid4().hex}",
             size_bytes=1024,
             status="indexed",
-            face_count=1
+            face_count=1,
         )
         db_session.add(image)
         images.append(image)
-    
+
     db_session.commit()
-    
-    # Create faces with high similarity to query
-    for i, image in enumerate(images):
+    for image in images:
         db_session.refresh(image)
-        
-        # Create embedding close to query
-        face_embedding = query_embedding + np.random.randn(512) * 0.05
-        face_embedding = face_embedding / np.linalg.norm(face_embedding)
-        
+
+    for i, image in enumerate(images):
         face = Face(
             image_id=image.id,
             event_id=event.id,
-            embedding=face_embedding.tolist(),
             bbox=[10.0 + i * 10, 10.0 + i * 10, 50.0 + i * 10, 50.0 + i * 10],
-            quality_score=0.9
+            quality_score=0.9,
+            compreface_subject_id=f"{event.id}/{image.id}",
         )
         db_session.add(face)
         faces.append(face)
-    
+
     db_session.commit()
-    
-    # Generate Event_Token
+
     session_id = uuid.uuid4()
     event_token = create_event_token(event.id, session_id)
-    
-    # Store session
+
     guest_session = GuestSession(
         id=session_id,
         event_id=event.id,
         session_token=event_token,
-        expires_at=datetime.utcnow() + timedelta(hours=1)
+        expires_at=datetime.utcnow() + timedelta(hours=1),
     )
     db_session.add(guest_session)
     db_session.commit()
-    
+
     return {
         "admin": admin,
         "event": event,
         "images": images,
         "faces": faces,
         "event_token": event_token,
-        "query_embedding": query_embedding
     }
 
 
 def test_successful_face_scan_with_matches(db_session: Session, setup_event_with_faces):
-    """
-    Test successful face scan with matches
-    
-    Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 8.1, 8.3
-    """
-    # Override the get_db dependency
+    """End-to-end /scan with a mocked CompreFace recognizer."""
     def override_get_db():
         try:
             yield db_session
         finally:
             pass
-    
+
     app.dependency_overrides[get_db] = override_get_db
-    
+
     try:
         data = setup_event_with_faces
+        event = data["event"]
         event_token = data["event_token"]
-        query_embedding = data["query_embedding"]
-        
-        # Create a dummy face image
+        target_image_id = data["images"][0].id
+
         image_bytes = create_dummy_image_bytes()
-        image_b64 = base64.b64encode(image_bytes).decode('utf-8')
-        
-        # Mock face detection to return our query embedding
-        with patch('app.routers.guest.face_detector.detect_faces') as mock_detect:
-            mock_detect.return_value = [(query_embedding, [10, 10, 50, 50], 0.9)]
-            
-            # Mock storage service to avoid MinIO calls
-            with patch.object(storage_service, 'generate_presigned_url') as mock_presigned:
-                mock_presigned.return_value = "https://minio.example.com/presigned-url"
-                
-                # Perform face scan
-                response = client.post(
-                    "/scan",
-                    json={"image": image_b64},
-                    headers={"Authorization": f"Bearer {event_token}"}
-                )
-        
-        assert response.status_code == 200
+        image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+
+        # Patch the recognizer used by /scan so we don't need a real CompreFace.
+        mock_frame = AsyncMock(
+            return_value=_compreface_subject_result(event.id, target_image_id, similarity=0.95)
+        )
+        with patch("app.routers.guest._recognize_single_frame", mock_frame):
+            response = client.post(
+                "/scan",
+                json={"image": image_b64},
+                headers={"Authorization": f"Bearer {event_token}"},
+            )
+
+        assert response.status_code == 200, response.text
         scan_result = response.json()
-        
-        # Verify response structure
+
         assert "matches" in scan_result
         assert "scan_id" in scan_result
         assert "total_matches" in scan_result
-        
-        # Verify matches
+
         matches = scan_result["matches"]
-        assert len(matches) > 0, "Should have at least one match"
-        
-        # Verify match structure
-        for match in matches:
-            assert "image_id" in match
-            assert "similarity" in match
-            assert "thumbnail_url" in match
-            assert "original_url" in match
-            assert "download_url" in match  # Event has allow_downloads=True
-            assert "face_bbox" in match
-            
-            # Verify similarity is above threshold
-            assert match["similarity"] > 0.6, "Similarity should be above default threshold"
-            
-            # Verify URLs are present
-            assert match["thumbnail_url"] is not None
-            assert match["original_url"] is not None
-            assert match["download_url"] is not None
-    
+        assert len(matches) == 1
+        match = matches[0]
+        assert match["image_id"] == str(target_image_id)
+        assert match["similarity"] >= 0.9
+        assert match["thumbnail_url"]
+        assert match["original_url"]
+        # Event was created with allow_downloads=True.
+        assert match["download_url"]
+        assert isinstance(match["face_bbox"], list) and len(match["face_bbox"]) == 4
     finally:
         app.dependency_overrides.clear()
 
 
 def test_download_url_generation_based_on_allow_downloads(db_session: Session):
-    """
-    Test download URL generation based on allow_downloads setting
-    
-    Requirements: 8.4
-    """
-    # Override the get_db dependency
+    """When allow_downloads is False, /scan responses must not expose download_url."""
     def override_get_db():
         try:
             yield db_session
         finally:
             pass
-    
+
     app.dependency_overrides[get_db] = override_get_db
-    
+
     try:
-        # Test with allow_downloads=False
         admin = User(
             email=f"admin_{uuid.uuid4()}@example.com",
-            password_hash=hash_password("password")
+            password_hash=hash_password("password"),
         )
         db_session.add(admin)
         db_session.commit()
         db_session.refresh(admin)
-        
-        # Create event with downloads disabled
+
         event = Event(
             owner_user_id=admin.id,
             slug=f"event-{uuid.uuid4().hex[:8]}",
             name="Test Event",
-            allow_downloads=False,  # Downloads disabled
-            retention_days=90
+            allow_downloads=False,  # downloads disabled
+            retention_days=90,
         )
         db_session.add(event)
         db_session.commit()
         db_session.refresh(event)
-        
-        # Create image and face
+
         image = Image(
             event_id=event.id,
             filename="test.jpg",
             file_hash=f"hash_{uuid.uuid4().hex}",
             size_bytes=1024,
             status="indexed",
-            face_count=1
+            face_count=1,
         )
         db_session.add(image)
         db_session.commit()
         db_session.refresh(image)
-        
-        query_embedding = create_test_embedding()
-        face_embedding = query_embedding + np.random.randn(512) * 0.05
-        face_embedding = face_embedding / np.linalg.norm(face_embedding)
-        
+
         face = Face(
             image_id=image.id,
             event_id=event.id,
-            embedding=face_embedding.tolist(),
             bbox=[10.0, 10.0, 50.0, 50.0],
-            quality_score=0.9
+            quality_score=0.9,
+            compreface_subject_id=f"{event.id}/{image.id}",
         )
         db_session.add(face)
         db_session.commit()
-        
-        # Generate Event_Token
+
         session_id = uuid.uuid4()
         event_token = create_event_token(event.id, session_id)
-        
+
         guest_session = GuestSession(
             id=session_id,
             event_id=event.id,
             session_token=event_token,
-            expires_at=datetime.utcnow() + timedelta(hours=1)
+            expires_at=datetime.utcnow() + timedelta(hours=1),
         )
         db_session.add(guest_session)
         db_session.commit()
-        
-        # Create a dummy face image
+
         image_bytes = create_dummy_image_bytes()
-        image_b64 = base64.b64encode(image_bytes).decode('utf-8')
-        
-        # Mock face detection
-        with patch('app.routers.guest.face_detector.detect_faces') as mock_detect:
-            mock_detect.return_value = [(query_embedding, [10, 10, 50, 50], 0.9)]
-            
-            # Mock storage service
-            with patch.object(storage_service, 'generate_presigned_url') as mock_presigned:
-                mock_presigned.return_value = "https://minio.example.com/presigned-url"
-                
-                # Perform face scan
-                response = client.post(
-                    "/scan",
-                    json={"image": image_b64},
-                    headers={"Authorization": f"Bearer {event_token}"}
-                )
-        
-        assert response.status_code == 200
-        scan_result = response.json()
-        
-        # Verify matches
-        matches = scan_result["matches"]
-        if len(matches) > 0:
-            for match in matches:
-                # When downloads are disabled, download_url should be None
-                assert match.get("download_url") is None, \
-                    "download_url should be None when allow_downloads is False"
-                
-                # But thumbnail and original URLs should still be present for viewing
-                assert match.get("thumbnail_url") is not None
-                assert match.get("original_url") is not None
-    
+        image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+
+        mock_frame = AsyncMock(
+            return_value=_compreface_subject_result(event.id, image.id, similarity=0.95)
+        )
+        with patch("app.routers.guest._recognize_single_frame", mock_frame):
+            response = client.post(
+                "/scan",
+                json={"image": image_b64},
+                headers={"Authorization": f"Bearer {event_token}"},
+            )
+
+        assert response.status_code == 200, response.text
+        matches = response.json()["matches"]
+        assert len(matches) == 1
+        match = matches[0]
+        # Downloads disabled → no download URL leaks to guests.
+        assert match["download_url"] is None
+        # Thumbnail + original (which is also the thumbnail URL when downloads
+        # are off, per _guest_photo_urls) must still be present for viewing.
+        assert match["thumbnail_url"]
+        assert match["original_url"]
     finally:
         app.dependency_overrides.clear()
 

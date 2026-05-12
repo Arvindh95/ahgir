@@ -14,12 +14,31 @@ from app.rate_limiter import rate_limiter
 import numpy as np
 
 
+# The integration tests assume a 10-scan-per-hour budget so they finish quickly
+# without bumping into production's 30/hour ceiling.
+_TEST_SCAN_LIMIT = 10
+
+
+@pytest.fixture(autouse=True)
+def scan_limit_override():
+    """Pin scan_rate_limiter to a small, deterministic budget for these tests."""
+    original_limit = rate_limiter.limit
+    original_window = rate_limiter.window_hours
+    rate_limiter.limit = _TEST_SCAN_LIMIT
+    rate_limiter.window_hours = 1
+    try:
+        yield
+    finally:
+        rate_limiter.limit = original_limit
+        rate_limiter.window_hours = original_window
+
+
 @pytest.fixture
 def admin_user(test_db):
     """Create an admin user for testing."""
     user = User(
-        email="admin@test.com",
-        password_hash=hash_password("password123")
+        email=f"admin_{uuid.uuid4()}@test.com",
+        password_hash=hash_password("password123"),
     )
     test_db.add(user)
     test_db.commit()
@@ -32,10 +51,10 @@ def test_event(test_db, admin_user):
     """Create a test event."""
     event = Event(
         owner_user_id=admin_user.id,
-        slug="test-event-rate-limit",
+        slug=f"test-event-rate-{uuid.uuid4().hex[:8]}",
         name="Test Event",
         allow_downloads=True,
-        retention_days=90
+        retention_days=90,
     )
     test_db.add(event)
     test_db.commit()
@@ -71,27 +90,25 @@ def test_image_with_face(test_db, test_event):
     image = Image(
         event_id=test_event.id,
         filename="test.jpg",
-        file_hash="test_hash_rate_limit",
+        file_hash=f"hash_{uuid.uuid4().hex}",
         size_bytes=1024,
         status="indexed",
-        face_count=1
+        face_count=1,
     )
     test_db.add(image)
     test_db.commit()
     test_db.refresh(image)
-    
-    # Create a face with a known embedding
-    embedding = np.random.rand(512).tolist()
+
     face = Face(
         image_id=image.id,
         event_id=test_event.id,
-        embedding=embedding,
         bbox=[100.0, 100.0, 200.0, 200.0],
-        quality_score=0.95
+        quality_score=0.95,
+        compreface_subject_id=f"{test_event.id}/{image.id}",
     )
     test_db.add(face)
     test_db.commit()
-    
+
     return image
 
 

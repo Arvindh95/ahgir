@@ -7,11 +7,27 @@ import pytest
 import io
 import base64
 import time
+import uuid
 from PIL import Image as PILImage
 import numpy as np
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 from app.models import User, Event, Image, Face
 from app.auth import create_access_token, hash_password
+
+
+# Password that satisfies the UserRegister validator (upper/lower/digit/special).
+_VALID_PW = "SecurePass1!"
+
+
+def _compreface_subject_result(event_id, image_id, similarity: float = 0.95):
+    return [
+        {
+            "box": {"x_min": 10, "y_min": 10, "x_max": 60, "y_max": 60, "probability": 0.99},
+            "subjects": [
+                {"subject": f"{event_id}/{image_id}", "similarity": similarity}
+            ],
+        }
+    ]
 
 
 @pytest.mark.integration
@@ -24,25 +40,25 @@ class TestAdminUploadFlow:
     
     def test_complete_admin_upload_flow(self, client, db_session):
         """Test the complete admin workflow from registration to photo upload"""
-        
+
         # Step 1: Register Admin
-        register_data = {
-            "email": "photographer@example.com",
-            "password": "SecurePassword123!"
-        }
+        email = f"photographer_{uuid.uuid4().hex[:8]}@example.com"
+        register_data = {"email": email, "password": _VALID_PW}
         response = client.post("/auth/register", json=register_data)
-        assert response.status_code == 201
+        assert response.status_code == 201, response.text
         user_data = response.json()
-        assert user_data["email"] == register_data["email"]
+        assert user_data["email"] == email
         user_id = user_data["user_id"]
-        
+
+        # Mark the new user as verified — registration sends a verification email,
+        # and login refuses unverified accounts.
+        user = db_session.query(User).filter(User.email == email).first()
+        user.is_verified = True
+        db_session.commit()
+
         # Step 2: Login Admin
-        login_data = {
-            "email": "photographer@example.com",
-            "password": "SecurePassword123!"
-        }
-        response = client.post("/auth/login", json=login_data)
-        assert response.status_code == 200
+        response = client.post("/auth/login", json={"email": email, "password": _VALID_PW})
+        assert response.status_code == 200, response.text
         token_data = response.json()
         assert "access_token" in token_data
         access_token = token_data["access_token"]
@@ -124,139 +140,124 @@ class TestGuestScanFlow:
     
     def test_complete_guest_scan_flow(self, client, db_session):
         """Test the complete guest workflow from event access to photo download"""
-        
-        # Setup: Create Admin, Event, and Photos with faces
+
         admin = User(
-            email="admin@example.com",
-            password_hash=hash_password("password123")
+            email=f"admin_{uuid.uuid4().hex[:8]}@example.com",
+            password_hash=hash_password(_VALID_PW),
+            is_verified=True,
         )
         db_session.add(admin)
         db_session.commit()
-        
+
         event = Event(
             owner_user_id=admin.id,
-            slug="test-wedding-abc",
+            slug=f"test-wedding-{uuid.uuid4().hex[:8]}",
             name="Test Wedding",
             date="2024-06-15",
             passcode_hash=hash_password("wedding123"),
             allow_downloads=True,
-            retention_days=90
+            retention_days=90,
         )
         db_session.add(event)
         db_session.commit()
-        
-        # Create test image with face
+        db_session.refresh(event)
+
         image = Image(
             event_id=event.id,
             filename="photo1.jpg",
-            file_hash="abc123",
+            file_hash=f"hash_{uuid.uuid4().hex}",
             size_bytes=1024000,
             width=1920,
             height=1080,
             status="indexed",
-            face_count=1
+            face_count=1,
         )
         db_session.add(image)
         db_session.commit()
-        
-        # Create face embedding
-        face_embedding = np.random.rand(512).tolist()
+        db_session.refresh(image)
+
         face = Face(
             image_id=image.id,
             event_id=event.id,
-            embedding=face_embedding,
             bbox=[100, 100, 200, 200],
-            quality_score=0.95
+            quality_score=0.95,
+            compreface_subject_id=f"{event.id}/{image.id}",
         )
         db_session.add(face)
         db_session.commit()
-        
+
         # Step 1: Access Event by Slug
         response = client.get(f"/e/{event.slug}")
         assert response.status_code == 200
         event_info = response.json()
         assert event_info["name"] == "Test Wedding"
         assert event_info["requires_passcode"] is True
-        
+
         # Step 2: Authenticate with Passcode
-        auth_data = {"passcode": "wedding123"}
-        response = client.post(f"/e/{event.slug}/auth", json=auth_data)
-        assert response.status_code == 200
+        response = client.post(f"/e/{event.slug}/auth", json={"passcode": "wedding123"})
+        assert response.status_code == 200, response.text
         auth_result = response.json()
         assert "event_token" in auth_result
         event_token = auth_result["event_token"]
         guest_headers = {"Authorization": f"Bearer {event_token}"}
-        
-        # Step 3: Scan Face
-        # Create test face image
-        face_img = PILImage.new('RGB', (200, 200), color='blue')
+
+        # Step 3: Scan Face — patch the CompreFace recognizer so no real upstream
+        # is needed.
+        face_img = PILImage.new("RGB", (200, 200), color="blue")
         face_bytes = io.BytesIO()
-        face_img.save(face_bytes, format='JPEG')
+        face_img.save(face_bytes, format="JPEG")
         face_bytes.seek(0)
-        face_base64 = base64.b64encode(face_bytes.getvalue()).decode('utf-8')
-        
-        scan_data = {"image": face_base64}
-        
-        # Mock face detection, MinIO, and rate limiter
-        with patch('app.routers.guest.face_detector') as mock_detector, \
-             patch('app.routers.guest.storage_service') as mock_storage, \
-             patch('app.routers.guest.rate_limiter') as mock_rate_limiter:
+        face_base64 = base64.b64encode(face_bytes.getvalue()).decode("utf-8")
 
-            # Mock face detection to return tuple format: (embedding_array, bbox, quality_score)
-            mock_detector.detect_faces.return_value = [
-                (np.array(face_embedding), [100, 100, 200, 200], 0.95)
-            ]
+        mock_frame = AsyncMock(
+            return_value=_compreface_subject_result(event.id, image.id, similarity=0.95)
+        )
+        with patch("app.routers.guest._recognize_single_frame", mock_frame):
+            response = client.post("/scan", json={"image": face_base64}, headers=guest_headers)
 
-            mock_storage.generate_presigned_url.return_value = "https://presigned-url.com/photo"
-            mock_rate_limiter.enforce_rate_limit.return_value = None
-
-            response = client.post("/scan", json=scan_data, headers=guest_headers)
-            assert response.status_code == 200
-            matches = response.json()
-            assert "matches" in matches
-            assert len(matches["matches"]) > 0
-
-            # Verify match details
-            match = matches["matches"][0]
-            assert "image_id" in match
-            assert "similarity" in match
-            assert "thumbnail_url" in match
-            assert "original_url" in match
-            assert "download_url" in match  # Should be present since allow_downloads=True
-            assert match["similarity"] > 0.6  # Above threshold
+        assert response.status_code == 200, response.text
+        matches = response.json()
+        assert "matches" in matches
+        assert len(matches["matches"]) == 1
+        match = matches["matches"][0]
+        assert match["image_id"] == str(image.id)
+        assert match["similarity"] >= 0.9
+        assert match["thumbnail_url"]
+        assert match["original_url"]
+        assert match["download_url"]
     
     def test_guest_scan_without_passcode(self, client, db_session):
         """Test guest flow for event without passcode"""
-        
-        # Setup: Create event without passcode
+
         admin = User(
-            email="admin2@example.com",
-            password_hash=hash_password("password123")
+            email=f"admin_{uuid.uuid4().hex[:8]}@example.com",
+            password_hash=hash_password(_VALID_PW),
+            is_verified=True,
         )
         db_session.add(admin)
         db_session.commit()
-        
+
         event = Event(
             owner_user_id=admin.id,
-            slug="public-event-xyz",
+            slug=f"public-event-{uuid.uuid4().hex[:8]}",
             name="Public Event",
             date="2024-07-01",
-            passcode_hash=None,  # No passcode
+            passcode_hash=None,
             allow_downloads=False,
-            retention_days=30
+            retention_days=30,
         )
         db_session.add(event)
         db_session.commit()
-        
+
         # Step 1: Access Event
         response = client.get(f"/e/{event.slug}")
         assert response.status_code == 200
         event_info = response.json()
         assert event_info["requires_passcode"] is False
-        
+
         # Step 2: Authenticate without passcode
         response = client.post(f"/e/{event.slug}/auth", json={})
-        assert response.status_code == 200
+        assert response.status_code == 200, response.text
         auth_result = response.json()
         assert "event_token" in auth_result
 
@@ -469,30 +470,37 @@ class TestCrossFlowIntegration:
     
     def test_guest_event_isolation(self, client, db_session):
         """Test that guests can only access their event's photos"""
-        
-        # Setup: Create two events with photos
-        admin = User(email="admin@example.com", password_hash=hash_password("pass"))
+
+        admin = User(
+            email=f"admin_{uuid.uuid4().hex[:8]}@example.com",
+            password_hash=hash_password(_VALID_PW),
+            is_verified=True,
+        )
         db_session.add(admin)
         db_session.commit()
-        
+
         event1 = Event(
             owner_user_id=admin.id,
-            slug="event1",
+            slug=f"event1-{uuid.uuid4().hex[:8]}",
             name="Event 1",
             date="2024-06-01",
-            allow_downloads=True
+            allow_downloads=True,
         )
         event2 = Event(
             owner_user_id=admin.id,
-            slug="event2",
+            slug=f"event2-{uuid.uuid4().hex[:8]}",
             name="Event 2",
             date="2024-07-01",
-            allow_downloads=True
+            allow_downloads=True,
         )
         db_session.add_all([event1, event2])
         db_session.commit()
-        
-        # Add images and faces to both events
+        db_session.refresh(event1)
+        db_session.refresh(event2)
+
+        # Add an image+face to both events. CompreFace subject IDs encode the
+        # event boundary, which is how /scan filters cross-event matches.
+        images_by_event = {}
         for event in [event1, event2]:
             image = Image(
                 event_id=event.id,
@@ -500,49 +508,52 @@ class TestCrossFlowIntegration:
                 file_hash=f"hash_{event.id}",
                 size_bytes=1024000,
                 status="indexed",
-                face_count=1
+                face_count=1,
             )
             db_session.add(image)
             db_session.commit()
-            
+            db_session.refresh(image)
+            images_by_event[event.id] = image
+
             face = Face(
                 image_id=image.id,
                 event_id=event.id,
-                embedding=np.random.rand(512).tolist(),
                 bbox=[100, 100, 200, 200],
-                quality_score=0.95
+                quality_score=0.95,
+                compreface_subject_id=f"{event.id}/{image.id}",
             )
             db_session.add(face)
         db_session.commit()
-        
+
         # Guest authenticates to event1
         response = client.post(f"/e/{event1.slug}/auth", json={})
         assert response.status_code == 200
         token1 = response.json()["event_token"]
         headers1 = {"Authorization": f"Bearer {token1}"}
-        
-        # Guest scans face - should only get matches from event1
-        face_img = PILImage.new('RGB', (200, 200), color='blue')
+
+        face_img = PILImage.new("RGB", (200, 200), color="blue")
         face_bytes = io.BytesIO()
-        face_img.save(face_bytes, format='JPEG')
-        face_base64 = base64.b64encode(face_bytes.getvalue()).decode('utf-8')
-        
-        with patch('app.routers.guest.face_detector') as mock_detector, \
-             patch('app.routers.guest.storage_service') as mock_storage, \
-             patch('app.routers.guest.rate_limiter') as mock_rate_limiter:
+        face_img.save(face_bytes, format="JPEG")
+        face_base64 = base64.b64encode(face_bytes.getvalue()).decode("utf-8")
 
-            # Mock face detection to return tuple format
-            mock_detector.detect_faces.return_value = [
-                (np.random.rand(512), [100, 100, 200, 200], 0.95)
-            ]
-            mock_storage.generate_presigned_url.return_value = "https://url.com/photo"
-            mock_rate_limiter.enforce_rate_limit.return_value = None
+        # Pretend the recognizer matched BOTH events' subjects. /scan must
+        # discard the event2 subject because it does not belong to the
+        # authenticated token's event.
+        event1_image_id = images_by_event[event1.id].id
+        event2_image_id = images_by_event[event2.id].id
+        cross_event_results = (
+            _compreface_subject_result(event1.id, event1_image_id, similarity=0.95)
+            + _compreface_subject_result(event2.id, event2_image_id, similarity=0.95)
+        )
+        mock_frame = AsyncMock(return_value=cross_event_results)
 
+        with patch("app.routers.guest._recognize_single_frame", mock_frame):
             response = client.post("/scan", json={"image": face_base64}, headers=headers1)
-            assert response.status_code == 200
-            matches = response.json()["matches"]
 
-            # Verify all matches are from event1
-            for match in matches:
-                image = db_session.query(Image).filter(Image.id == match["image_id"]).first()
-                assert image.event_id == event1.id
+        assert response.status_code == 200, response.text
+        matches = response.json()["matches"]
+        assert matches, "Expected at least one match from event1"
+        for match in matches:
+            image = db_session.query(Image).filter(Image.id == match["image_id"]).first()
+            assert image is not None
+            assert image.event_id == event1.id
