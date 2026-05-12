@@ -28,7 +28,13 @@ class Settings(BaseSettings):
     # Face Recognition
     face_similarity_threshold: float = 0.90
     face_min_detection_probability: float = 0.7
-    face_min_crop_pixels: int = 80
+    # Minimum bounding-box side (px) for a detected face to be registered. 80
+    # was originally chosen for selfie-style portraits, but event galleries
+    # are dominated by group/crowd shots where faces are commonly 40-60 px
+    # at modest source resolutions (1280-2000 wide). CompreFace's recognition
+    # step still re-runs detection on the crop (det_prob_threshold=0.5), so
+    # crops that are too blurry to embed are rejected at that second gate.
+    face_min_crop_pixels: int = 40
 
     # CompreFace (comma-separated URLs for round-robin load balancing)
     compreface_api_url: str = "http://compreface-api:8080"
