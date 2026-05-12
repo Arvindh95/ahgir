@@ -26,6 +26,22 @@ export default function Register() {
       setError('Password must be at least 8 characters')
       return false
     }
+    if (!/[A-Z]/.test(password)) {
+      setError('Password must contain at least one uppercase letter')
+      return false
+    }
+    if (!/[a-z]/.test(password)) {
+      setError('Password must contain at least one lowercase letter')
+      return false
+    }
+    if (!/\d/.test(password)) {
+      setError('Password must contain at least one digit')
+      return false
+    }
+    if (!/[!@#$%^&*(),.?":{}|<>]/.test(password)) {
+      setError('Password must contain at least one special character (!@#$%^&*(),.?":{}|<>)')
+      return false
+    }
 
     if (password !== confirmPassword) {
       setError('Passwords do not match')
@@ -59,7 +75,15 @@ export default function Register() {
         )
         return
       }
-      setError(err.response?.data?.error?.message || 'Registration failed')
+      const errData = err.response?.data?.error
+      const fieldErrors: Array<{ field: string; message: string }> = errData?.details?.errors || []
+      const detail = fieldErrors
+        .map((e) => {
+          const fieldName = e.field?.split('.').pop()
+          return fieldName ? `${fieldName}: ${e.message}` : e.message
+        })
+        .join('; ')
+      setError(detail || errData?.message || 'Registration failed')
     } finally {
       setIsLoading(false)
     }

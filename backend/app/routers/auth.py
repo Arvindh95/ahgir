@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 logger = logging.getLogger(__name__)
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, EmailStr, ValidationError, field_validator
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
@@ -281,10 +281,14 @@ async def reset_password(request_data: ResetPasswordRequest, db: Session = Depen
     # Validate password strength using the same rules as registration
     try:
         UserRegister.model_validate({"email": user.email, "password": request_data.new_password})
-    except Exception as e:
+    except ValidationError as e:
+        first_msg = e.errors()[0].get("msg", "Invalid password") if e.errors() else "Invalid password"
+        # Pydantic v2 prefixes user messages with "Value error, " — strip it.
+        if first_msg.startswith("Value error, "):
+            first_msg = first_msg[len("Value error, "):]
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
+            detail=first_msg
         )
 
     user.password_hash = hash_password(request_data.new_password)
