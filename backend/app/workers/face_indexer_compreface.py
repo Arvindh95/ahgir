@@ -221,7 +221,11 @@ def index_photo_compreface(image_id: str, api_key: str, db_session: Optional[Ses
         skipped_low_quality = 0
         for idx, face_data in enumerate(faces):
             box = face_data.get("box", {})
-            probability = face_data.get("probability", 0)
+            # CompreFace nests detection probability under "box", not at the top
+            # level. Reading it from face_data returned 0 for every face, which
+            # tripped the face_min_detection_probability gate added in b9ffe5c
+            # and caused every newly-uploaded photo to land as 'no_faces'.
+            probability = box.get("probability", 0)
 
             x_min = int(box.get("x_min", 0))
             y_min = int(box.get("y_min", 0))
