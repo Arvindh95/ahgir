@@ -104,6 +104,7 @@ def test_image_with_face(test_db, test_event):
         event_id=test_event.id,
         bbox=[100.0, 100.0, 200.0, 200.0],
         quality_score=0.95,
+        embedding=[0.0] * 512,
         compreface_subject_id=f"{test_event.id}/{image.id}",
     )
     test_db.add(face)

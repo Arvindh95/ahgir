@@ -16,9 +16,18 @@ from app.main import app
 from app.database import get_db
 from app.models import User, Event, Image, Face, GuestSession
 from app.auth import hash_password, create_event_token
+from app.rate_limiter import rate_limiter, auth_rate_limiter
 from app.storage import storage_service
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiters():
+    """Clear scan + auth rate buckets so test order doesn't leak through Redis."""
+    rate_limiter.reset_limit("testclient", "scan")
+    auth_rate_limiter.reset_limit("testclient", "guest_auth")
+    yield
 
 
 def _compreface_subject_result(event_id, image_id, similarity: float = 0.95):
@@ -102,6 +111,7 @@ def setup_event_with_faces(db_session: Session):
             event_id=event.id,
             bbox=[10.0 + i * 10, 10.0 + i * 10, 50.0 + i * 10, 50.0 + i * 10],
             quality_score=0.9,
+            embedding=[0.0] * 512,
             compreface_subject_id=f"{event.id}/{image.id}",
         )
         db_session.add(face)
@@ -228,6 +238,7 @@ def test_download_url_generation_based_on_allow_downloads(db_session: Session):
             event_id=event.id,
             bbox=[10.0, 10.0, 50.0, 50.0],
             quality_score=0.9,
+            embedding=[0.0] * 512,
             compreface_subject_id=f"{event.id}/{image.id}",
         )
         db_session.add(face)

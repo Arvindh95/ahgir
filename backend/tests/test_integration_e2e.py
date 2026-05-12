@@ -13,10 +13,21 @@ import numpy as np
 from unittest.mock import patch, MagicMock, AsyncMock
 from app.models import User, Event, Image, Face
 from app.auth import create_access_token, hash_password
+from app.rate_limiter import rate_limiter, auth_rate_limiter
 
 
 # Password that satisfies the UserRegister validator (upper/lower/digit/special).
 _VALID_PW = "SecurePass1!"
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiters():
+    """TestClient always reports IP 'testclient' — flush its bucket between tests."""
+    rate_limiter.reset_limit("testclient", "scan")
+    auth_rate_limiter.reset_limit("testclient", "guest_auth")
+    auth_rate_limiter.reset_limit("testclient", "register")
+    auth_rate_limiter.reset_limit("testclient", "login")
+    yield
 
 
 def _compreface_subject_result(event_id, image_id, similarity: float = 0.95):
@@ -181,6 +192,7 @@ class TestGuestScanFlow:
             event_id=event.id,
             bbox=[100, 100, 200, 200],
             quality_score=0.95,
+            embedding=[0.0] * 512,
             compreface_subject_id=f"{event.id}/{image.id}",
         )
         db_session.add(face)
@@ -520,6 +532,7 @@ class TestCrossFlowIntegration:
                 event_id=event.id,
                 bbox=[100, 100, 200, 200],
                 quality_score=0.95,
+                embedding=[0.0] * 512,
                 compreface_subject_id=f"{event.id}/{image.id}",
             )
             db_session.add(face)
