@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 import uuid
 
 from app.auth import get_current_user
+from app.audit import log_action
 from app.database import get_db
 from app.models import User, Event, Image, Face, AuditLog, EventTier, UserTier, Payment
 from app.config import settings, get_compreface_url
@@ -141,12 +142,24 @@ async def update_user(
             detail="Cannot remove your own superadmin status"
         )
 
+    changes: dict = {}
     if update.is_superadmin is not None:
+        changes["is_superadmin"] = update.is_superadmin
         target_user.is_superadmin = update.is_superadmin
     if update.is_disabled is not None:
+        changes["is_disabled"] = update.is_disabled
         target_user.is_disabled = update.is_disabled
 
     db.commit()
+
+    log_action(
+        db=db,
+        event_id=None,
+        actor_type="admin",
+        actor_id=current_user.id,
+        action="admin_user_update",
+        metadata={"target_user_id": str(target_uuid), "target_email": target_user.email, "changes": changes},
+    )
 
     return {
         "user_id": str(target_user.id),
@@ -253,6 +266,22 @@ async def update_user_tier(
     rebalance_event_status(target_uuid, max_events, db)
     db.commit()
 
+    log_action(
+        db=db,
+        event_id=None,
+        actor_type="admin",
+        actor_id=current_user.id,
+        action="admin_tier_update",
+        metadata={
+            "target_user_id": str(target_uuid),
+            "target_email": target_user.email,
+            "tier_name": update.tier_name,
+            "max_events": max_events,
+            "max_photos_per_event": max_photos,
+            "stripe_subscription_orphaned": stripe_subscription_orphaned,
+        },
+    )
+
     return {
         "message": f"User tier updated to {update.tier_name}",
         "user_id": user_id,
@@ -320,8 +349,20 @@ async def delete_user(
         cache_delete_pattern(f"share:{event.id}:*")
 
     email = target_user.email
+    deleted_event_count = len(user_events)
     db.delete(target_user)
     db.commit()
+
+    # Logged AFTER delete commits so the audit row survives even if the user FK
+    # is gone (event_id is nullable, and target_user_id is recorded in metadata).
+    log_action(
+        db=db,
+        event_id=None,
+        actor_type="admin",
+        actor_id=current_user.id,
+        action="admin_user_delete",
+        metadata={"target_user_id": str(target_uuid), "target_email": email, "events_deleted": deleted_event_count},
+    )
 
     return {"message": f"User {email} and all their data deleted successfully"}
 
@@ -484,8 +525,25 @@ async def admin_delete_event(
     cache_delete_pattern(f"gallery:{event_uuid}:*")
     cache_delete_pattern(f"share:{event_uuid}:*")
 
+    owner_email = (
+        db.query(User.email).filter(User.id == event.owner_user_id).scalar()
+        if event.owner_user_id else None
+    )
+    event_name = event.name
+
     db.delete(event)
     db.commit()
+
+    # event_id is nullable now and FK is ON DELETE SET NULL, so logging after
+    # the event delete still preserves a trail without dangling refs.
+    log_action(
+        db=db,
+        event_id=None,
+        actor_type="admin",
+        actor_id=current_user.id,
+        action="admin_event_delete",
+        metadata={"target_event_id": str(event_uuid), "target_event_name": event_name, "owner_email": owner_email},
+    )
 
     return {"message": "Event deleted successfully", "event_id": str(event_uuid)}
 
@@ -532,6 +590,15 @@ async def set_event_photo_override(
 
     db.commit()
 
+    log_action(
+        db=db,
+        event_id=event_uuid,
+        actor_type="admin",
+        actor_id=current_user.id,
+        action="admin_photo_override_set",
+        metadata={"photo_limit": req.photo_limit},
+    )
+
     return {
         "message": f"Photo limit for event set to {req.photo_limit}",
         "event_id": event_id,
@@ -558,6 +625,14 @@ async def remove_event_photo_override(
     db.delete(event_tier)
     db.commit()
 
+    log_action(
+        db=db,
+        event_id=event_uuid,
+        actor_type="admin",
+        actor_id=current_user.id,
+        action="admin_photo_override_remove",
+    )
+
     return {"message": "Photo override removed", "event_id": event_id}
 
 
@@ -574,10 +649,19 @@ async def list_failed_jobs(
 async def retry_job(
     job_id: str,
     current_user: User = Depends(get_superadmin_user),
+    db: Session = Depends(get_db),
 ):
     """Requeue a failed job for retry."""
     try:
         requeued_id = retry_failed_job(job_id)
+        log_action(
+            db=db,
+            event_id=None,
+            actor_type="admin",
+            actor_id=current_user.id,
+            action="admin_job_retry",
+            metadata={"job_id": job_id, "requeued_id": requeued_id},
+        )
         return {"message": "Job requeued successfully", "job_id": requeued_id}
     except Exception as e:
         raise HTTPException(

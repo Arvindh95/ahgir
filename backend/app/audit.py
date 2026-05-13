@@ -11,7 +11,7 @@ from app.models import AuditLog
 
 def log_action(
     db: Session,
-    event_id: uuid.UUID,
+    event_id: Optional[uuid.UUID],
     actor_type: str,
     actor_id: Optional[uuid.UUID],
     action: str,
@@ -19,15 +19,18 @@ def log_action(
 ) -> AuditLog:
     """
     Create an audit log entry
-    
+
     Args:
         db: Database session
-        event_id: UUID of the event
+        event_id: UUID of the event the action affected. May be None for
+            superadmin actions that are not scoped to a specific event
+            (user tier updates, user deletion, retried jobs, etc.).
         actor_type: Type of actor ('admin' or 'guest')
         actor_id: UUID of the user or session
-        action: Action performed (e.g., 'access', 'scan', 'upload', 'reindex', 'delete')
+        action: Action performed (e.g., 'access', 'scan', 'upload',
+            'reindex', 'delete', 'admin_user_update', 'admin_event_delete')
         metadata: Optional metadata as dictionary
-    
+
     Returns:
         Created AuditLog instance
     """

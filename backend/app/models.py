@@ -118,7 +118,10 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    event_id = Column(UUID(as_uuid=True), ForeignKey("events.id", ondelete="CASCADE"), nullable=False, index=True)
+    # event_id is nullable: superadmin actions (user updates, tier changes,
+    # retried jobs) aren't tied to a specific event. FK is SET NULL so audit
+    # trail survives event deletion.
+    event_id = Column(UUID(as_uuid=True), ForeignKey("events.id", ondelete="SET NULL"), nullable=True, index=True)
     actor_type = Column(String(20), nullable=False)  # admin, guest
     actor_id = Column(UUID(as_uuid=True))  # user_id or session_id
     action = Column(String(50), nullable=False)  # access, scan, upload, reindex, delete
