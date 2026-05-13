@@ -87,7 +87,7 @@ export default function Pricing() {
         <div className="text-center mb-10">
           <h1 className="text-3xl md:text-4xl font-bold mb-4">Simple, transparent pricing</h1>
           <p className="text-gray-400 text-lg max-w-xl mx-auto">
-            Pay monthly or save with annual billing. Cancel anytime.
+            Pay monthly or save ~17% with annual billing. Cancel anytime.
           </p>
         </div>
 
