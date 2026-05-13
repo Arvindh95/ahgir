@@ -10,7 +10,7 @@ export default function PrivacyPolicy() {
 
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-16 md:py-24">
         <h1 className="text-3xl md:text-4xl font-bold mb-2">Privacy Policy</h1>
-        <p className="text-gray-500 text-sm mb-12">Last updated: February 2026</p>
+        <p className="text-gray-500 text-sm mb-12">Last updated: May 2026</p>
 
         <div className="space-y-10 text-gray-300 leading-relaxed">
           <section>
@@ -19,7 +19,7 @@ export default function PrivacyPolicy() {
               PicUr (&quot;we&quot;, &quot;us&quot;, or &quot;our&quot;) operates the PicUr platform at picur.my. PicUr is an AI-powered photo sharing service designed for events. We use face recognition technology to help event guests find photos of themselves from event galleries.
             </p>
             <p className="mt-3">
-              This Privacy Policy explains how we collect, use, store, and protect your personal data in compliance with the Malaysian Personal Data Protection Act 2010 (PDPA).
+              This Privacy Policy explains how we collect, use, store, and protect your personal data in compliance with the Malaysian Personal Data Protection Act 2010 (PDPA). For a plain-English explanation of the technical safeguards behind these promises, see our <a href="/security" className="text-blue-400 hover:text-blue-300 underline">Security &amp; Data Handling page</a>.
             </p>
           </section>
 
@@ -29,9 +29,10 @@ export default function PrivacyPolicy() {
             <ul className="list-disc list-inside space-y-2 ml-2">
               <li><span className="text-white font-medium">Account Information:</span> Email address and encrypted password when you register as an event organizer.</li>
               <li><span className="text-white font-medium">Event Data:</span> Event names, dates, settings, and passcodes created by organizers.</li>
-              <li><span className="text-white font-medium">Photos:</span> Images uploaded by event organizers to their event galleries.</li>
+              <li><span className="text-white font-medium">Photos:</span> Images uploaded by event organizers to their event galleries. EXIF metadata (including GPS coordinates, camera serial number, and capture timestamps) is stripped before storage.</li>
               <li><span className="text-white font-medium">Face Recognition Data:</span> Facial feature vectors (mathematical representations) generated from uploaded photos and guest selfie scans. These are not actual images of faces but numerical data used for matching.</li>
               <li><span className="text-white font-medium">Usage Data:</span> Scan counts, download counts, and basic service usage analytics.</li>
+              <li><span className="text-white font-medium">Payment Data:</span> If you subscribe to a paid plan or buy a one-time event package, your payment is processed by Stripe. We receive a Stripe customer ID, subscription status, and invoice metadata — we do not see or store your full card number.</li>
             </ul>
           </section>
 
@@ -77,8 +78,9 @@ export default function PrivacyPolicy() {
             <h2 className="text-xl font-semibold text-white mb-3">6. Data Retention</h2>
             <ul className="list-disc list-inside space-y-2 ml-2">
               <li><span className="text-white font-medium">Account data:</span> Retained until you request account deletion.</li>
-              <li><span className="text-white font-medium">Event photos and face data:</span> Retained for the duration of the event. When an event is deleted by the organizer, all associated photos and facial vectors are permanently removed.</li>
+              <li><span className="text-white font-medium">Event photos and face data:</span> Retained for the retention window of the event&apos;s plan — 30 days on Free, 6 months on Starter, 1 year on Pro, and a custom window on enterprise / one-time event packages. When the window expires or the organizer deletes the event, all associated photos, thumbnails, and facial vectors are permanently removed from storage, the face recognition engine, and the database.</li>
               <li><span className="text-white font-medium">Selfie scan data:</span> Processed in real-time and not permanently stored.</li>
+              <li><span className="text-white font-medium">Payment history:</span> Stripe customer IDs and invoice records are retained for accounting and tax purposes as required by Malaysian law.</li>
             </ul>
           </section>
 
@@ -99,15 +101,21 @@ export default function PrivacyPolicy() {
           <section>
             <h2 className="text-xl font-semibold text-white mb-3">8. Data Security</h2>
             <p>
-              We implement appropriate technical and organizational measures to protect your personal data, including encrypted data transmission (HTTPS/TLS), secure server infrastructure, access controls, and encrypted password storage. While we strive to protect your data, no method of transmission over the internet is 100% secure.
+              We implement appropriate technical and organizational measures to protect your personal data: HTTPS/TLS 1.2+ on all traffic, Cloudflare edge protection in front of our origin, encrypted server storage, bcrypt-hashed passwords, short-lived signed URLs for photo downloads, and per-event access isolation. A full breakdown is on our <a href="/security" className="text-blue-400 hover:text-blue-300 underline">Security &amp; Data Handling page</a>. While we strive to protect your data, no method of transmission over the internet is 100% secure.
             </p>
           </section>
 
           <section>
             <h2 className="text-xl font-semibold text-white mb-3">9. Third-Party Services</h2>
-            <p>
-              PicUr uses self-hosted infrastructure for all core services including photo storage and face recognition processing. Your face data and photos are processed entirely on our own servers and are not sent to external third-party AI services. We use Brevo for transactional email delivery (account verification and password reset emails only).
+            <p className="mb-3">
+              PicUr uses self-hosted infrastructure for all core services including photo storage and face recognition processing. Your face data and photos are processed entirely on our own servers and are not sent to external third-party AI services such as AWS Rekognition or Google Vision.
             </p>
+            <p className="mb-3">The third parties we do rely on are limited to:</p>
+            <ul className="list-disc list-inside space-y-2 ml-2">
+              <li><span className="text-white font-medium">Cloudflare</span> — DNS, edge proxy, DDoS protection, and TLS termination for picur.my.</li>
+              <li><span className="text-white font-medium">Stripe</span> — payment processing for subscriptions and one-time event packages. Stripe handles your card data under their own privacy policy.</li>
+              <li><span className="text-white font-medium">Brevo</span> — transactional email delivery (account verification and password reset emails only).</li>
+            </ul>
           </section>
 
           <section>

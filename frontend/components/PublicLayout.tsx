@@ -35,6 +35,12 @@ export default function PublicLayout({ children }: PublicLayoutProps) {
                   Pricing
                 </Link>
                 <Link
+                  href="/security"
+                  className="text-sm font-medium text-gray-300 hover:text-white transition-colors"
+                >
+                  Security
+                </Link>
+                <Link
                   href="/contact"
                   className="text-sm font-medium text-gray-300 hover:text-white transition-colors"
                 >
@@ -74,6 +80,12 @@ export default function PublicLayout({ children }: PublicLayoutProps) {
                 className="block px-3 py-2 text-sm font-medium text-gray-300 hover:text-white hover:bg-white/5 rounded-lg"
               >
                 Pricing
+              </Link>
+              <Link
+                href="/security"
+                className="block px-3 py-2 text-sm font-medium text-gray-300 hover:text-white hover:bg-white/5 rounded-lg"
+              >
+                Security
               </Link>
               <Link
                 href="/contact"
