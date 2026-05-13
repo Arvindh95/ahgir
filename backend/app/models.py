@@ -203,7 +203,7 @@ class EventTier(Base):
     event = relationship("Event", back_populates="tier")
 
     __table_args__ = (
-        CheckConstraint("tier_name IN ('free', 'standard', 'premium', 'premium_plus', 'custom')", name="valid_tier_name"),
+        CheckConstraint("tier_name IN ('free', 'starter', 'pro', 'custom')", name="valid_tier_name"),
         {"schema": None}
     )
 

@@ -15,9 +15,9 @@ const UPGRADE_TIERS = [
     monthly_cents: 900,
     yearly_cents: 9000,
     events: '5',
-    photos: '500',
+    photos: '250',
     retention: '6 months',
-    features: ['5 active events', 'Up to 500 photos per event', '6-month retention', 'Face recognition', 'Guest scanning'],
+    features: ['5 active events', 'Up to 250 photos per event', '6-month retention', 'Face recognition', 'Guest scanning'],
     popular: true,
   },
   {
@@ -26,9 +26,9 @@ const UPGRADE_TIERS = [
     monthly_cents: 2900,
     yearly_cents: 29000,
     events: '20',
-    photos: '2000',
+    photos: '500',
     retention: '1 year',
-    features: ['20 active events', 'Up to 2000 photos per event', '1-year retention', 'Face recognition', 'Guest scanning', 'Priority indexing'],
+    features: ['20 active events', 'Up to 500 photos per event', '1-year retention', 'Face recognition', 'Guest scanning', 'Priority indexing'],
   },
 ]
 
@@ -37,7 +37,7 @@ const TIER_ORDER = ['free', 'starter', 'pro']
 export default function UpgradeModal({ open, currentTier, onClose }: UpgradeModalProps) {
   const [isLoading, setIsLoading] = useState<string | null>(null)
   const [error, setError] = useState('')
-  const [interval, setInterval] = useState<BillingInterval>('month')
+  const [billingInterval, setBillingInterval] = useState<BillingInterval>('month')
 
   if (!open) return null
 
@@ -94,17 +94,17 @@ export default function UpgradeModal({ open, currentTier, onClose }: UpgradeModa
         <div className="flex justify-center mb-6">
           <div className="inline-flex items-center bg-white/5 rounded-full p-1 border border-white/10">
             <button
-              onClick={() => setInterval('month')}
+              onClick={() => setBillingInterval('month')}
               className={`px-4 py-1.5 rounded-full text-xs font-medium transition-colors ${
-                interval === 'month' ? 'bg-white text-black' : 'text-gray-400 hover:text-white'
+                billingInterval === 'month' ? 'bg-white text-black' : 'text-gray-400 hover:text-white'
               }`}
             >
               Monthly
             </button>
             <button
-              onClick={() => setInterval('year')}
+              onClick={() => setBillingInterval('year')}
               className={`px-4 py-1.5 rounded-full text-xs font-medium transition-colors ${
-                interval === 'year' ? 'bg-white text-black' : 'text-gray-400 hover:text-white'
+                billingInterval === 'year' ? 'bg-white text-black' : 'text-gray-400 hover:text-white'
               }`}
             >
               Yearly
@@ -121,8 +121,8 @@ export default function UpgradeModal({ open, currentTier, onClose }: UpgradeModa
 
         <div className={`grid gap-4 ${availableTiers.length === 1 ? 'max-w-sm mx-auto' : 'grid-cols-1 md:grid-cols-2'}`}>
           {availableTiers.map((tier) => {
-            const cents = interval === 'year' ? tier.yearly_cents : tier.monthly_cents
-            const period = interval === 'year' ? '/year' : '/month'
+            const cents = billingInterval === 'year' ? tier.yearly_cents : tier.monthly_cents
+            const period = billingInterval === 'year' ? '/year' : '/month'
             return (
               <div
                 key={tier.key}

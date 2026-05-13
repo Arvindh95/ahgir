@@ -276,9 +276,9 @@ export default function Home() {
           <FadeInStagger>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8 max-w-5xl mx-auto">
               {[
-                { name: 'Free', price: '$0', period: '', desc: '1 active event, 50 photos', highlighted: false },
-                { name: 'Starter', price: '$9', period: '/month', desc: '5 active events, 500 photos each', highlighted: true },
-                { name: 'Pro', price: '$29', period: '/month', desc: '20 active events, 2000 photos each', highlighted: false },
+                { name: 'Free', price: '$0', period: '', desc: '1 active event, 25 photos', highlighted: false },
+                { name: 'Starter', price: '$9', period: '/month', desc: '5 active events, 250 photos each', highlighted: true },
+                { name: 'Pro', price: '$29', period: '/month', desc: '20 active events, 500 photos each', highlighted: false },
               ].map((tier) => (
                 <FadeIn key={tier.name}>
                   <div className={`rounded-2xl p-8 flex flex-col text-center ${

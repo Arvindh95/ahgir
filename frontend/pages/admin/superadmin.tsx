@@ -570,11 +570,11 @@ export default function SuperadminPage() {
                         <td className="py-3">
                           <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase ${
                             event.user_tier === 'free' ? 'bg-gray-500/20 text-gray-400' :
-                            event.user_tier === 'premium' ? 'bg-blue-500/20 text-blue-400' :
-                            event.user_tier === 'premium_plus' ? 'bg-purple-500/20 text-purple-400' :
+                            event.user_tier === 'starter' ? 'bg-blue-500/20 text-blue-400' :
+                            event.user_tier === 'pro' ? 'bg-purple-500/20 text-purple-400' :
                             'bg-yellow-500/20 text-yellow-400'
                           }`}>
-                            {event.user_tier === 'premium_plus' ? 'P+' : event.user_tier}
+                            {event.user_tier}
                           </span>
                         </td>
                         <td className="py-3">
@@ -674,11 +674,11 @@ export default function SuperadminPage() {
                         <td className="py-3 pl-2 font-medium">{payment.user_email}</td>
                         <td className="py-3">
                           <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase ${
-                            payment.tier_name === 'premium' ? 'bg-blue-500/20 text-blue-400' :
-                            payment.tier_name === 'premium_plus' ? 'bg-purple-500/20 text-purple-400' :
+                            payment.tier_name === 'starter' ? 'bg-blue-500/20 text-blue-400' :
+                            payment.tier_name === 'pro' ? 'bg-purple-500/20 text-purple-400' :
                             'bg-gray-500/20 text-gray-400'
                           }`}>
-                            {payment.tier_name === 'premium_plus' ? 'Premium+' : payment.tier_name}
+                            {payment.tier_name}
                           </span>
                         </td>
                         <td className="py-3 font-medium">RM {(payment.amount_cents / 100).toFixed(0)}</td>

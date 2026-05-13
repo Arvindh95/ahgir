@@ -13,14 +13,14 @@ const TIERS = [
     name: 'Starter',
     monthly_usd: 9,
     yearly_usd: 90,
-    features: ['5 active events', '500 photos per event', '6-month retention'],
+    features: ['5 active events', '250 photos per event', '6-month retention'],
   },
   {
     key: 'pro' as const,
     name: 'Pro',
     monthly_usd: 29,
     yearly_usd: 290,
-    features: ['20 active events', '2000 photos per event', '1-year retention', 'Priority indexing'],
+    features: ['20 active events', '500 photos per event', '1-year retention', 'Priority indexing'],
     popular: true,
   },
 ]

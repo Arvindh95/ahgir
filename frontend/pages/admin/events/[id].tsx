@@ -401,9 +401,9 @@ export default function EventDetailsPage() {
           {/* Plan & Usage */}
           {(() => {
             const userTier = event.user_tier
-            const effectiveLimit = event.tier?.photo_limit || userTier?.max_photos_per_event || 50
+            const effectiveLimit = event.tier?.photo_limit || userTier?.max_photos_per_event || 25
             const tierLabel = userTier?.tier_name || 'free'
-            const canUpgrade = tierLabel !== 'premium_plus' && tierLabel !== 'custom'
+            const canUpgrade = tierLabel !== 'pro' && tierLabel !== 'custom'
             return (
               <div className="glass-card p-6 rounded-2xl mb-8">
                 <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
@@ -412,11 +412,11 @@ export default function EventDetailsPage() {
                 <div className="flex flex-wrap items-center gap-3 mb-4">
                   <span className={`px-3 py-1 rounded-full text-sm font-bold uppercase ${
                     tierLabel === 'free' ? 'bg-gray-500/20 text-gray-400' :
-                    tierLabel === 'premium' ? 'bg-blue-500/20 text-blue-400' :
-                    tierLabel === 'premium_plus' ? 'bg-purple-500/20 text-purple-400' :
+                    tierLabel === 'starter' ? 'bg-blue-500/20 text-blue-400' :
+                    tierLabel === 'pro' ? 'bg-purple-500/20 text-purple-400' :
                     'bg-yellow-500/20 text-yellow-400'
                   }`}>
-                    {tierLabel === 'premium_plus' ? 'Premium+' : tierLabel}
+                    {tierLabel}
                   </span>
                   {userTier && (
                     <span className="text-sm text-gray-400">
