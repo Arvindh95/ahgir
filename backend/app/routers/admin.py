@@ -707,3 +707,97 @@ async def admin_list_payments(
         "total_revenue_cents": total_revenue,
         "total_revenue_display": f"RM {total_revenue / 100:.2f}",
     }
+
+
+@router.get("/audit-log")
+async def admin_list_audit_log(
+    actor_type: Optional[str] = None,
+    action: Optional[str] = None,
+    actor_id: Optional[str] = None,
+    event_id: Optional[str] = None,
+    q: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+    current_user: User = Depends(get_superadmin_user),
+    db: Session = Depends(get_db),
+):
+    """List audit log entries (superadmin only).
+
+    Filters:
+    - actor_type: 'admin' | 'guest'
+    - action: substring match (e.g. 'admin_user' matches all admin user actions)
+    - actor_id: UUID of acting user
+    - event_id: UUID of target event
+    - q: free-text search across actor email + metadata JSON
+    """
+    if limit < 1 or limit > 500:
+        limit = 100
+    if offset < 0:
+        offset = 0
+
+    query = (
+        db.query(AuditLog, User.email)
+        .outerjoin(User, AuditLog.actor_id == User.id)
+    )
+
+    if actor_type in ("admin", "guest"):
+        query = query.filter(AuditLog.actor_type == actor_type)
+    if action:
+        query = query.filter(AuditLog.action.ilike(f"%{action}%"))
+    if actor_id:
+        try:
+            query = query.filter(AuditLog.actor_id == uuid.UUID(actor_id))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid actor_id")
+    if event_id:
+        try:
+            query = query.filter(AuditLog.event_id == uuid.UUID(event_id))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid event_id")
+    if q:
+        from sqlalchemy import cast, Text
+        like = f"%{q}%"
+        # Cast jsonb metadata to text so we can ILIKE-match across keys/values
+        # without expanding every metadata field into a separate column. The
+        # audit log is bounded by retention so a full scan stays cheap.
+        query = query.filter(
+            (User.email.ilike(like)) |
+            (AuditLog.action.ilike(like)) |
+            (cast(AuditLog.metadata_, Text).ilike(like))
+        )
+
+    total = query.with_entities(func.count(AuditLog.id)).scalar() or 0
+
+    rows = (
+        query.order_by(AuditLog.timestamp.desc())
+        .limit(limit)
+        .offset(offset)
+        .all()
+    )
+
+    # Resolve event names in one query for any non-null event_ids in the page.
+    event_ids = [a.event_id for a, _ in rows if a.event_id is not None]
+    event_names: dict = {}
+    if event_ids:
+        for eid, ename in db.query(Event.id, Event.name).filter(Event.id.in_(event_ids)).all():
+            event_names[eid] = ename
+
+    return {
+        "entries": [
+            {
+                "id": str(a.id),
+                "timestamp": a.timestamp.isoformat(),
+                "actor_type": a.actor_type,
+                "actor_id": str(a.actor_id) if a.actor_id else None,
+                "actor_email": actor_email,
+                "action": a.action,
+                "event_id": str(a.event_id) if a.event_id else None,
+                "event_name": event_names.get(a.event_id),
+                "metadata": a.metadata_ or {},
+            }
+            for a, actor_email in rows
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }

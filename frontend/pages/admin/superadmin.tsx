@@ -290,10 +290,19 @@ export default function SuperadminPage() {
       <Head><title>Super Admin - PicUr</title></Head>
       <AdminLayout>
         <div className="max-w-7xl mx-auto">
-          <h1 className="text-3xl font-bold mb-8 flex items-center gap-3">
-            <Shield className="w-8 h-8 text-purple-400" />
-            Superadmin Panel
-          </h1>
+          <div className="flex items-center justify-between mb-8">
+            <h1 className="text-3xl font-bold flex items-center gap-3">
+              <Shield className="w-8 h-8 text-purple-400" />
+              Superadmin Panel
+            </h1>
+            <button
+              onClick={() => router.push('/admin/audit-log')}
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium bg-white/5 text-gray-300 hover:bg-white/10 hover:text-white transition-colors"
+              title="Open audit log"
+            >
+              <ShieldCheck className="w-4 h-4" /> Audit Log
+            </button>
+          </div>
 
           {/* Platform Stats */}
           {stats && (
