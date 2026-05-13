@@ -15,8 +15,8 @@ import uuid
 from datetime import datetime, timedelta
 from threading import Thread
 
-import jwt
 import pytest
+from jose import jwt
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -216,7 +216,7 @@ def test_reset_password_invalid_signature(db_session: Session):
     app.dependency_overrides.clear()
 
 
-def test_reset_password_concurrent_uses_serialize(db_session: Session):
+def test_reset_password_concurrent_uses_serialize(engine, tables):
     """Two parallel reset attempts with the same valid token must produce one
     success and one rejection — not two successes.
 
@@ -225,43 +225,85 @@ def test_reset_password_concurrent_uses_serialize(db_session: Session):
     can pass the check before either commits, so the second password would
     overwrite the first.
 
-    NB: TestClient does not give true concurrency (it's serialized by Starlette),
-    but we can still hit the same logical race by reusing the same valid token
-    twice in quick succession. The single-use replay test above already covers
-    the post-commit replay case. This test specifically asserts that even
-    *interleaved* attempts cannot both win.
+    NB: This test does NOT use the shared db_session fixture, because that
+    fixture wraps everything in a single rollback-on-teardown transaction —
+    SELECT FOR UPDATE within one transaction is a no-op against itself, so
+    the race becomes unobservable. Instead we create a fresh sessionmaker
+    bound to the real engine and override get_db to hand each request its
+    own session/transaction. We also clean up the test user manually.
     """
-    user = _make_user(db_session, email="reset-race@example.com")
-    _override_db(db_session)
+    from sqlalchemy.orm import sessionmaker
+    TestSession = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-    token = create_password_reset_token(user.id)
-
-    # Fire two requests as close together as Python allows. Even though the
-    # client is single-threaded, the contract we are asserting is "you cannot
-    # use the same reset token twice and have both succeed".
-    results = []
-
-    def attempt(pw: str):
-        r = client.post(
-            "/auth/reset-password",
-            json={"token": token, "new_password": pw},
+    # Seed the user via its own session and commit.
+    setup_session = TestSession()
+    try:
+        existing = setup_session.query(User).filter(User.email == "reset-race@example.com").first()
+        if existing:
+            setup_session.delete(existing)
+            setup_session.commit()
+        user = User(
+            email="reset-race@example.com",
+            password_hash=hash_password(VALID_PASSWORD),
+            is_verified=True,
         )
-        results.append((r.status_code, pw))
+        setup_session.add(user)
+        setup_session.commit()
+        setup_session.refresh(user)
+        user_id = user.id
+    finally:
+        setup_session.close()
 
-    t1 = Thread(target=attempt, args=("FirstWinPass1!",))
-    t2 = Thread(target=attempt, args=("SecondWinPass2@",))
-    t1.start(); t2.start(); t1.join(); t2.join()
+    # Per-request session so each /auth/reset-password call gets its own tx.
+    def per_request_get_db():
+        s = TestSession()
+        try:
+            yield s
+        finally:
+            s.close()
 
-    successes = [s for s in results if s[0] == 200]
-    rejections = [s for s in results if s[0] != 200]
-    assert len(successes) == 1, f"expected exactly 1 success, got {results}"
-    assert len(rejections) == 1, f"expected exactly 1 rejection, got {results}"
+    app.dependency_overrides[get_db] = per_request_get_db
 
-    db_session.refresh(user)
-    winning_pw = successes[0][1]
-    assert verify_password(winning_pw, user.password_hash)
+    try:
+        token = create_password_reset_token(user_id)
+        results = []
 
-    app.dependency_overrides.clear()
+        def attempt(pw: str):
+            r = client.post(
+                "/auth/reset-password",
+                json={"token": token, "new_password": pw},
+            )
+            results.append((r.status_code, pw))
+
+        t1 = Thread(target=attempt, args=("FirstWinPass1!",))
+        t2 = Thread(target=attempt, args=("SecondWinPass2@",))
+        t1.start(); t2.start(); t1.join(); t2.join()
+
+        successes = [s for s in results if s[0] == 200]
+        rejections = [s for s in results if s[0] != 200]
+        assert len(successes) == 1, f"expected exactly 1 success, got {results}"
+        assert len(rejections) == 1, f"expected exactly 1 rejection, got {results}"
+
+        verify_session = TestSession()
+        try:
+            after = verify_session.query(User).filter(User.id == user_id).first()
+            winning_pw = successes[0][1]
+            assert verify_password(winning_pw, after.password_hash)
+        finally:
+            verify_session.close()
+    finally:
+        # Hand-roll cleanup so this test does not leak the test user into
+        # subsequent runs (we are bypassing the rollback-wrapped fixture).
+        cleanup_session = TestSession()
+        try:
+            row = cleanup_session.query(User).filter(User.id == user_id).first()
+            if row:
+                cleanup_session.delete(row)
+                cleanup_session.commit()
+        finally:
+            cleanup_session.close()
+
+        app.dependency_overrides.clear()
 
 
 def test_reset_password_weak_password_rejected(db_session: Session):
