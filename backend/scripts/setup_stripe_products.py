@@ -43,7 +43,12 @@ TIER_PRICES = {
 
 
 def find_or_create_product(name: str, description: str) -> stripe.Product:
-    """Look up product by name (paged), create if absent."""
+    """Look up product by name (paged), create if absent.
+
+    If found, reconcile the description to match what we want — otherwise
+    re-running after the in-code description changes leaves Stripe showing
+    a stale string on the customer-facing checkout page.
+    """
     starting_after = None
     while True:
         kwargs = {"limit": 100, "active": True}
@@ -52,6 +57,9 @@ def find_or_create_product(name: str, description: str) -> stripe.Product:
         page = stripe.Product.list(**kwargs)
         for p in page.data:
             if p.name == name:
+                if (p.description or "") != description:
+                    print(f"  Updating description on existing product {p.id}")
+                    p = stripe.Product.modify(p.id, description=description)
                 return p
         if not page.has_more:
             break
