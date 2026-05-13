@@ -106,7 +106,24 @@ export default function PrivacyPolicy() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-white mb-3">9. Third-Party Services</h2>
+            <h2 className="text-xl font-semibold text-white mb-3">9. Operator Access</h2>
+            <p className="mb-3">
+              PicUr is operated by a small team. Our systems run on infrastructure we maintain, which means a limited number of staff have administrative access to the underlying servers, databases, and object storage where your photos live. We want to be transparent about this rather than imply otherwise:
+            </p>
+            <ul className="list-disc list-inside space-y-2 ml-2">
+              <li><span className="text-white font-medium">In-app:</span> The PicUr admin console exposes only event <em>metadata</em> (event name, owner email, photo count, plan information) to authorized superadmin accounts. There is no in-app feature to view or download photos from another organizer&apos;s event.</li>
+              <li><span className="text-white font-medium">Infrastructure-level:</span> Authorized operators technically have the ability to access photos and face data directly on the servers, the same way operators of any cloud service can.</li>
+              <li><span className="text-white font-medium">When we actually access your data:</span> only to respond to your own support requests, to investigate abuse or security incidents, to comply with valid Malaysian legal process, or to perform necessary maintenance. We do not routinely browse customer events.</li>
+              <li><span className="text-white font-medium">Audit:</span> administrative actions performed through the PicUr admin console are recorded in our audit log.</li>
+              <li><span className="text-white font-medium">Vendors:</span> we never grant administrative access to third-party AI vendors, marketers, or data brokers.</li>
+            </ul>
+            <p className="mt-3">
+              If you would like a written attestation that no operator has accessed your event, contact us at <a href="mailto:support@picur.my" className="text-blue-400 hover:text-blue-300 underline">support@picur.my</a> and we will check the audit log and confirm.
+            </p>
+          </section>
+
+          <section>
+            <h2 className="text-xl font-semibold text-white mb-3">10. Third-Party Services</h2>
             <p className="mb-3">
               PicUr uses self-hosted infrastructure for all core services including photo storage and face recognition processing. Your face data and photos are processed entirely on our own servers and are not sent to external third-party AI services such as AWS Rekognition or Google Vision.
             </p>
@@ -119,14 +136,14 @@ export default function PrivacyPolicy() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-white mb-3">10. Changes to This Policy</h2>
+            <h2 className="text-xl font-semibold text-white mb-3">11. Changes to This Policy</h2>
             <p>
               We may update this Privacy Policy from time to time. We will notify registered users of significant changes via email. Continued use of PicUr after changes constitutes acceptance of the updated policy.
             </p>
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-white mb-3">11. Contact Us</h2>
+            <h2 className="text-xl font-semibold text-white mb-3">12. Contact Us</h2>
             <p>
               If you have any questions about this Privacy Policy or our data practices, please contact us at:
             </p>

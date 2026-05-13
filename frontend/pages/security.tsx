@@ -228,6 +228,45 @@ export default function Security() {
           </div>
         </section>
 
+        {/* Operator access */}
+        <section className="mb-16 md:mb-20">
+          <SectionHeading
+            kicker="OPERATOR ACCESS"
+            title="Who at PicUr can technically see your data"
+            blurb="Total honesty: a small operator team maintains the servers your photos run on. Pretending otherwise would be dishonest. Here is exactly what that means and what we do with that access."
+          />
+          <div className="glass-card rounded-2xl p-6 md:p-8 space-y-4 text-sm md:text-base">
+            <div className="flex gap-4">
+              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-500/15 text-blue-300 flex items-center justify-center"><EyeOff className="w-4 h-4" /></div>
+              <div>
+                <div className="font-semibold text-white mb-0.5">No customer-photo browser in the app</div>
+                <p className="text-gray-400">The PicUr admin console only shows event metadata — event name, owner email, photo count, plan. There is no admin feature anywhere in the app that lets staff view or download photos from another organizer&apos;s event.</p>
+              </div>
+            </div>
+            <div className="flex gap-4">
+              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-500/15 text-blue-300 flex items-center justify-center"><Server className="w-4 h-4" /></div>
+              <div>
+                <div className="font-semibold text-white mb-0.5">Server access exists, like any cloud service</div>
+                <p className="text-gray-400">A small number of operators have administrative access to the underlying servers and storage — the same way operators of AWS, Google Drive, or any cloud service technically can. We will not pretend this is not true.</p>
+              </div>
+            </div>
+            <div className="flex gap-4">
+              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-500/15 text-blue-300 flex items-center justify-center"><ShieldCheck className="w-4 h-4" /></div>
+              <div>
+                <div className="font-semibold text-white mb-0.5">When we actually use that access</div>
+                <p className="text-gray-400">Only to answer your support requests, investigate abuse or security incidents, comply with valid Malaysian legal process, or maintain the service. We do not browse customer events. We do not train AI on your photos. We do not share them with anyone.</p>
+              </div>
+            </div>
+            <div className="flex gap-4">
+              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-500/15 text-blue-300 flex items-center justify-center"><KeyRound className="w-4 h-4" /></div>
+              <div>
+                <div className="font-semibold text-white mb-0.5">Audit log</div>
+                <p className="text-gray-400">Admin actions through the PicUr console are recorded. You can email <a href="mailto:support@picur.my" className="text-blue-400 hover:text-blue-300 underline">support@picur.my</a> and ask us to check whether any operator has accessed your event — we will confirm in writing.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
         {/* What we do NOT do */}
         <section className="mb-16 md:mb-20">
           <SectionHeading
