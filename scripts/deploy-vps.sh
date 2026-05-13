@@ -41,6 +41,13 @@ $COMPOSE build frontend backend worker
 if [ "$MODE" = "full" ]; then
     echo "==> Recreating backend / worker / retention-scheduler"
     $COMPOSE up -d --no-deps --force-recreate backend worker retention-scheduler
+else
+    # In frontend-only mode we still want to make sure backend, worker and
+    # retention-scheduler are running so queue jobs (password reset emails,
+    # face indexing) keep flowing. `up -d` without --force-recreate is a
+    # no-op when they're already Up.
+    echo "==> Ensuring backend / worker / retention-scheduler are running"
+    $COMPOSE up -d --no-deps backend worker retention-scheduler
 fi
 
 echo "==> Rolling frontend (instance 2 first, then instance 1)"
