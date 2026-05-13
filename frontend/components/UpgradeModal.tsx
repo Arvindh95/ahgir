@@ -51,7 +51,7 @@ export default function UpgradeModal({ open, currentTier, onClose }: UpgradeModa
     try {
       setIsLoading(tierName)
       setError('')
-      const result = await paymentService.createCheckout(tierName, interval)
+      const result = await paymentService.createCheckout(tierName, billingInterval)
       window.location.href = result.checkout_url
     } catch (err: any) {
       const detail = err.response?.data?.detail
