@@ -1012,7 +1012,14 @@ async def upload_photos(
                 status='pending',
                 face_count=0
             )
-            
+
+            # Track which MinIO photo_type objects we managed to write so
+            # the except block can best-effort delete them on failure.
+            # Without this, an exception between upload and commit leaves
+            # orphan objects in MinIO forever (the DB rollback strips the
+            # image row but doesn't reach the bucket).
+            uploaded_photo_types: list[str] = []
+
             db.add(new_image)
             storage_service.upload_photo(
                 event_id=event_uuid,
@@ -1020,7 +1027,8 @@ async def upload_photos(
                 photo_data=original_bytes,
                 photo_type='original'
             )
-            
+            uploaded_photo_types.append('original')
+
             # Generate and store thumbnail
             thumbnail_data = generate_thumbnail(file_data)
             storage_service.upload_photo(
@@ -1029,7 +1037,8 @@ async def upload_photos(
                 photo_data=thumbnail_data,
                 photo_type='thumb'
             )
-            
+            uploaded_photo_types.append('thumb')
+
             # Commit to database
             db.commit()
             
@@ -1047,9 +1056,12 @@ async def upload_photos(
                 }
             )
             
-            # Queue face indexing job. Failure here means the photo will sit at status='pending'
-            # forever unless an admin runs the reindex tooling, so we audit-log the failure
-            # for visibility instead of silently continuing.
+            # Queue face indexing job. Previously a failure here left the
+            # image stuck at status='pending' forever — the photo never
+            # showed up in guest scans until somebody manually reindexed.
+            # Now we flip it to status='failed' so the admin reindex tool
+            # (and the upcoming pending-reconciler) can pick it up.
+            enqueue_status = 'pending'
             try:
                 enqueue_face_indexing(str(image_id))
             except Exception as e:
@@ -1057,6 +1069,9 @@ async def upload_photos(
                     f"Failed to queue face indexing job for image {image_id}: {e}",
                     exc_info=True,
                 )
+                enqueue_status = 'failed'
+                new_image.status = 'failed'
+                db.commit()
                 log_action(
                     db=db,
                     event_id=event_uuid,
@@ -1069,17 +1084,32 @@ async def upload_photos(
                         'error': str(e),
                     }
                 )
-            
+
             uploaded.append(PhotoUploadResult(
                 image_id=str(image_id),
                 filename=file.filename,
                 size_bytes=len(file_data),
-                status='pending'
+                status=enqueue_status,
             ))
             
         except Exception as e:
             logger.error(f"Upload failed for {file.filename}: {str(e)}", exc_info=True)
             db.rollback()
+            # Best-effort cleanup of any MinIO objects we wrote before the
+            # exception. Pre-fix, an exception between original-upload and
+            # commit would leak the original file in MinIO forever.
+            # storage_service.delete_photo wipes ALL photo_types for the
+            # given image_id in one call, so we only need to invoke it once.
+            try:
+                if 'image_id' in locals() and 'uploaded_photo_types' in locals() and uploaded_photo_types:
+                    storage_service.delete_photo(
+                        event_id=event_uuid,
+                        image_id=image_id,
+                    )
+            except Exception as cleanup_err:
+                logger.warning(
+                    f"MinIO cleanup failed for image_id {locals().get('image_id', '?')}: {cleanup_err}"
+                )
             failed.append(PhotoUploadFailure(
                 filename=file.filename,
                 reason=f"Upload failed: {str(e)}",

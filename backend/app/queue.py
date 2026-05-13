@@ -143,3 +143,21 @@ def enqueue_subscription_processor() -> str:
         result_ttl='7d',
     )
     return job.id
+
+
+def enqueue_stale_pending_reconciler() -> str:
+    """Enqueue the stale-pending-images reconciler.
+
+    Backstop for the rare upload path where the Image row is committed but
+    the face-indexing enqueue silently failed (worker crashed between commit
+    and enqueue, etc). Picks up images stuck at status='pending' for more
+    than 30 minutes and re-enqueues them.
+    """
+    from app.workers.retention_policy import requeue_stale_pending_indexing
+    job = retention_queue.enqueue(
+        requeue_stale_pending_indexing,
+        job_timeout='10m',
+        failure_ttl='7d',
+        result_ttl='7d',
+    )
+    return job.id

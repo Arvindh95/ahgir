@@ -8,7 +8,11 @@ crashing container is recoverable.
 import logging
 import sys
 
-from app.queue import enqueue_retention_check, enqueue_subscription_processor
+from app.queue import (
+    enqueue_retention_check,
+    enqueue_subscription_processor,
+    enqueue_stale_pending_reconciler,
+)
 
 
 def main() -> int:
@@ -26,6 +30,12 @@ def main() -> int:
         log.info(f"Enqueued subscription processor job {job_id}")
     except Exception as e:
         log.error(f"Failed to enqueue subscription processor: {e}", exc_info=True)
+        rc = 1
+    try:
+        job_id = enqueue_stale_pending_reconciler()
+        log.info(f"Enqueued stale-pending reconciler job {job_id}")
+    except Exception as e:
+        log.error(f"Failed to enqueue stale-pending reconciler: {e}", exc_info=True)
         rc = 1
     return rc
 

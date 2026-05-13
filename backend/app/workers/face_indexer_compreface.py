@@ -18,6 +18,17 @@ from app.utils.thumbnail import generate_thumbnail
 from app.utils.image_safety import safe_open as safe_open_image
 from app.cache import cache_delete_pattern
 
+
+class CompreFaceUpstreamError(Exception):
+    """Transient / upstream / auth failure talking to CompreFace.
+
+    Raised so the outer worker handler marks the image as failed and re-raises
+    for RQ to retry. Distinct from logical 4xx rejections (e.g. "More than
+    one face in crop") which the worker handles by retrying with a tighter
+    crop or skipping the face — those are not transient and a retry of the
+    whole job wouldn't help.
+    """
+
 logger = logging.getLogger(__name__)
 
 
@@ -56,13 +67,32 @@ async def _add_face_to_compreface(
 
             if response.status_code == 201:
                 return response.json()
-            else:
-                logger.error(f"CompreFace add_face failed: {response.status_code} - {response.text}")
-                return {"error": response.text, "status_code": response.status_code}
 
+            # 4xx (except auth) is treated as logical rejection — caller can
+            # decide to retry with a tighter crop, skip the face, etc.
+            # 5xx / 401 / 403 / 429 are upstream failures that warrant a job
+            # retry: raise so the outer try in the worker marks the image
+            # failed and RQ requeues.
+            status = response.status_code
+            if status in (401, 403, 429) or 500 <= status < 600:
+                msg = f"CompreFace add_face upstream failure: {status} - {response.text}"
+                logger.error(msg)
+                raise CompreFaceUpstreamError(msg)
+
+            logger.error(f"CompreFace add_face logical failure: {status} - {response.text}")
+            return {"error": response.text, "status_code": status}
+
+    except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPError) as e:
+        # Timeouts and other transport errors are always transient.
+        logger.error(f"Network error adding face to CompreFace: {e}")
+        raise CompreFaceUpstreamError(f"network error: {e}") from e
+    except CompreFaceUpstreamError:
+        raise
     except Exception as e:
-        logger.error(f"Error adding face to CompreFace: {e}")
-        return {"error": str(e)}
+        # Anything else (incl. JSON decode of a corrupt response) is also
+        # transient from our point of view.
+        logger.error(f"Unexpected error adding face to CompreFace: {e}")
+        raise CompreFaceUpstreamError(f"unexpected: {e}") from e
 
 
 async def _detect_faces_compreface(
@@ -97,14 +127,24 @@ async def _detect_faces_compreface(
 
             if response.status_code == 200:
                 result = response.json()
+                # 200 with an empty result is legitimate "no faces detected".
+                # Anything else is an upstream problem — see _add_face_to_compreface
+                # comment for the rationale.
                 return result.get("result", [])
-            else:
-                logger.error(f"CompreFace detect failed: {response.status_code} - {response.text}")
-                return []
 
+            status = response.status_code
+            msg = f"CompreFace detect failed: {status} - {response.text}"
+            logger.error(msg)
+            raise CompreFaceUpstreamError(msg)
+
+    except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPError) as e:
+        logger.error(f"Network error detecting faces with CompreFace: {e}")
+        raise CompreFaceUpstreamError(f"network error: {e}") from e
+    except CompreFaceUpstreamError:
+        raise
     except Exception as e:
-        logger.error(f"Error detecting faces with CompreFace: {e}")
-        return []
+        logger.error(f"Unexpected error detecting faces with CompreFace: {e}")
+        raise CompreFaceUpstreamError(f"unexpected: {e}") from e
 
 
 def index_photo_compreface(image_id: str, api_key: str, db_session: Optional[Session] = None) -> dict:
@@ -166,6 +206,21 @@ def index_photo_compreface(image_id: str, api_key: str, db_session: Optional[Ses
 
         logger.info(f"Processing image {image_id} for event {image.event_id}")
 
+        # Wipe any Face rows left over from a prior failed attempt at this
+        # same image_id. Without this, a job retry can stack duplicate Face
+        # rows (and duplicate compreface_subject_id values) for the same
+        # face on the same photo. The CompreFace-side subjects with the
+        # exact same subject_id will simply overwrite themselves on the
+        # add_face POST, so we only need to clear the DB side here.
+        existing_faces = db.query(Face).filter(Face.image_id == image_uuid).count()
+        if existing_faces:
+            logger.info(
+                f"Clearing {existing_faces} stale Face row(s) from prior attempt "
+                f"for image {image_id}"
+            )
+            db.query(Face).filter(Face.image_id == image_uuid).delete()
+            db.commit()
+
         # Download photo from MinIO
         try:
             photo_bytes = storage_service.get_photo(
@@ -226,6 +281,8 @@ def index_photo_compreface(image_id: str, api_key: str, db_session: Optional[Ses
         img = pil_img
 
         face_count = 0
+        attempted_adds = 0  # faces that passed the quality filter and we tried to upload to CompreFace
+        upstream_failures = 0  # transient/auth/5xx errors during add_face — counted so we raise if ALL adds failed transiently
         skipped_low_quality = 0
         for idx, face_data in enumerate(faces):
             box = face_data.get("box", {})
@@ -280,29 +337,43 @@ def index_photo_compreface(image_id: str, api_key: str, db_session: Optional[Ses
             # Create subject ID: event_id/image_id/face_idx
             subject_id = f"{image.event_id}/{image_id}/{idx}"
 
-            # Add cropped face to CompreFace recognition service
-            result = _run_async(_add_face_to_compreface(
-                cropped_face_data,
-                subject_id,
-                api_key,
-                det_prob_threshold=0.5
-            ))
-
-            # If multiple faces in crop (nearby faces), retry with no padding
-            if "error" in result and "More than one face" in str(result.get("error", "")):
-                logger.info(f"Retrying face {idx} with no padding (multiple faces in crop)")
-                face_img_tight = img.crop((x_min, y_min, x_max, y_max))
-                if face_img_tight.mode in ('RGBA', 'LA', 'P'):
-                    face_img_tight = face_img_tight.convert('RGB')
-                tight_buf = io.BytesIO()
-                face_img_tight.save(tight_buf, format='JPEG', quality=95)
-                tight_buf.seek(0)
+            # Add cropped face to CompreFace recognition service. Upstream
+            # / transient failures raise CompreFaceUpstreamError; logical
+            # rejections (4xx that aren't auth) return {"error": ...} which
+            # we handle below.
+            attempted_adds += 1
+            try:
                 result = _run_async(_add_face_to_compreface(
-                    tight_buf.getvalue(),
+                    cropped_face_data,
                     subject_id,
                     api_key,
                     det_prob_threshold=0.5
                 ))
+
+                # If multiple faces in crop (nearby faces), retry with no padding
+                if "error" in result and "More than one face" in str(result.get("error", "")):
+                    logger.info(f"Retrying face {idx} with no padding (multiple faces in crop)")
+                    face_img_tight = img.crop((x_min, y_min, x_max, y_max))
+                    if face_img_tight.mode in ('RGBA', 'LA', 'P'):
+                        face_img_tight = face_img_tight.convert('RGB')
+                    tight_buf = io.BytesIO()
+                    face_img_tight.save(tight_buf, format='JPEG', quality=95)
+                    tight_buf.seek(0)
+                    result = _run_async(_add_face_to_compreface(
+                        tight_buf.getvalue(),
+                        subject_id,
+                        api_key,
+                        det_prob_threshold=0.5
+                    ))
+            except CompreFaceUpstreamError as e:
+                # Don't bail out on the first transient failure — the next
+                # face might succeed and we can still index a subset. But
+                # remember it: if EVERY add fails this way we raise at the
+                # end so RQ retries the whole image rather than persisting
+                # a no_faces / partial-success state.
+                upstream_failures += 1
+                logger.warning(f"Upstream failure adding face {idx} for image {image_id}: {e}")
+                continue
 
             if "error" not in result:
                 # Store face metadata in our database
@@ -341,12 +412,26 @@ def index_photo_compreface(image_id: str, api_key: str, db_session: Optional[Ses
         if skipped_low_quality:
             logger.info(f"Skipped {skipped_low_quality} low-quality faces in image {image_id}")
 
+        # Distinguish "no faces" from "all add_face attempts failed transiently".
+        # The latter must NOT persist as no_faces — that hides the failure and
+        # guest scans will never match this image until somebody manually
+        # reindexes. Raise so the outer handler marks the image failed and
+        # RQ retries the whole job.
+        if attempted_adds > 0 and face_count == 0 and upstream_failures > 0:
+            raise CompreFaceUpstreamError(
+                f"All {attempted_adds} add_face attempts failed upstream "
+                f"for image {image_id} ({upstream_failures} transient errors). "
+                "Raising so RQ retries the whole job."
+            )
+
         if face_count > 0:
             image.status = 'indexed'
             image.face_count = face_count
             image.indexed_at = datetime.utcnow()
             logger.info(f"Successfully indexed {face_count} faces for image {image_id}")
         else:
+            # Either detection genuinely returned 0 faces, or every detected
+            # face was skipped as low-quality. Both are legitimate no_faces.
             image.status = 'no_faces'
             image.face_count = 0
             image.indexed_at = datetime.utcnow()
@@ -375,6 +460,16 @@ def index_photo_compreface(image_id: str, api_key: str, db_session: Optional[Ses
         logger.error(f"Unexpected error processing image {image_id}: {str(e)}", exc_info=True)
 
         if db:
+            # ROLLBACK pending uncommitted changes BEFORE we touch the image
+            # status. Otherwise any Face rows added in the loop above get
+            # flushed alongside our status update, leaving orphaned face
+            # records that point to an image marked 'failed'. On retry those
+            # rows would also produce duplicate compreface_subject_id values.
+            try:
+                db.rollback()
+            except Exception as rollback_err:
+                logger.warning(f"db.rollback failed for image {image_id}: {rollback_err}")
+
             try:
                 image = db.query(Image).filter(Image.id == uuid.UUID(image_id)).first()
                 if image:

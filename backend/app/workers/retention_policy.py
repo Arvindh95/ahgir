@@ -198,7 +198,57 @@ def process_overdue_subscriptions(db: Session = None):
             db.close()
 
 
+def requeue_stale_pending_indexing(db: Session = None, stale_minutes: int = 30) -> int:
+    """Re-enqueue images stuck at status='pending' for longer than stale_minutes.
+
+    The upload path commits the Image row before enqueueing the face-indexing
+    job. If the enqueue fails (Redis down, worker not running, transient
+    network issue), the upload handler now flips the image to 'failed' —
+    but a process crash BETWEEN commit-image and enqueue would still leave a
+    pending row with no job. This reconciler is the backstop for that case.
+
+    Run alongside the other daily jobs.
+    """
+    from app.queue import enqueue_face_indexing  # local import: avoids worker-import cycles
+
+    db_provided = db is not None
+    if not db_provided:
+        db = SessionLocal()
+
+    cutoff = datetime.utcnow() - timedelta(minutes=stale_minutes)
+    requeued = 0
+
+    try:
+        stale = (
+            db.query(Image)
+            .filter(
+                Image.status == "pending",
+                Image.uploaded_at < cutoff,
+            )
+            .all()
+        )
+
+        for img in stale:
+            try:
+                enqueue_face_indexing(str(img.id))
+                requeued += 1
+                logger.info(
+                    f"Requeued stale pending image {img.id} "
+                    f"(uploaded {img.uploaded_at}, age >= {stale_minutes} min)"
+                )
+            except Exception as e:
+                logger.error(f"Failed to requeue stale pending image {img.id}: {e}")
+                continue
+
+        logger.info(f"Stale-pending reconciler complete. Requeued {requeued} image(s).")
+        return requeued
+    finally:
+        if not db_provided:
+            db.close()
+
+
 if __name__ == "__main__":
     # Allow running this script directly for testing
     check_and_delete_expired_events()
     process_overdue_subscriptions()
+    requeue_stale_pending_indexing()
