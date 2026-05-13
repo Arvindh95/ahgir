@@ -14,7 +14,8 @@ from app.auth import (
     create_verification_token, create_password_reset_token, decode_token
 )
 from app.database import get_db
-from app.models import User
+from app.models import User, UserTier
+from app.tiers import TIER_CONFIG
 from app.config import settings
 from app.exceptions import DuplicateEmailError, InvalidCredentialsError, EmailNotVerifiedError, InvalidTokenError
 from app.queue import enqueue_email, enqueue_password_reset_email
@@ -86,6 +87,28 @@ async def register(user_data: UserRegister, request: Request, db: Session = Depe
     except IntegrityError:
         db.rollback()
         raise DuplicateEmailError()
+
+    # Eagerly create the free UserTier row so first-event flow does not race
+    # to INSERT it under concurrent requests. create_event() still defends
+    # against the missing row for legacy pre-tier accounts, but new accounts
+    # will always find an existing row when they create their first event.
+    free_cfg = TIER_CONFIG["free"]
+    user_tier_row = UserTier(
+        user_id=new_user.id,
+        tier_name="free",
+        max_events=free_cfg["max_events"],
+        max_photos_per_event=free_cfg["max_photos_per_event"],
+        price_cents=0,
+        is_active=True,
+        activated_at=datetime.utcnow(),
+    )
+    try:
+        db.add(user_tier_row)
+        db.commit()
+    except IntegrityError:
+        # Another path beat us to it (shouldn't happen mid-register, but treat
+        # as harmless idempotency).
+        db.rollback()
 
     # Queue verification email in background
     token = create_verification_token(new_user.id)

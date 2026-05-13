@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile
 from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel, Field, field_validator
 import uuid
 import qrcode
@@ -265,17 +266,26 @@ async def create_event(
             .first()
         )
         if not user_tier:
-            user_tier = UserTier(
-                user_id=current_user.id,
-                tier_name="free",
-                max_events=1,
-                max_photos_per_event=50,
-                price_cents=0,
-                is_active=True,
-                activated_at=datetime.utcnow()
-            )
-            db.add(user_tier)
-            db.commit()
+            # First-event-ever path. Two concurrent requests can both observe a
+            # missing tier and both try to INSERT — the unique user_id constraint
+            # would 500 the second one. Catch IntegrityError, rollback, and
+            # re-query (the other request's row is now committed). Registration
+            # also pre-creates the free tier now, so this branch is mostly a
+            # safety net for legacy pre-tier accounts.
+            try:
+                user_tier = UserTier(
+                    user_id=current_user.id,
+                    tier_name="free",
+                    max_events=1,
+                    max_photos_per_event=50,
+                    price_cents=0,
+                    is_active=True,
+                    activated_at=datetime.utcnow()
+                )
+                db.add(user_tier)
+                db.commit()
+            except IntegrityError:
+                db.rollback()
             user_tier = (
                 db.query(UserTier)
                 .filter(UserTier.user_id == current_user.id)
@@ -1216,6 +1226,12 @@ async def delete_photo(
             detail="You do not have permission to delete photos from this event"
         )
 
+    # Frozen / expired events are read-only for the owner. Without this gate a
+    # downgraded user could still mutate their frozen events by deleting photos,
+    # which contradicts the freeze semantics enforced on upload / update / cover
+    # / reindex. Superadmin bypasses inside ensure_event_mutable().
+    ensure_event_mutable(event, current_user)
+
     # Query image
     image = db.query(Image).filter(
         Image.id == image_uuid,
@@ -1317,6 +1333,10 @@ async def bulk_delete_photos(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
     if not current_user.is_superadmin and event.owner_user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
+
+    # Frozen / expired events are read-only for the owner. Same rationale as
+    # delete_photo above — bulk delete must not be a back door past the freeze.
+    ensure_event_mutable(event, current_user)
 
     if not request.image_ids:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No images specified")
