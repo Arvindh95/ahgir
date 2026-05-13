@@ -65,16 +65,16 @@ const tiers = [
 ]
 
 export default function Pricing() {
-  const [interval, setInterval] = useState<Interval>('month')
+  const [billingInterval, setBillingInterval] = useState<Interval>('month')
 
   const formatPrice = (tier: typeof tiers[0]) => {
     if (tier.key === 'free') return '$0'
-    return interval === 'year' ? `$${tier.yearlyUSD}` : `$${tier.monthlyUSD}`
+    return billingInterval === 'year' ? `$${tier.yearlyUSD}` : `$${tier.monthlyUSD}`
   }
 
   const formatPeriod = (tier: typeof tiers[0]) => {
     if (tier.key === 'free') return ''
-    return interval === 'year' ? '/year' : '/month'
+    return billingInterval === 'year' ? '/year' : '/month'
   }
 
   return (
@@ -120,17 +120,17 @@ export default function Pricing() {
         <div className="flex justify-center mb-12">
           <div className="inline-flex items-center bg-white/5 rounded-full p-1 border border-white/10">
             <button
-              onClick={() => setInterval('month')}
+              onClick={() => setBillingInterval('month')}
               className={`px-5 py-2 rounded-full text-sm font-medium transition-colors ${
-                interval === 'month' ? 'bg-white text-black' : 'text-gray-400 hover:text-white'
+                billingInterval === 'month' ? 'bg-white text-black' : 'text-gray-400 hover:text-white'
               }`}
             >
               Monthly
             </button>
             <button
-              onClick={() => setInterval('year')}
+              onClick={() => setBillingInterval('year')}
               className={`px-5 py-2 rounded-full text-sm font-medium transition-colors ${
-                interval === 'year' ? 'bg-white text-black' : 'text-gray-400 hover:text-white'
+                billingInterval === 'year' ? 'bg-white text-black' : 'text-gray-400 hover:text-white'
               }`}
             >
               Yearly
