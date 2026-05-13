@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/router'
 import Head from 'next/head'
 import ProtectedRoute from '@/components/ProtectedRoute'
@@ -9,7 +9,7 @@ import { authService } from '@/lib/auth'
 import { useToast } from '@/hooks/useToast'
 import SuperadminSkeleton from '@/components/skeletons/SuperadminSkeleton'
 import GlobalAnalytics from '@/components/GlobalAnalytics'
-import { Shield, Users, Image as ImageIcon, Database, Ban, ShieldCheck, ShieldOff, Trash2, DollarSign, CreditCard, Settings, Loader2, Search, Zap } from 'lucide-react'
+import { Shield, Users, Image as ImageIcon, Database, Ban, ShieldCheck, ShieldOff, Trash2, DollarSign, CreditCard, Settings, Loader2, Search, Zap, Calendar, X } from 'lucide-react'
 
 interface UserItem {
   user_id: string
@@ -93,6 +93,16 @@ export default function SuperadminPage() {
   const [savingTier, setSavingTier] = useState(false)
   const [overrideEdit, setOverrideEdit] = useState<EventOverrideState | null>(null)
   const [savingOverride, setSavingOverride] = useState(false)
+  const eventsSectionRef = useRef<HTMLDivElement>(null)
+
+  const viewEventsForOwner = (email: string) => {
+    setEventSearch(email)
+    // Defer scroll so the filter render flushes first, otherwise the section
+    // height changes during scroll and the user lands above the events table.
+    setTimeout(() => {
+      eventsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 50)
+  }
 
   useEffect(() => {
     checkAccess()
@@ -401,6 +411,13 @@ export default function SuperadminPage() {
                       <td className="py-3 pr-2">
                         <div className="flex items-center justify-end gap-2">
                           <button
+                            onClick={() => viewEventsForOwner(user.email)}
+                            className="p-1.5 rounded-lg transition-colors bg-white/5 text-gray-500 hover:bg-white/10 hover:text-blue-400"
+                            title={`View events for ${user.email}`}
+                          >
+                            <Calendar className="w-4 h-4" />
+                          </button>
+                          <button
                             onClick={() => setTierEdit({
                               userId: user.user_id,
                               email: user.email,
@@ -526,7 +543,7 @@ export default function SuperadminPage() {
           )}
 
           {/* Per-Event Photo Override */}
-          <div className="glass-card p-6 rounded-2xl mt-8">
+          <div ref={eventsSectionRef} className="glass-card p-6 rounded-2xl mt-8 scroll-mt-4">
             <h2 className="text-xl font-bold mb-6 flex items-center gap-2">
               <Settings className="w-5 h-5" /> Per-Event Photo Override
             </h2>
@@ -541,6 +558,32 @@ export default function SuperadminPage() {
                 className="glass-input w-full pl-10 pr-4 py-2.5 rounded-xl text-sm"
               />
             </div>
+
+            {eventSearch && (
+              <div className="mb-4 flex items-center gap-2 text-sm">
+                <span className="text-gray-500">Showing events matching:</span>
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/20">
+                  {eventSearch}
+                  <button
+                    type="button"
+                    onClick={() => setEventSearch('')}
+                    className="text-blue-300 hover:text-white"
+                    title="Clear filter"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </span>
+                <span className="text-gray-500">
+                  ({events.filter((e) => {
+                    const q = eventSearch.toLowerCase()
+                    return e.name.toLowerCase().includes(q) || e.owner_email?.toLowerCase().includes(q)
+                  }).length} match{events.filter((e) => {
+                    const q = eventSearch.toLowerCase()
+                    return e.name.toLowerCase().includes(q) || e.owner_email?.toLowerCase().includes(q)
+                  }).length === 1 ? '' : 'es'})
+                </span>
+              </div>
+            )}
 
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm">
@@ -561,7 +604,10 @@ export default function SuperadminPage() {
                       const q = eventSearch.toLowerCase()
                       return e.name.toLowerCase().includes(q) || e.owner_email?.toLowerCase().includes(q)
                     })
-                    .slice(0, 20)
+                    // Cap at 20 when unfiltered (avoids a giant table dump);
+                    // show up to 100 when filtering so all of one owner's
+                    // events are visible without paging.
+                    .slice(0, eventSearch ? 100 : 20)
                     .map((event) => (
                       <tr key={event.event_id} className="hover:bg-white/5 transition-colors">
                         <td className="py-3 pl-2 font-medium">{event.name}</td>
