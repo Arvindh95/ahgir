@@ -261,6 +261,52 @@ export default function Home() {
         </div>
       </section>
 
+      {/* Security Preview */}
+      <section className="py-32">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <FadeIn>
+            <div className="text-center mb-24">
+              <h2 className="text-4xl md:text-6xl font-bold mb-6 tracking-tight">Built private</h2>
+              <p className="text-gray-400 text-xl max-w-2xl mx-auto font-light">
+                Your photos stay in your event, your face data is math not faces, and everything auto-deletes when your event ends.
+              </p>
+            </div>
+          </FadeIn>
+
+          <FadeInStagger>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8 max-w-5xl mx-auto">
+              {[
+                { icon: Lock, title: 'Encrypted everywhere', desc: 'TLS in transit, encrypted storage at rest, bcrypt passwords. GPS and EXIF metadata stripped before storage.' },
+                { icon: ScanFace, title: 'Math, not faces', desc: 'Face matching uses numerical embeddings on our own self-hosted AI. No third-party vendor sees your photos.' },
+                { icon: Shield, title: 'Auto-deletes with the event', desc: 'Photos, thumbnails, and face data are purged when the retention window ends. No backup we keep.' },
+              ].map((item) => (
+                <FadeIn key={item.title}>
+                  <div className="glass-card rounded-2xl p-8 flex flex-col h-full">
+                    <div className="w-10 h-10 rounded-xl bg-blue-500/15 text-blue-300 flex items-center justify-center mb-5">
+                      <item.icon className="w-5 h-5" />
+                    </div>
+                    <h3 className="text-lg font-bold mb-2">{item.title}</h3>
+                    <p className="text-gray-400 text-sm leading-relaxed">{item.desc}</p>
+                  </div>
+                </FadeIn>
+              ))}
+            </div>
+          </FadeInStagger>
+
+          <FadeIn>
+            <div className="text-center mt-12">
+              <Link
+                href="/security"
+                className="inline-flex items-center gap-2 text-blue-400 hover:text-blue-300 font-medium transition-colors"
+              >
+                See the full security breakdown
+                <ArrowRight className="w-4 h-4" />
+              </Link>
+            </div>
+          </FadeIn>
+        </div>
+      </section>
+
       {/* Pricing Preview */}
       <section className="py-32">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">

@@ -29,16 +29,16 @@ export default function PublicLayout({ children }: PublicLayoutProps) {
               </Link>
               <div className="hidden md:flex gap-6">
                 <Link
-                  href="/pricing"
-                  className="text-sm font-medium text-gray-300 hover:text-white transition-colors"
-                >
-                  Pricing
-                </Link>
-                <Link
                   href="/security"
                   className="text-sm font-medium text-gray-300 hover:text-white transition-colors"
                 >
                   Security
+                </Link>
+                <Link
+                  href="/pricing"
+                  className="text-sm font-medium text-gray-300 hover:text-white transition-colors"
+                >
+                  Pricing
                 </Link>
                 <Link
                   href="/contact"
@@ -76,16 +76,16 @@ export default function PublicLayout({ children }: PublicLayoutProps) {
           {mobileMenuOpen && (
             <div className="md:hidden border-t border-white/10 py-3 space-y-1">
               <Link
-                href="/pricing"
-                className="block px-3 py-2 text-sm font-medium text-gray-300 hover:text-white hover:bg-white/5 rounded-lg"
-              >
-                Pricing
-              </Link>
-              <Link
                 href="/security"
                 className="block px-3 py-2 text-sm font-medium text-gray-300 hover:text-white hover:bg-white/5 rounded-lg"
               >
                 Security
+              </Link>
+              <Link
+                href="/pricing"
+                className="block px-3 py-2 text-sm font-medium text-gray-300 hover:text-white hover:bg-white/5 rounded-lg"
+              >
+                Pricing
               </Link>
               <Link
                 href="/contact"
