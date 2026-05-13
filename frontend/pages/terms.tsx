@@ -67,6 +67,9 @@ export default function TermsOfService() {
             <p className="mt-3">
               Guests who do not wish to use face recognition may browse the event gallery manually where available. For a detailed explanation of how face data is processed and protected, see our <a href="/security" className="text-blue-400 hover:text-blue-300 underline">Security &amp; Data Handling page</a>.
             </p>
+            <p className="mt-3">
+              <span className="text-white font-medium">Accuracy:</span> face recognition is statistical and is not guaranteed to be 100% accurate. Variations in lighting, angle, expression, occlusion (sunglasses, masks, partial faces), and image quality can cause valid matches to be missed or, less commonly, cause a lookalike to be returned. PicUr tunes for high accuracy but provides no warranty that every photo of a given person will be matched. Organizers should consider providing a manual gallery view alongside face scanning so guests can browse for photos they may have missed.
+            </p>
           </section>
 
           <section>
