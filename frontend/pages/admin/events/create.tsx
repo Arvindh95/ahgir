@@ -1,9 +1,10 @@
-import { useState, FormEvent } from 'react'
+import { useState, FormEvent, useEffect } from 'react'
 import { useRouter } from 'next/router'
 import Head from 'next/head'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import AdminLayout from '@/components/AdminLayout'
 import { eventService } from '@/lib/events'
+import { paymentService } from '@/lib/payments'
 import { Calendar, Type, Lock, Download, Trash2, ArrowLeft, Loader2, Save } from 'lucide-react'
 
 export default function CreateEventPage() {
@@ -12,9 +13,30 @@ export default function CreateEventPage() {
   const [date, setDate] = useState('')
   const [passcode, setPasscode] = useState('')
   const [allowDownloads, setAllowDownloads] = useState(true)
-  const [retentionDays, setRetentionDays] = useState(90)
+  // Tier ceiling is loaded from /payments/my-tier; until then we cap input
+  // conservatively so a Free user never sees a default they cannot actually keep.
+  const [tierMaxRetention, setTierMaxRetention] = useState<number | null>(null)
+  const [tierName, setTierName] = useState<string>('')
+  const [retentionDays, setRetentionDays] = useState(30)
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+
+  useEffect(() => {
+    paymentService
+      .getMyTier()
+      .then((tier) => {
+        const ceiling = tier.retention_days || 30
+        setTierMaxRetention(ceiling)
+        setTierName(tier.tier_name)
+        // Default to the ceiling so the user keeps their photos for as long
+        // as their plan permits unless they explicitly shorten it.
+        setRetentionDays(ceiling)
+      })
+      .catch(() => {
+        // If the tier lookup fails, fall back to the conservative Free ceiling.
+        setTierMaxRetention(30)
+      })
+  }, [])
 
   const validateForm = (): boolean => {
     if (!name || !date) {
@@ -22,8 +44,9 @@ export default function CreateEventPage() {
       return false
     }
 
-    if (retentionDays < 1 || retentionDays > 365) {
-      setError('Retention days must be between 1 and 365')
+    const ceiling = tierMaxRetention ?? 30
+    if (retentionDays < 1 || retentionDays > ceiling) {
+      setError(`Retention days must be between 1 and ${ceiling} (your ${tierName || 'plan'} ceiling)`)
       return false
     }
 
@@ -143,12 +166,22 @@ export default function CreateEventPage() {
                   value={retentionDays}
                   onChange={(e) => setRetentionDays(parseInt(e.target.value))}
                   min="1"
-                  max="365"
+                  max={tierMaxRetention ?? 30}
                   className="glass-input w-full pl-12 pr-4 py-3 rounded-xl bg-white/5 border border-white/10 focus:ring-2 focus:ring-white/20 transition-all placeholder:text-gray-600"
-                  disabled={isLoading}
+                  disabled={isLoading || tierMaxRetention === null}
                 />
               </div>
-              <p className="text-xs text-gray-500 ml-1">Number of days to keep event data (1-365)</p>
+              <p className="text-xs text-gray-500 ml-1">
+                {tierMaxRetention === null
+                  ? 'Loading your plan…'
+                  : (
+                    <>
+                      How long to keep this event&apos;s photos before auto-delete (1&ndash;{tierMaxRetention} days).
+                      Your <span className="text-gray-300 capitalize">{tierName}</span> plan allows up to <span className="text-gray-300">{tierMaxRetention} days</span>.
+                      {tierName === 'free' || tierName === 'starter' ? ' Upgrade to keep events longer.' : ''}
+                    </>
+                  )}
+              </p>
             </div>
 
             <div className="flex items-center gap-3 p-4 rounded-xl bg-white/5 border border-white/10">
