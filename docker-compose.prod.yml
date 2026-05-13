@@ -37,6 +37,14 @@ services:
       args:
         BUILD_ENV: production
         NEXT_PUBLIC_API_URL: /api
+    environment:
+      # SSR (getServerSideProps) runs inside this container as a Node process.
+      # NEXT_PUBLIC_API_URL=/api is a relative path that browsers can resolve
+      # against window.location but Node cannot — fetch('/api/...') from
+      # SSR throws "TypeError: Invalid URL". Point server-side fetches at the
+      # backend over the Docker network so /share/{event}/{image} SSR works
+      # in prod the same way it does in dev.
+      SERVER_API_URL: http://backend:8000
     volumes: !reset []
     ports: !reset []  # do not publish; Caddy proxies /* → frontend:3000
     command: ["npm", "start"]

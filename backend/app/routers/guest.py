@@ -152,9 +152,6 @@ async def authenticate_guest(
     """
     client_ip = request.client.host if request.client else "unknown"
     auth_rate_limiter.enforce_rate_limit(client_ip, action="guest_auth")
-    # Per-event passcode limiter: caps guesses per slug regardless of source IP, so a
-    # rotating-IP attacker cannot brute-force a weak passcode.
-    event_passcode_rate_limiter.enforce_rate_limit(slug, action="event_passcode")
 
     # Find event by slug
     event = db.query(Event).filter(Event.slug == slug).first()
@@ -165,15 +162,27 @@ async def authenticate_guest(
             detail="Event not found"
         )
 
-    # Verify passcode if required
+    # Verify passcode if required. The per-event passcode limiter only counts
+    # FAILED attempts on events that actually require a passcode — otherwise a
+    # busy no-passcode event or a heavily-trafficked event could legitimately
+    # exhaust 10 entries/hour with successful guest auths and lock everyone
+    # else out. By moving the enforce call inside the failure branches the
+    # budget is consumed only by wrong/missing passcode attempts, which is
+    # the threat we actually care about.
     if event.passcode_hash:
         if not passcode_data.passcode:
+            event_passcode_rate_limiter.enforce_rate_limit(slug, action="event_passcode_fail")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Passcode required"
             )
 
         if not verify_password(passcode_data.passcode, event.passcode_hash):
+            # Recording the failure is what raises 429 once the per-slug
+            # failure budget is exhausted; until then it returns and we raise
+            # the normal 401. Either way, a successful passcode never touches
+            # the limiter.
+            event_passcode_rate_limiter.enforce_rate_limit(slug, action="event_passcode_fail")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid passcode"

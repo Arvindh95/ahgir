@@ -1675,6 +1675,12 @@ async def reindex_event(
     db.query(Face).filter(Face.event_id == event_uuid).delete()
 
     db.commit()
+
+    # Invalidate guest-facing caches so guests don't see results from the
+    # pre-reindex face database. They'd otherwise see stale match lists or
+    # stale share thumbnails until the cache TTL expires.
+    cache_delete_pattern(f"gallery:{event_uuid}:*")
+    cache_delete_pattern(f"share:{event_uuid}:*")
     
     # Queue all images for reprocessing
     queued_count = 0

@@ -16,6 +16,7 @@ from app.storage import storage_service
 from app.config import settings, get_compreface_url
 from app.utils.thumbnail import generate_thumbnail
 from app.utils.image_safety import safe_open as safe_open_image
+from app.cache import cache_delete_pattern
 
 logger = logging.getLogger(__name__)
 
@@ -352,6 +353,17 @@ def index_photo_compreface(image_id: str, api_key: str, db_session: Optional[Ses
             logger.info(f"No faces detected in image {image_id}")
 
         db.commit()
+
+        # Invalidate guest-facing caches for this event so the gallery and
+        # share endpoints reflect the freshly-indexed (or no_faces) image
+        # immediately. Without this, scans return stale results / share
+        # pages return missing thumbnails for up to the cache TTL after
+        # indexing completes.
+        try:
+            cache_delete_pattern(f"gallery:{image.event_id}:*")
+            cache_delete_pattern(f"share:{image.event_id}:*")
+        except Exception as e:
+            logger.warning(f"cache invalidation failed for event {image.event_id}: {e}")
 
         return {
             'image_id': image_id,
