@@ -4,21 +4,52 @@ Regression tests for the face-indexing failure-mode review:
 P1 — CompreFace upstream failures must NOT be saved as no_faces.
 P2 — Worker exception handler must rollback before marking the image failed,
      so partially-added Face rows don't leak.
+
+Note: these tests bypass the `db_session` fixture because the worker
+calls `db.rollback()` in its exception path (legitimate production
+behaviour). The fixture wraps the entire test in one connection-level
+transaction, so that rollback also wipes the test's seed data. We
+instead build a fresh per-test session against the test engine, do
+real commits, and clean up by hand.
 """
+import io
 import uuid
-from unittest.mock import patch
 
 import pytest
-from sqlalchemy.orm import Session
+from PIL import Image as PILImage
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.models import Event, Image, Face, User
 from app.workers import face_indexer_compreface as fic
 
 
-def _seed_event_and_image(db_session: Session) -> tuple[Event, Image]:
+def _async_return(value):
+    """Build an `async def` callable that returns `value` — needed because the
+    worker pipes its CompreFace helpers through `_run_async(coro)` which
+    expects an actual coroutine object."""
+    async def _fn(*args, **kwargs):
+        return value
+    return _fn
+
+
+def _async_raise(exc):
+    async def _fn(*args, **kwargs):
+        raise exc
+    return _fn
+
+
+def _jpeg_bytes(width: int = 100, height: int = 100) -> bytes:
+    img = PILImage.new("RGB", (width, height), (220, 220, 220))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    buf.seek(0)
+    return buf.getvalue()
+
+
+def _seed_event_and_image(session: Session) -> tuple[Event, Image]:
     user = User(email=f"owner-{uuid.uuid4().hex}@example.com", password_hash="h", is_verified=True)
-    db_session.add(user)
-    db_session.flush()
+    session.add(user)
+    session.flush()
 
     event = Event(
         owner_user_id=user.id,
@@ -27,8 +58,8 @@ def _seed_event_and_image(db_session: Session) -> tuple[Event, Image]:
         retention_days=30,
         status="active",
     )
-    db_session.add(event)
-    db_session.flush()
+    session.add(event)
+    session.flush()
 
     img = Image(
         id=uuid.uuid4(),
@@ -41,79 +72,97 @@ def _seed_event_and_image(db_session: Session) -> tuple[Event, Image]:
         status="pending",
         face_count=0,
     )
-    db_session.add(img)
-    db_session.flush()
+    session.add(img)
+    session.commit()
+    session.refresh(img)
     return event, img
 
 
-def test_detection_upstream_failure_marks_image_failed_and_raises(db_session: Session, monkeypatch):
+@pytest.fixture
+def real_session(engine, tables):
+    """Per-test session that does real commits + hand-rolled cleanup.
+
+    The standard db_session fixture wraps every test in one transaction
+    that gets rolled back at teardown. That conflicts with worker code
+    that legitimately calls db.rollback() during its exception path —
+    the worker's rollback unwinds the test's own seed inserts.
+    """
+    TestSession = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    s = TestSession()
+    # Track every Image / Face / Event / User we add so cleanup wipes them.
+    created_image_ids: list = []
+    created_event_ids: list = []
+    created_user_ids: list = []
+
+    yield s, created_image_ids, created_event_ids, created_user_ids
+
+    # Cleanup: faces and audit_logs cascade from event delete, so we just
+    # need to wipe images-with-no-event-cascade and the events themselves.
+    cleanup = TestSession()
+    try:
+        if created_image_ids:
+            cleanup.query(Face).filter(Face.image_id.in_(created_image_ids)).delete(synchronize_session=False)
+            cleanup.query(Image).filter(Image.id.in_(created_image_ids)).delete(synchronize_session=False)
+        if created_event_ids:
+            cleanup.query(Event).filter(Event.id.in_(created_event_ids)).delete(synchronize_session=False)
+        if created_user_ids:
+            cleanup.query(User).filter(User.id.in_(created_user_ids)).delete(synchronize_session=False)
+        cleanup.commit()
+    finally:
+        cleanup.close()
+    s.close()
+
+
+def test_detection_upstream_failure_marks_image_failed_and_raises(real_session, monkeypatch):
     """If detection returns 5xx / network error / timeout, the worker must
     end the job with status='failed' and re-raise so RQ retries — NOT save
     a successful no_faces (which would hide the failure forever).
     """
-    _event, img = _seed_event_and_image(db_session)
-    db_session.commit()
+    session, image_ids, event_ids, user_ids = real_session
+    event, img = _seed_event_and_image(session)
+    image_ids.append(img.id); event_ids.append(event.id); user_ids.append(event.owner_user_id)
 
-    def _raise_upstream(*args, **kwargs):
-        raise fic.CompreFaceUpstreamError("simulated 503 from CompreFace")
-
-    # Skip MinIO entirely — the failure must surface BEFORE we even reach
-    # detection. We patch storage to return a minimal valid JPEG.
+    monkeypatch.setattr(fic.storage_service, "get_photo", lambda **kwargs: _jpeg_bytes())
     monkeypatch.setattr(
-        fic.storage_service,
-        "get_photo",
-        lambda **kwargs: b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9",
+        fic, "_detect_faces_compreface",
+        _async_raise(fic.CompreFaceUpstreamError("simulated 503 from CompreFace")),
     )
-    # The image-open path uses PIL on the bytes; safe_open should accept the
-    # minimal JPEG above. Patch detection to throw upstream.
-    monkeypatch.setattr(fic, "_detect_faces_compreface", _raise_upstream)
 
     with pytest.raises(fic.CompreFaceUpstreamError):
-        fic.index_photo_compreface(str(img.id), api_key="x", db_session=db_session)
+        fic.index_photo_compreface(str(img.id), api_key="x", db_session=session)
 
-    db_session.refresh(img)
-    assert img.status == "failed", "upstream failure must NOT save as no_faces or indexed"
+    session.expire_all()
+    refreshed = session.query(Image).filter(Image.id == img.id).first()
+    assert refreshed.status == "failed", "upstream failure must NOT save as no_faces or indexed"
 
 
-def test_all_add_face_upstream_failures_raise_not_no_faces(db_session: Session, monkeypatch):
+def test_all_add_face_upstream_failures_raise_not_no_faces(real_session, monkeypatch):
     """If detection finds N faces but every add_face fails with an upstream
     error, the worker must raise — preserving the chance to retry — not
     silently mark the image no_faces.
     """
-    _event, img = _seed_event_and_image(db_session)
-    db_session.commit()
+    session, image_ids, event_ids, user_ids = real_session
+    event, img = _seed_event_and_image(session)
+    image_ids.append(img.id); event_ids.append(event.id); user_ids.append(event.owner_user_id)
 
+    monkeypatch.setattr(fic.storage_service, "get_photo", lambda **kwargs: _jpeg_bytes(600, 400))
+    detected = [
+        {"box": {"x_min": 0, "y_min": 0, "x_max": 200, "y_max": 200, "probability": 0.99}},
+        {"box": {"x_min": 300, "y_min": 0, "x_max": 500, "y_max": 200, "probability": 0.98}},
+    ]
+    monkeypatch.setattr(fic, "_detect_faces_compreface", _async_return(detected))
     monkeypatch.setattr(
-        fic.storage_service,
-        "get_photo",
-        lambda **kwargs: b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9",
+        fic, "_add_face_to_compreface",
+        _async_raise(fic.CompreFaceUpstreamError("simulated 502 from CompreFace recognition")),
     )
-    # Detection finds two large high-confidence faces.
-    monkeypatch.setattr(
-        fic, "_detect_faces_compreface",
-        lambda *a, **kw: [
-            {"box": {"x_min": 0, "y_min": 0, "x_max": 200, "y_max": 200, "probability": 0.99}},
-            {"box": {"x_min": 300, "y_min": 0, "x_max": 500, "y_max": 200, "probability": 0.98}},
-        ]
-    )
-    # Replace the image bytes with one that PIL can actually crop from.
-    import io
-    from PIL import Image as PILImage
-    big = PILImage.new("RGB", (600, 400), (200, 200, 200))
-    buf = io.BytesIO(); big.save(buf, format="JPEG"); buf.seek(0)
-    monkeypatch.setattr(fic.storage_service, "get_photo", lambda **kw: buf.getvalue())
-
-    def _raise_upstream(*args, **kwargs):
-        raise fic.CompreFaceUpstreamError("simulated 502 from CompreFace recognition")
-
-    monkeypatch.setattr(fic, "_add_face_to_compreface", _raise_upstream)
 
     with pytest.raises(fic.CompreFaceUpstreamError):
-        fic.index_photo_compreface(str(img.id), api_key="x", db_session=db_session)
+        fic.index_photo_compreface(str(img.id), api_key="x", db_session=session)
 
-    db_session.refresh(img)
-    assert img.status == "failed", "every add_face upstream-failing must NOT save as no_faces"
-    assert img.face_count == 0
+    session.expire_all()
+    refreshed = session.query(Image).filter(Image.id == img.id).first()
+    assert refreshed.status == "failed", "every add_face upstream-failing must NOT save as no_faces"
+    assert refreshed.face_count == 0
 
 
 def test_genuine_zero_detection_does_save_no_faces(db_session: Session, monkeypatch):
@@ -121,12 +170,8 @@ def test_genuine_zero_detection_does_save_no_faces(db_session: Session, monkeypa
     _event, img = _seed_event_and_image(db_session)
     db_session.commit()
 
-    import io
-    from PIL import Image as PILImage
-    blank = PILImage.new("RGB", (100, 100), (255, 255, 255))
-    buf = io.BytesIO(); blank.save(buf, format="JPEG"); buf.seek(0)
-    monkeypatch.setattr(fic.storage_service, "get_photo", lambda **kw: buf.getvalue())
-    monkeypatch.setattr(fic, "_detect_faces_compreface", lambda *a, **kw: [])
+    monkeypatch.setattr(fic.storage_service, "get_photo", lambda **kw: _jpeg_bytes())
+    monkeypatch.setattr(fic, "_detect_faces_compreface", _async_return([]))
 
     result = fic.index_photo_compreface(str(img.id), api_key="x", db_session=db_session)
 
@@ -135,33 +180,29 @@ def test_genuine_zero_detection_does_save_no_faces(db_session: Session, monkeypa
     assert result["face_count"] == 0
 
 
-def test_worker_exception_does_not_leak_partial_face_rows(db_session: Session, monkeypatch):
+def test_worker_exception_does_not_leak_partial_face_rows(real_session, monkeypatch):
     """If add_face raises mid-loop after some Face rows were added, the
     exception handler must rollback so partial rows aren't committed
     alongside image.status='failed'. Pre-fix the partial rows persisted.
     """
-    _event, img = _seed_event_and_image(db_session)
-    db_session.commit()
+    session, image_ids, event_ids, user_ids = real_session
+    event, img = _seed_event_and_image(session)
+    image_ids.append(img.id); event_ids.append(event.id); user_ids.append(event.owner_user_id)
 
-    import io
-    from PIL import Image as PILImage
-    big = PILImage.new("RGB", (600, 400), (200, 200, 200))
-    buf = io.BytesIO(); big.save(buf, format="JPEG"); buf.seek(0)
-    monkeypatch.setattr(fic.storage_service, "get_photo", lambda **kw: buf.getvalue())
-
+    monkeypatch.setattr(fic.storage_service, "get_photo", lambda **kw: _jpeg_bytes(600, 400))
     monkeypatch.setattr(
         fic, "_detect_faces_compreface",
-        lambda *a, **kw: [
+        _async_return([
             {"box": {"x_min": 0, "y_min": 0, "x_max": 200, "y_max": 200, "probability": 0.99}},
             {"box": {"x_min": 300, "y_min": 0, "x_max": 500, "y_max": 200, "probability": 0.98}},
-        ]
+        ]),
     )
 
     # First face succeeds, second triggers a non-CompreFace error (something
     # in the worker code itself) to land in the outer except block.
     calls = {"n": 0}
 
-    def _add(face_bytes, subject_id, api_key, det_prob_threshold=0.5):
+    async def _add(face_bytes, subject_id, api_key, det_prob_threshold=0.5):
         calls["n"] += 1
         if calls["n"] == 1:
             return {"image_id": "ok"}  # success — Face row will be staged on the session
@@ -170,13 +211,14 @@ def test_worker_exception_does_not_leak_partial_face_rows(db_session: Session, m
     monkeypatch.setattr(fic, "_add_face_to_compreface", _add)
 
     with pytest.raises(RuntimeError):
-        fic.index_photo_compreface(str(img.id), api_key="x", db_session=db_session)
+        fic.index_photo_compreface(str(img.id), api_key="x", db_session=session)
 
-    db_session.refresh(img)
-    assert img.status == "failed"
+    session.expire_all()
+    refreshed = session.query(Image).filter(Image.id == img.id).first()
+    assert refreshed.status == "failed"
     # No Face rows should be committed because the exception handler rolls back
     # before flipping the image status.
-    leaked = db_session.query(Face).filter(Face.image_id == img.id).count()
+    leaked = session.query(Face).filter(Face.image_id == img.id).count()
     assert leaked == 0, f"{leaked} stale Face row(s) leaked from a failed indexing job"
 
 
@@ -199,14 +241,10 @@ def test_retry_clears_stale_face_rows(db_session: Session, monkeypatch):
     db_session.commit()
     assert db_session.query(Face).filter(Face.image_id == img.id).count() == 2
 
-    import io
-    from PIL import Image as PILImage
-    blank = PILImage.new("RGB", (100, 100), (255, 255, 255))
-    buf = io.BytesIO(); blank.save(buf, format="JPEG"); buf.seek(0)
-    monkeypatch.setattr(fic.storage_service, "get_photo", lambda **kw: buf.getvalue())
+    monkeypatch.setattr(fic.storage_service, "get_photo", lambda **kw: _jpeg_bytes())
     # No new faces detected this retry — but the stale rows from prior
     # attempt should be cleared regardless.
-    monkeypatch.setattr(fic, "_detect_faces_compreface", lambda *a, **kw: [])
+    monkeypatch.setattr(fic, "_detect_faces_compreface", _async_return([]))
 
     fic.index_photo_compreface(str(img.id), api_key="x", db_session=db_session)
 
