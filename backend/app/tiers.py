@@ -12,7 +12,7 @@ TIER_CONFIG: Dict[str, Dict[str, Any]] = {
     "free": {
         "name": "Free",
         "max_events": 1,
-        "max_photos_per_event": 50,
+        "max_photos_per_event": 25,
         "retention_days": 30,
         "monthly_cents": 0,
         "yearly_cents": 0,
@@ -23,7 +23,7 @@ TIER_CONFIG: Dict[str, Dict[str, Any]] = {
     "starter": {
         "name": "Starter",
         "max_events": 5,
-        "max_photos_per_event": 500,
+        "max_photos_per_event": 250,
         "retention_days": 180,
         "monthly_cents": 900,    # $9
         "yearly_cents": 9000,    # $90 (2 months free)
@@ -34,7 +34,7 @@ TIER_CONFIG: Dict[str, Dict[str, Any]] = {
     "pro": {
         "name": "Pro",
         "max_events": 20,
-        "max_photos_per_event": 2000,
+        "max_photos_per_event": 500,
         "retention_days": 365,
         "monthly_cents": 2900,   # $29
         "yearly_cents": 29000,   # $290 (2 months free)

@@ -143,8 +143,10 @@ export default function SuperadminPage() {
     setSavingTier(true)
     try {
       const body: any = { tier_name: tierEdit.tierName }
-      if (tierEdit.maxEvents) body.max_events = parseInt(tierEdit.maxEvents)
-      if (tierEdit.maxPhotos) body.max_photos_per_event = parseInt(tierEdit.maxPhotos)
+      if (tierEdit.tierName === 'custom') {
+        if (tierEdit.maxEvents) body.max_events = parseInt(tierEdit.maxEvents)
+        if (tierEdit.maxPhotos) body.max_photos_per_event = parseInt(tierEdit.maxPhotos)
+      }
       await api.patch(`/admin/users/${tierEdit.userId}/tier`, body)
       toast(`Tier updated to ${tierEdit.tierName} for "${tierEdit.email}"`, 'success')
       setTierEdit(null)
@@ -268,9 +270,9 @@ export default function SuperadminPage() {
   const modalProps = getConfirmModalProps()
 
   const tierDefaults: Record<string, { events: string; photos: string }> = {
-    free: { events: '1', photos: '50' },
-    premium: { events: '3', photos: '300' },
-    premium_plus: { events: '10', photos: '500' },
+    free: { events: '1', photos: '25' },
+    starter: { events: '5', photos: '250' },
+    pro: { events: '20', photos: '500' },
   }
 
   return (
@@ -375,11 +377,11 @@ export default function SuperadminPage() {
                       <td className="py-3">
                         <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase ${
                           user.tier_name === 'free' ? 'bg-gray-500/20 text-gray-400' :
-                          user.tier_name === 'premium' ? 'bg-blue-500/20 text-blue-400' :
-                          user.tier_name === 'premium_plus' ? 'bg-purple-500/20 text-purple-400' :
+                          user.tier_name === 'starter' ? 'bg-blue-500/20 text-blue-400' :
+                          user.tier_name === 'pro' ? 'bg-purple-500/20 text-purple-400' :
                           'bg-yellow-500/20 text-yellow-400'
                         }`}>
-                          {user.tier_name === 'premium_plus' ? 'Premium+' : user.tier_name}
+                          {user.tier_name}
                         </span>
                       </td>
                       <td className="py-3">{user.event_count}/{user.max_events}</td>
@@ -474,9 +476,9 @@ export default function SuperadminPage() {
                       }}
                       className="glass-input w-full px-3 py-2.5 rounded-xl text-sm [&>option]:bg-gray-900 [&>option]:text-white"
                     >
-                      <option value="free">Free (1 event, 50 photos)</option>
-                      <option value="premium">Premium (3 events, 300 photos)</option>
-                      <option value="premium_plus">Premium+ (10 events, 500 photos)</option>
+                      <option value="free">Free (1 event, 25 photos)</option>
+                      <option value="starter">Starter (5 events, 250 photos)</option>
+                      <option value="pro">Pro (20 events, 500 photos)</option>
                       <option value="custom">Custom</option>
                     </select>
                   </div>

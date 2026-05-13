@@ -15,7 +15,7 @@ const tiers = [
     description: 'Try PicUr with one event',
     features: [
       '1 active event',
-      'Up to 50 photos per event',
+      'Up to 25 photos per event',
       '30-day retention',
       'Face recognition',
       'Guest scanning',
@@ -30,10 +30,10 @@ const tiers = [
     name: 'Starter',
     monthlyUSD: 9,
     yearlyUSD: 90,
-    description: 'For photographers running a few events at a time',
+    description: 'For photographers running a few small events at a time',
     features: [
       '5 active events',
-      'Up to 500 photos per event',
+      'Up to 250 photos per event',
       '6-month retention',
       'Face recognition',
       'Guest scanning',
@@ -51,7 +51,7 @@ const tiers = [
     description: 'For studios managing many events year-round',
     features: [
       '20 active events',
-      'Up to 2000 photos per event',
+      'Up to 500 photos per event',
       '1-year retention',
       'Face recognition',
       'Guest scanning',
@@ -184,13 +184,13 @@ export default function Pricing() {
         </div>
 
         <div className="max-w-3xl mx-auto mt-16">
-          <div className="glass-card rounded-2xl p-8 text-center">
-            <div className="text-xs font-bold text-blue-400 mb-3 tracking-wider">SHOOTING ONE EVENT?</div>
-            <h2 className="text-2xl font-bold mb-3">One-time event packages</h2>
+          <div className="glass-card rounded-2xl p-8 text-center border border-blue-500/30 ring-1 ring-blue-500/10">
+            <div className="text-xs font-bold text-blue-400 mb-3 tracking-wider">NEED MORE THAN 500 PHOTOS PER EVENT?</div>
+            <h2 className="text-2xl font-bold mb-3">Custom event packages</h2>
             <p className="text-gray-400 mb-6 max-w-xl mx-auto">
-              Shooting a single event and don&apos;t need a recurring subscription?
-              We offer one-time event packages tailored to your photo count and retention needs.
-              Contact us with your event details and we&apos;ll send a custom quote.
+              Weddings, large conferences, and full-day shoots usually run past 500 photos.
+              Tell us your event size, photo count, and how long you need access — we&apos;ll send a tailored quote
+              (one-time or recurring).
             </p>
             <a
               href="mailto:support@picur.my?subject=One-time%20event%20package&body=Hi%2C%20I'd%20like%20a%20quote%20for%20a%20one-time%20event.%0A%0AEvent%20date%3A%0AEstimated%20guest%20count%3A%0AEstimated%20photo%20count%3A%0AAccess%20duration%20needed%3A"
