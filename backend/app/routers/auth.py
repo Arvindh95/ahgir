@@ -114,7 +114,12 @@ async def login(credentials: UserLogin, request: Request, db: Session = Depends(
     Returns a JWT access token. Requires verified email.
     """
     client_ip = request.client.host if request.client else "unknown"
-    auth_rate_limiter.enforce_rate_limit(client_ip, action="login")
+    # IP-keyed limit catches a single source mashing the endpoint. The email-keyed
+    # limit catches a distributed credential-stuffing attempt that targets one
+    # account from many IPs — IP-only protection misses that case. Enforce both;
+    # whichever trips first short-circuits with 429 before the bcrypt check runs.
+    auth_rate_limiter.enforce_rate_limit(client_ip, action="login_ip")
+    auth_rate_limiter.enforce_rate_limit(credentials.email, action="login_email")
 
     user = db.query(User).filter(User.email == credentials.email).first()
 
@@ -267,7 +272,19 @@ async def reset_password(request_data: ResetPasswordRequest, db: Session = Depen
     except (ValueError, TypeError):
         raise InvalidTokenError("Invalid reset token")
 
-    user = db.query(User).filter(User.id == user_uuid).first()
+    # Lock the user row for the read-check-write sequence below. Without
+    # SELECT ... FOR UPDATE two parallel requests using the same valid reset
+    # token can both pass the password_changed_at check before either has
+    # committed, allowing the second password (e.g. an attacker-supplied one)
+    # to overwrite the legitimate user's. The row lock serialises the two
+    # transactions so the second one sees the freshly-written password_changed_at
+    # and is rejected with "Reset link has already been used".
+    user = (
+        db.query(User)
+        .filter(User.id == user_uuid)
+        .with_for_update()
+        .first()
+    )
     if not user:
         raise InvalidTokenError("User not found")
 
