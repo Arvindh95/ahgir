@@ -41,11 +41,23 @@ def _override(db_session: Session):
 
 
 def _reset_slug(slug: str) -> None:
-    # Clear EVERY rate-limit key so a noisy prior run can't make these tests
-    # flake. We're testing the per-slug limiter specifically but the same
-    # endpoint also touches the IP-keyed guest_auth limiter, so wipe both.
-    for key in redis_client.scan_iter("rate_limit:*"):
-        redis_client.delete(key)
+    # Targeted reset for the two keys these tests touch. Avoid scan_iter:
+    # against a live production Redis with many keys it can take a long
+    # time to walk, which made the suite appear to hang. Tests use unique
+    # slugs so we don't need a wildcard cleanup.
+    for key in (
+        f"rate_limit:event_passcode:{slug}",
+        f"rate_limit:event_passcode_fail:{slug}",
+        # The IP-keyed guest_auth limiter shares one redis key across tests
+        # (TestClient always presents as 127.0.0.1 / testclient). Clear it
+        # so a noisy prior test doesn't poison this run.
+        "rate_limit:guest_auth:testclient",
+        "rate_limit:guest_auth:127.0.0.1",
+    ):
+        try:
+            redis_client.delete(key)
+        except Exception:
+            pass
 
 
 def _make_user(db_session: Session) -> User:
@@ -90,7 +102,7 @@ def test_no_passcode_event_does_not_consume_limiter(db_session: Session):
     n_calls = event_passcode_rate_limiter.limit + 2
     statuses = []
     for _ in range(n_calls):
-        r = client.post(f"/e/{slug}/auth", json={"passcode": None})
+        r = client.post(f"/e/{slug}/auth", json={})
         statuses.append(r.status_code)
 
     # All should be 200 — none rate-limited (429).
