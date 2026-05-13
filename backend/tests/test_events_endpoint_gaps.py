@@ -73,16 +73,22 @@ def _make_event(db_session: Session, owner: User, *, name: str = "Test Event", s
     return e
 
 
-def _make_image(db_session: Session, event: Event) -> Image:
+def _make_image(db_session: Session, event: Event, *, filename: str = None) -> Image:
+    # Minimal kwargs matching the Image model in app/models.py — the
+    # MinIO object key is derived from event_id + image_id at runtime,
+    # so there is no storage_path column on the row itself. Filename is
+    # parameterised because there's a UNIQUE (event_id, filename) and
+    # some tests need two images on the same event.
+    import uuid as _uuid
     img = Image(
         event_id=event.id,
-        filename="test.jpg",
-        storage_path=f"events/{event.id}/test.jpg",
-        thumbnail_path=f"events/{event.id}/test_thumb.jpg",
-        status="indexed",
+        filename=filename or f"test-{_uuid.uuid4().hex[:8]}.jpg",
+        file_hash=_uuid.uuid4().hex + _uuid.uuid4().hex,  # 64-char unique placeholder
         size_bytes=1024,
         width=800,
         height=600,
+        status="indexed",
+        face_count=0,
     )
     db_session.add(img)
     db_session.commit()
@@ -319,7 +325,7 @@ def test_bulk_zip_download_other_owner_forbidden(db_session: Session):
     token = create_access_token({"sub": str(intruder.id), "email": intruder.email})
 
     response = client.post(
-        f"/events/{event.id}/photos/bulk-zip",
+        f"/events/{event.id}/photos/download-zip",
         headers={"Authorization": f"Bearer {token}"},
         json={"image_ids": [str(img.id)]},
     )
