@@ -23,12 +23,14 @@ router = APIRouter(tags=["health"])
 async def health_check():
     """
     Comprehensive health check endpoint.
-    
+
     Checks connectivity to:
     - PostgreSQL database
     - MinIO object storage
     - Redis cache
-    
+    - CompreFace face engine
+    - RQ worker heartbeat (so silent worker death is observable)
+
     Returns:
         dict: Health status of all services
     """
@@ -38,7 +40,8 @@ async def health_check():
             "database": {"status": "unknown"},
             "minio": {"status": "unknown"},
             "redis": {"status": "unknown"},
-            "compreface": {"status": "unknown"}
+            "compreface": {"status": "unknown"},
+            "worker": {"status": "unknown"},
         }
     }
     
@@ -91,6 +94,33 @@ async def health_check():
     except Exception as e:
         health_status["services"]["compreface"]["status"] = "unhealthy"
         health_status["services"]["compreface"]["error"] = str(e)
+        all_healthy = False
+
+    # Check RQ worker heartbeat. A worker that crashed silently leaves no
+    # process to ping but DOES leave the registry entry stale. Anything
+    # heartbeating in the last 120s counts as alive.
+    try:
+        from rq import Worker
+        from datetime import timezone
+        workers = Worker.all(connection=redis_client)
+        now = datetime.now(timezone.utc)
+        alive_workers = []
+        for w in workers:
+            hb = getattr(w, "last_heartbeat", None)
+            if hb is None:
+                continue
+            if hb.tzinfo is None:
+                hb = hb.replace(tzinfo=timezone.utc)
+            if (now - hb).total_seconds() < 120:
+                alive_workers.append(w)
+        worker_count = len(alive_workers)
+        health_status["services"]["worker"]["status"] = "healthy" if worker_count > 0 else "unhealthy"
+        health_status["services"]["worker"]["alive_count"] = worker_count
+        if worker_count == 0:
+            all_healthy = False
+    except Exception as e:
+        health_status["services"]["worker"]["status"] = "unhealthy"
+        health_status["services"]["worker"]["error"] = str(e)
         all_healthy = False
 
     # Set overall status
