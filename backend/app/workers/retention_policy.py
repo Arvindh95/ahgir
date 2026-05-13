@@ -119,8 +119,11 @@ def process_overdue_subscriptions(db: Session = None):
     """Downgrade subscriptions that exceeded the payment-failure grace period.
 
     Stripe sends customer.subscription.deleted on hard-cancel, but past_due
-    subscriptions sit in limbo. After grace_period_days past current_period_end
-    we drop the user back to free and freeze excess events.
+    and paused subscriptions sit in limbo with no upcoming billing event.
+    After grace_period_days past current_period_end we drop the user back
+    to free and freeze excess events. paused is rarer than past_due — it
+    comes from `pause_collection` on the Stripe side — but it has the same
+    failure mode (paid limits with no payment in sight) and the same fix.
 
     Run daily alongside event retention.
     """
@@ -136,7 +139,12 @@ def process_overdue_subscriptions(db: Session = None):
         overdue = (
             db.query(UserTier)
             .filter(
-                UserTier.subscription_status == "past_due",
+                # past_due: Stripe accepted the sub but the latest invoice failed.
+                # paused: Stripe-side pause (manager.pause or customer request).
+                # Both leave the user on a paid tier but with no upcoming
+                # successful billing event, so without a grace cutoff they
+                # could keep paid limits forever.
+                UserTier.subscription_status.in_(("past_due", "paused")),
                 UserTier.current_period_end.isnot(None),
                 UserTier.current_period_end < cutoff,
             )

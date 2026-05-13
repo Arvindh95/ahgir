@@ -174,6 +174,137 @@ def test_manual_override_ignores_subscription_upsert(db_session, monkeypatch):
     assert user_tier.stripe_subscription_id is None
 
 
+def test_same_second_terminal_then_active_update_does_not_reactivate(db_session, monkeypatch):
+    """Two same-second subscription.updated events — first terminal, second
+    active — must not re-grant the paid tier. The terminal one wins.
+
+    Stripe webhook delivery is unordered and `created` has second-granularity,
+    so this race is real: a cancel→active flip and an active→cancel flip can
+    arrive in either order with identical timestamps. Pre-fix, the staleness
+    guard only protected against same-second .updated arriving after
+    .deleted, not after another .updated→canceled.
+    """
+    user = _user(db_session)
+    user_tier = UserTier(
+        user_id=user.id,
+        tier_name="pro",
+        max_events=20,
+        max_photos_per_event=500,
+        price_cents=2900,
+        is_active=True,
+        stripe_customer_id="cus_456",
+        stripe_subscription_id="sub_456",
+        subscription_status="active",
+        activated_at=datetime.utcnow(),
+    )
+    db_session.add(user_tier)
+    db_session.flush()
+
+    monkeypatch.setitem(payments.TIER_CONFIG["pro"], "stripe_price_monthly", "price_pro_monthly")
+
+    shared_created = 1_700_000_500
+    # 1) .updated → canceled lands first; user should drop to free.
+    payments._handle_subscription_upsert(
+        {
+            "id": "sub_456",
+            "customer": "cus_456",
+            "status": "canceled",
+            "items": {"data": [{"price": {"id": "price_pro_monthly"}}]},
+        },
+        db_session,
+        event_created=shared_created,
+        event_id="evt_cancel",
+        event_type="customer.subscription.updated",
+    )
+    assert user_tier.tier_name == "free", "first .updated→canceled should downgrade"
+    assert user_tier.subscription_status is None
+    assert user_tier.last_subscription_event_type == "customer.subscription.updated.terminal"
+
+    # 2) .updated → active arrives in the SAME SECOND. Must be ignored as stale.
+    payments._handle_subscription_upsert(
+        {
+            "id": "sub_456",
+            "customer": "cus_456",
+            "status": "active",
+            "items": {"data": [{"price": {"id": "price_pro_monthly"}}]},
+        },
+        db_session,
+        event_created=shared_created,
+        event_id="evt_active",
+        event_type="customer.subscription.updated",
+    )
+    assert user_tier.tier_name == "free", "delayed .updated→active must not re-grant pro"
+    assert user_tier.subscription_status is None
+    assert user_tier.stripe_subscription_id is None
+
+
+def test_paused_subscription_past_grace_is_downgraded(db_session, monkeypatch):
+    """A subscription in `paused` status past the grace period must be
+    downgraded to free by the daily scheduler. Mirrors the past_due path.
+    Pre-fix the scheduler only looked at past_due, so paused users kept paid
+    limits indefinitely.
+    """
+    from app.workers.retention_policy import process_overdue_subscriptions
+
+    user = _user(db_session)
+    user_tier = UserTier(
+        user_id=user.id,
+        tier_name="pro",
+        max_events=20,
+        max_photos_per_event=500,
+        price_cents=2900,
+        is_active=True,
+        stripe_customer_id="cus_paused",
+        stripe_subscription_id="sub_paused",
+        subscription_status="paused",
+        # current_period_end well past the grace cutoff so the row matches.
+        current_period_end=datetime.utcnow() - timedelta(days=60),
+        activated_at=datetime.utcnow() - timedelta(days=60),
+    )
+    db_session.add(user_tier)
+    db_session.flush()
+
+    process_overdue_subscriptions(db=db_session)
+    db_session.flush()
+    db_session.refresh(user_tier)
+
+    assert user_tier.tier_name == "free", "paused beyond grace should be downgraded"
+    assert user_tier.subscription_status is None
+    assert user_tier.stripe_subscription_id is None
+    assert user_tier.last_subscription_event_type == "grace_period_downgrade"
+
+
+def test_paused_subscription_within_grace_is_kept(db_session):
+    """A `paused` subscription whose period end is still within the grace
+    window must keep its paid tier — the scheduler waits."""
+    from app.workers.retention_policy import process_overdue_subscriptions
+
+    user = _user(db_session)
+    user_tier = UserTier(
+        user_id=user.id,
+        tier_name="pro",
+        max_events=20,
+        max_photos_per_event=500,
+        price_cents=2900,
+        is_active=True,
+        stripe_customer_id="cus_fresh_pause",
+        stripe_subscription_id="sub_fresh_pause",
+        subscription_status="paused",
+        # Period ended yesterday — within any sane grace window.
+        current_period_end=datetime.utcnow() - timedelta(days=1),
+        activated_at=datetime.utcnow() - timedelta(days=1),
+    )
+    db_session.add(user_tier)
+    db_session.flush()
+
+    process_overdue_subscriptions(db=db_session)
+    db_session.flush()
+    db_session.refresh(user_tier)
+
+    assert user_tier.tier_name == "pro", "paused within grace should not be downgraded"
+    assert user_tier.subscription_status == "paused"
+
+
 def test_disabled_downloads_do_not_sign_original_guest_urls(monkeypatch):
     calls = []
 

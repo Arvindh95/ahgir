@@ -618,6 +618,20 @@ def _subscription_event_datetime(event_created: Optional[int]) -> Optional[datet
     return datetime.utcfromtimestamp(int(event_created))
 
 
+_DOWNGRADE_EVENT_MARKERS = {
+    # Hard delete: Stripe pushed customer.subscription.deleted.
+    "customer.subscription.deleted",
+    # Soft delete via .updated carrying a terminal status. We mark these so
+    # the same staleness logic that protects against same-second reactivation
+    # after .deleted also covers .updated → canceled / unpaid / incomplete_expired.
+    "customer.subscription.updated.terminal",
+    # Manual operator action; should never be undone by a delayed Stripe event.
+    "manual_override",
+    # Daily scheduler stamped the row after grace period expired.
+    "grace_period_downgrade",
+}
+
+
 def _is_event_stale(
     user_tier: UserTier,
     event_created: Optional[int],
@@ -629,9 +643,12 @@ def _is_event_stale(
     already applied for this user_tier.
 
     Stripe webhook delivery is not ordered and `created` is second-granularity.
-    A same-second deletion must still be allowed after an update, but once a
-    deletion has been applied, same-second upserts for that subscription must
-    not reapply the paid tier.
+    Two distinct events for the same subscription can share a created-second
+    in either order. Rule: once a "downgrade-applying" event has been recorded
+    for a subscription, any same-second non-downgrade event for that
+    subscription must be rejected as stale — otherwise a delayed .updated with
+    status=active could re-grant the paid tier after .deleted (or
+    .updated→canceled) already took it away.
     """
     if event_id and user_tier.last_subscription_event_id == event_id:
         return True
@@ -643,10 +660,15 @@ def _is_event_stale(
         return True
     if (
         event_dt == user_tier.last_subscription_event_at
-        and user_tier.last_subscription_event_type == "customer.subscription.deleted"
-        and event_type != "customer.subscription.deleted"
+        and user_tier.last_subscription_event_type in _DOWNGRADE_EVENT_MARKERS
         and user_tier.last_subscription_event_subscription_id == subscription_id
     ):
+        # If the incoming event is itself a deletion of the same sub, accept
+        # it — replaying a delete is harmless and lets the .deleted webhook
+        # land after a .updated→canceled. Anything else is a re-activation
+        # attempt for an already-downgraded sub: reject.
+        if event_type == "customer.subscription.deleted":
+            return False
         return True
     return False
 
@@ -729,9 +751,25 @@ def _handle_subscription_upsert(
 
     if not _apply_subscription_state(user_tier, subscription, db):
         return
-    _mark_subscription_event_applied(user_tier, event_created, event_id, event_type, sub_id)
+
+    # If a subscription.updated landed us in a terminal state (canceled,
+    # unpaid, incomplete_expired), stamp the event with a "terminal" marker
+    # so a delayed same-second .updated→active for the same sub gets rejected
+    # by the staleness guard. Without this, Stripe could land
+    #   t=T  .updated status=canceled  → we downgrade
+    #   t=T  .updated status=active    → we wrongly re-grant the paid tier
+    # because both events share a created-second.
+    marker_type = event_type
+    sub_status = subscription.get("status")
+    if (
+        event_type == "customer.subscription.updated"
+        and sub_status in ("canceled", "unpaid", "incomplete_expired")
+    ):
+        marker_type = "customer.subscription.updated.terminal"
+
+    _mark_subscription_event_applied(user_tier, event_created, event_id, marker_type, sub_id)
     db.commit()
-    logger.info(f"Subscription {sub_id} synced: status={subscription['status']} user={user_tier.user_id}")
+    logger.info(f"Subscription {sub_id} synced: status={sub_status} user={user_tier.user_id}")
 
 
 def _handle_subscription_deleted(

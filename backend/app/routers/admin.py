@@ -63,6 +63,10 @@ class UserTierUpdateRequest(BaseModel):
     # quota states that produce confusing upload/create failures downstream.
     max_events: Optional[int] = Field(default=None, ge=1, le=100000)
     max_photos_per_event: Optional[int] = Field(default=None, ge=1, le=1000000)
+    # Custom-tier retention override (days). Optional — only honored when
+    # tier_name='custom'. Bounded so a typo doesn't park photos for a century
+    # or accidentally instant-delete them.
+    retention_days: Optional[int] = Field(default=None, ge=1, le=3650)
 
 
 class PlatformStats(BaseModel):
@@ -201,17 +205,26 @@ async def update_user_tier(
             raise HTTPException(status_code=400, detail="max_events and max_photos_per_event are required for custom tier")
         max_events = update.max_events
         max_photos = update.max_photos_per_event
+        # Default to 365 days when the operator does not specify retention.
+        # Same fallback used by get_effective_limits for custom rows without
+        # a retention_days override.
+        retention_days = update.retention_days or 365
         price_cents = 0
     else:
-        if update.max_events is not None or update.max_photos_per_event is not None:
+        if (
+            update.max_events is not None
+            or update.max_photos_per_event is not None
+            or update.retention_days is not None
+        ):
             raise HTTPException(
                 status_code=400,
-                detail="max_events / max_photos_per_event overrides are only allowed for tier_name='custom'. "
+                detail="max_events / max_photos_per_event / retention_days overrides are only allowed for tier_name='custom'. "
                        "For named tiers, edit tiers.py to change limits for all users.",
             )
         tier_config = TIER_CONFIG[update.tier_name]
         max_events = tier_config["max_events"]
         max_photos = tier_config["max_photos_per_event"]
+        retention_days = tier_config["retention_days"]
         price_cents = tier_config.get("monthly_cents", 0)
 
     user_tier = db.query(UserTier).filter(UserTier.user_id == target_uuid).first()
@@ -219,6 +232,10 @@ async def update_user_tier(
         user_tier.tier_name = update.tier_name
         user_tier.max_events = max_events
         user_tier.max_photos_per_event = max_photos
+        # retention_days is persisted only for custom tier (get_effective_limits
+        # falls back to TIER_CONFIG for named tiers regardless), but stamp it
+        # anyway so the row stays internally consistent.
+        user_tier.retention_days = retention_days
         user_tier.price_cents = price_cents
         user_tier.is_active = True
         user_tier.activated_at = datetime.utcnow()
@@ -228,6 +245,7 @@ async def update_user_tier(
             tier_name=update.tier_name,
             max_events=max_events,
             max_photos_per_event=max_photos,
+            retention_days=retention_days,
             price_cents=price_cents,
             is_active=True,
             activated_at=datetime.utcnow(),

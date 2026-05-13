@@ -22,16 +22,19 @@ import stripe
 
 # Tier definitions inline so this script can run without importing the rest of the app.
 TIER_PRICES = {
+    # Keep in sync with backend/app/tiers.py TIER_CONFIG. Stripe descriptions
+    # are user-visible on the checkout page; out-of-sync values mislead
+    # customers about what they're paying for.
     "starter": {
         "name": "PicUr Starter",
-        "description": "5 active events, 500 photos per event, 6-month retention.",
+        "description": "5 active events, 250 photos per event, 6-month retention.",
         "monthly_cents": 900,
         "yearly_cents": 9000,
         "currency": "usd",
     },
     "pro": {
         "name": "PicUr Pro",
-        "description": "20 active events, 2000 photos per event, 1-year retention.",
+        "description": "20 active events, 500 photos per event, 1-year retention.",
         "monthly_cents": 2900,
         "yearly_cents": 29000,
         "currency": "usd",
