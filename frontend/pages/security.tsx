@@ -170,9 +170,6 @@ export default function Security() {
             blurb="The AI that matches selfies to event photos works on numerical face embeddings. We never store a separate photo of someone's face, and the embeddings cannot be reversed into a usable image."
           />
           <CardGrid cards={FACE_CARDS} />
-          <p className="text-xs text-gray-500 mt-5 max-w-3xl">
-            <span className="text-gray-400">A note on accuracy:</span> face matching is statistical, not exact. Lighting, angles, sunglasses, masks, and partial faces can cause a real match to be missed, and a strong lookalike can occasionally slip in. We tune for high accuracy but do not guarantee that 100% of your photos will be matched.
-          </p>
         </section>
 
         {/* Infrastructure */}
