@@ -383,6 +383,13 @@ def test_compreface_event_cleanup_deletes_unique_subjects(db_session, monkeypatc
         size_bytes=1,
         status="indexed",
     )
+    # Two faces with DIFFERENT subject IDs. Prior version of this test
+    # seeded duplicate subject IDs to assert the cleanup dedupes them,
+    # but a partial unique index on faces.compreface_subject_id
+    # (migration b5e6f7g8h9) now makes duplicates impossible at the DB
+    # level — the dedup invariant is enforced by the schema. The helper
+    # still calls the API once per Face row, so two distinct subjects
+    # produce two API calls.
     db_session.add_all([
         event,
         image,
@@ -400,7 +407,7 @@ def test_compreface_event_cleanup_deletes_unique_subjects(db_session, monkeypatc
             embedding=[0.0] * 512,
             bbox=[0, 0, 10, 10],
             quality_score=0.9,
-            compreface_subject_id="subject-1",
+            compreface_subject_id="subject-2",
         ),
     ])
     db_session.flush()
@@ -421,9 +428,9 @@ def test_compreface_event_cleanup_deletes_unique_subjects(db_session, monkeypatc
 
     deleted, failed = compreface_utils.delete_compreface_subjects_for_event(db_session, event.id)
 
-    assert deleted == 1
+    assert deleted == 2
     assert failed == 0
-    assert calls == ["subject-1"]
+    assert sorted(calls) == ["subject-1", "subject-2"]
 
 
 def test_production_validation_rejects_placeholder_values(monkeypatch):

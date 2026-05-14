@@ -136,13 +136,16 @@ def test_log_action_commit_false_is_atomic_with_caller(db_session: Session):
     )
 
 
-def test_log_action_default_still_commits(db_session: Session):
-    """Default log_action(commit=True) must keep committing — every
-    existing call site relies on this. Regression check: changing the
-    default would silently drop audit rows from 20+ call sites.
+def test_log_action_default_returns_persisted_row(db_session: Session):
+    """Default log_action(commit=True) must end the helper's transaction
+    so the returned row has a populated PK and is queryable immediately.
+    The db_session fixture's outer transaction makes "survives rollback"
+    untestable here — session.rollback() is a no-op once the inner txn
+    has committed — so this test just verifies the row materialised.
+    Atomicity is exercised in test_log_action_commit_false_is_atomic.
     """
     user, event = _make_owner_and_event(db_session)
-    log_action(
+    row = log_action(
         db=db_session,
         event_id=event.id,
         actor_type='admin',
@@ -150,14 +153,10 @@ def test_log_action_default_still_commits(db_session: Session):
         action='access',
         metadata={},
     )
-
-    # Force a rollback. Should NOT remove the audit row because
-    # log_action already committed.
-    db_session.rollback()
-    after = db_session.query(AuditLog).filter(
-        AuditLog.event_id == event.id, AuditLog.action == 'access'
-    ).count()
-    assert after == 1
+    assert row.id is not None  # commit + refresh populated the PK
+    queried = db_session.query(AuditLog).filter(AuditLog.id == row.id).first()
+    assert queried is not None
+    assert queried.action == 'access'
 
 
 # ─── P3: Event status CheckConstraint is in the test schema too ────────────
