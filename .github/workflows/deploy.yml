@@ -1,7 +1,12 @@
 name: Deploy to Production
 
 on:
-  push:
+  workflow_run:
+    # Only deploy after the Test workflow on main succeeds. A broken
+    # migration, failed pytest, or failed frontend build now blocks the
+    # deploy instead of silently shipping a regression.
+    workflows: ["Test"]
+    types: [completed]
     branches: [main]
 
 # Cancel an in-flight deploy when a new push lands on main, so a fast follow-up
@@ -12,6 +17,9 @@ concurrency:
 
 jobs:
   deploy:
+    # Skip if the upstream Test workflow did not complete successfully
+    # (failures, cancellations, etc).
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Deploy via SSH

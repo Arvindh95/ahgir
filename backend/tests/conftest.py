@@ -1,7 +1,7 @@
 import pytest
 import os
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from hypothesis import settings, Verbosity, HealthCheck
 import redis
@@ -23,9 +23,11 @@ settings.register_profile("ci", max_examples=20, deadline=5000, suppress_health_
 settings.register_profile("dev", max_examples=10, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
 settings.load_profile(os.getenv("HYPOTHESIS_PROFILE", "ci"))
 
-# Test database URL — accept full TEST_DATABASE_URL override, else compose from parts.
-# Hardcoded picur:picur creds work for the docker-compose dev stack but not for
-# environments where the postgres password is randomized.
+# Test database URL — accept full TEST_DATABASE_URL override, else compose
+# from parts. Default DB host is `postgres` (the docker-compose service
+# name) so a `docker exec picur-backend pytest ...` run works without
+# extra env. Outside the docker network — bare-metal local dev or CI on
+# a runner with a localhost Postgres — set POSTGRES_HOST=localhost.
 DB_HOST = os.getenv("POSTGRES_HOST", "postgres")
 DB_PORT = os.getenv("POSTGRES_PORT", "5432")
 DB_USER = os.getenv("POSTGRES_USER", "picur")
@@ -36,8 +38,28 @@ TEST_DATABASE_URL = os.getenv(
     f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}",
 )
 
+# If POSTGRES_HOST defaulted to 'postgres' and we can't resolve it,
+# fall back to localhost — this lets `pytest -q` work on a bare host
+# with `docker compose up postgres redis` instead of requiring a full
+# in-container test run. The fallback is silent because either DNS
+# answer is valid in the right context; we don't want to noise up the
+# CI logs when 'postgres' is the docker service and resolves fine.
+if DB_HOST == "postgres":
+    import socket
+    try:
+        socket.gethostbyname("postgres")
+    except socket.gaierror:
+        TEST_DATABASE_URL = TEST_DATABASE_URL.replace("@postgres:", "@localhost:")
+        REDIS_FALLBACK_HOST = "localhost"
+    else:
+        REDIS_FALLBACK_HOST = None
+else:
+    REDIS_FALLBACK_HOST = None
+
 # Test Redis URL
-REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+REDIS_HOST = os.getenv("REDIS_HOST", REDIS_FALLBACK_HOST or "redis")
+if REDIS_HOST == "redis" and REDIS_FALLBACK_HOST == "localhost":
+    REDIS_HOST = "localhost"
 REDIS_PORT = os.getenv("REDIS_PORT", "6379")
 TEST_REDIS_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}/1"  # Use DB 1 for tests
 
@@ -48,9 +70,38 @@ def engine():
 
 @pytest.fixture(scope="session")
 def tables(engine):
-    """Create all tables for testing"""
-    Base.metadata.create_all(bind=engine)
+    """Build the test schema by running alembic upgrade head.
+
+    Previously this used Base.metadata.create_all(), which generates
+    tables straight from the ORM models. That's faster but lets the
+    migration history drift from the model — a broken or missing
+    migration could pass tests AND fail production deploy. Running
+    alembic against the test DB closes that gap: the schema tests
+    exercise is the exact same one alembic upgrade head produces in
+    prod, so a regression in any migration surfaces immediately.
+
+    On teardown we drop the schema and recreate the pgvector extension
+    so the next pytest session starts clean.
+    """
+    from alembic import command
+    from alembic.config import Config
+
+    # Wipe any leftover schema from a prior session so the alembic
+    # upgrade starts from a clean slate (re-runs are idempotent only if
+    # the prior migration succeeded; flushing avoids half-applied
+    # states from blocking a clean run).
+    with engine.connect() as conn:
+        conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
+        conn.execute(text("CREATE SCHEMA public"))
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        conn.commit()
+
+    alembic_cfg = Config(os.path.join(os.path.dirname(__file__), "..", "alembic.ini"))
+    alembic_cfg.set_main_option("sqlalchemy.url", TEST_DATABASE_URL)
+    command.upgrade(alembic_cfg, "head")
+
     yield
+
     Base.metadata.drop_all(bind=engine)
 
 @pytest.fixture(scope="session")
