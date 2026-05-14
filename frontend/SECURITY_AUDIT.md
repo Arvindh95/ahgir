@@ -59,3 +59,38 @@ entirely and rely only on the browser-loaded CDN bundle.
 - We replace `face-api.js` with `@vladmandic/face-api` in `package.json`.
 
 Last reviewed: 2026-05-14.
+
+## Encryption at rest — deployment requirement
+
+The public security page (`pages/security.tsx` "Encrypted at rest")
+claims photos and database records sit on disks encrypted at the
+storage layer. The application code does not enforce that on its own:
+
+- `storage.py` calls `MinIO.put_object` WITHOUT a server-side
+  encryption header.
+- `docker-compose.yml` for MinIO sets only root credentials + volume,
+  not `MINIO_KMS_SECRET_KEY` or bucket-level auto-encryption.
+- Postgres has no transparent-data-encryption setup.
+
+The claim is honored ONLY if the underlying VPS disks are encrypted at
+the OS / volume level (LUKS, dm-crypt, cloud-provider volume
+encryption). The current Contabo VPS does NOT encrypt disks by
+default.
+
+Two options to align with the public claim:
+
+1. **Application-layer (MinIO SSE-S3)** — generate a 32-byte KMS key,
+   set `MINIO_KMS_SECRET_KEY: "picur-master:<base64>"` in
+   `docker-compose.vps.yml`, enable bucket auto-encryption with
+   `mc encrypt set sse-s3 minio/photos`, then re-encrypt the existing
+   bucket. Postgres tablespaces would still need OS-level encryption
+   for the DB side of the claim.
+
+2. **OS-layer disk encryption** — provision LUKS-encrypted volumes
+   on the VPS, mount under `/var/lib/docker` (or the relevant data
+   dir), and restore. This is a destructive infra rebuild.
+
+Until one of those is in place, the public-facing copy should either
+be softened or the deployment requirement made explicit in marketing.
+
+Last reviewed: 2026-05-14.

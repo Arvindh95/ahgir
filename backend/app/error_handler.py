@@ -3,6 +3,7 @@
 import logging
 import traceback
 from typing import Union
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from fastapi import HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
@@ -11,6 +12,38 @@ from minio.error import S3Error
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.exceptions import PicUrException, RateLimitExceededError
+
+# Query-string keys that carry bearer credentials and must be scrubbed
+# before any URL appears in logs. ``sig`` + ``expires`` are the HMAC
+# pieces of the signed photo URL (see app.storage.generate_signed_url);
+# ``token`` and ``access_token`` cover any future query-token paths.
+# Logging the full URL of a 403/404 on /photos/... would otherwise hand
+# anyone with log access a still-valid signed download link.
+_REDACT_QUERY_KEYS = {"sig", "expires", "token", "access_token", "passcode"}
+
+
+def _redact_url(raw: str) -> str:
+    """Strip credential-bearing query params from a URL before logging.
+
+    Keeps the path + non-sensitive query keys so logs stay useful
+    (we can see which endpoint failed, which image_id was requested)
+    without leaking the credentials that made the request authorized.
+    """
+    try:
+        parsed = urlparse(raw)
+        if not parsed.query:
+            return raw
+        kept = []
+        for k, v in parse_qsl(parsed.query, keep_blank_values=True):
+            if k.lower() in _REDACT_QUERY_KEYS:
+                kept.append((k, "REDACTED"))
+            else:
+                kept.append((k, v))
+        return urlunparse(parsed._replace(query=urlencode(kept)))
+    except Exception:
+        # If the URL is too malformed to parse, return a hard-stripped
+        # version rather than risk leaking the original.
+        return raw.split("?", 1)[0]
 
 
 # Map HTTP status codes to stable error codes so the frontend has a
@@ -85,7 +118,7 @@ def create_error_response(
     if request:
         log_context.update({
             "method": request.method,
-            "url": str(request.url),
+            "url": _redact_url(str(request.url)),
             "client": request.client.host if request.client else None
         })
     
@@ -172,7 +205,7 @@ async def sqlalchemy_exception_handler(request: Request, exc: SQLAlchemyError) -
         f"Database error: {str(exc)}",
         extra={
             "method": request.method,
-            "url": str(request.url),
+            "url": _redact_url(str(request.url)),
             "error_type": type(exc).__name__,
             "traceback": traceback.format_exc()
         }
@@ -202,7 +235,7 @@ async def s3_exception_handler(request: Request, exc: S3Error) -> JSONResponse:
         f"Storage error: {str(exc)}",
         extra={
             "method": request.method,
-            "url": str(request.url),
+            "url": _redact_url(str(request.url)),
             "error_code": exc.code,
             "traceback": traceback.format_exc()
         }
@@ -283,7 +316,7 @@ async def generic_exception_handler(request: Request, exc: Exception) -> JSONRes
         f"Unhandled exception: {str(exc)}",
         extra={
             "method": request.method,
-            "url": str(request.url),
+            "url": _redact_url(str(request.url)),
             "error_type": type(exc).__name__,
             "traceback": traceback.format_exc()
         },

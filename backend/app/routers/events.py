@@ -845,39 +845,21 @@ def validate_image_format(file_data: bytes, filename: str) -> bool:
 
 from app.utils.thumbnail import generate_thumbnail
 
-_GPS_IFD_TAG = 0x8825  # ExifTags.GPSInfo
-
-
 def extract_exif_data(file_data: bytes) -> dict:
-    """Extract EXIF metadata from image, stripping GPS to protect user privacy."""
-    try:
-        img = safe_open_image(file_data)
-        exif_data = img.getexif()
+    """Always return an empty dict — we no longer persist EXIF tags.
 
-        if not exif_data:
-            return {}
-
-        def make_json_safe(v):
-            if isinstance(v, (bytes, bytearray)):
-                return str(v)
-            elif isinstance(v, (int, float, str, bool)) or v is None:
-                return v
-            elif isinstance(v, (list, tuple)):
-                return [make_json_safe(i) for i in v]
-            elif isinstance(v, dict):
-                return {str(k): make_json_safe(val) for k, val in v.items()}
-            else:
-                return float(v) if hasattr(v, '__float__') else str(v)
-
-        exif_dict = {}
-        for tag_id, value in exif_data.items():
-            if tag_id == _GPS_IFD_TAG:
-                continue
-            exif_dict[str(tag_id)] = make_json_safe(value)
-
-        return exif_dict
-    except Exception:
-        return {}
+    The public security copy (``security.tsx`` "Location & camera
+    metadata stripped") promises that GPS coordinates, camera serial,
+    and timestamps are forgotten before storage. The image bytes are
+    already stripped of EXIF on upload (see ``app.utils.exif``), but
+    the previous version of this function whitelisted everything
+    except GPS into the ``Image.exif_data`` JSONB column — retaining
+    camera make/model, serial, lens info, and capture timestamps in
+    the database. Nothing in the codebase reads ``Image.exif_data``,
+    so the safest move is to stop writing it at all and let the
+    column default to NULL going forward.
+    """
+    return {}
 
 # Photo endpoints
 @router.post("/{event_id}/photos", response_model=PhotoUploadResponse, status_code=status.HTTP_201_CREATED)
