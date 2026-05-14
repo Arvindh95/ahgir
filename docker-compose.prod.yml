@@ -98,18 +98,6 @@ services:
   compreface-postgres-db:
     restart: unless-stopped
 
-  # CompreFace admin disabled in prod (saves ~660MB RAM); also no port pub
-  compreface-admin:
-    ports: !reset []
-    deploy:
-      replicas: 0
-
-  # Tune CompreFace API memory (8g -> 2g) and unpublish port (internal-only in prod)
-  compreface-api:
-    ports: !reset []
-    environment:
-      API_JAVA_OPTS: "-Xmx2g"
-
   # Second CompreFace instance for load balancing
   compreface-api-2:
     image: exadel/compreface-api:1.2.0
