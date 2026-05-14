@@ -153,6 +153,10 @@ export default function EventPhotosPage() {
   }, [lightboxIndex, photos.length])
 
   const handleSingleDownload = (photo: Photo) => {
+    if (!photo.download_url) {
+      // Operator view: photo URLs are stripped. Nothing to download.
+      return
+    }
     const a = document.createElement('a')
     a.href = photo.download_url
     a.download = photo.filename
@@ -305,14 +309,22 @@ export default function EventPhotosPage() {
                         selectedPhotos.has(photo.image_id) ? 'border-blue-500 ring-1 ring-blue-500/50' : 'border-white/10'
                       }`}
                     >
-                      <div className="aspect-square relative bg-black/40">
-                        <Image
-                          src={photo.thumbnail_url}
-                          alt={photo.filename}
-                          fill
-                          sizes="(max-width: 768px) 50vw, (max-width: 1024px) 33vw, 20vw"
-                          className="object-cover"
-                        />
+                      <div className="aspect-square relative bg-black/40 flex items-center justify-center">
+                        {photo.thumbnail_url ? (
+                          <Image
+                            src={photo.thumbnail_url}
+                            alt={photo.filename}
+                            fill
+                            sizes="(max-width: 768px) 50vw, (max-width: 1024px) 33vw, 20vw"
+                            className="object-cover"
+                          />
+                        ) : (
+                          <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-500 text-xs gap-1 p-2 text-center">
+                            <div className="text-2xl">🔒</div>
+                            <div>Photo hidden</div>
+                            <div className="opacity-60">Operator view: metadata only</div>
+                          </div>
+                        )}
                         {/* Selection checkbox */}
                         <div
                           className="absolute top-2 left-2 z-10 cursor-pointer p-1"
@@ -461,8 +473,11 @@ export default function EventPhotosPage() {
               className="max-w-[90vw] max-h-[85vh] relative"
               onClick={(e) => e.stopPropagation()}
             >
+              {/* Lightbox guard: in operator-view, download_url is null and
+                  we shouldn't render a broken <img>. The lightbox should
+                  not be openable in that view at all, but defend in depth. */}
               <img
-                src={photos[lightboxIndex].download_url}
+                src={photos[lightboxIndex].download_url || ''}
                 alt={photos[lightboxIndex].filename}
                 className="max-w-full max-h-[85vh] object-contain rounded-lg"
               />

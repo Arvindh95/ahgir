@@ -780,8 +780,13 @@ class PhotoListItem(BaseModel):
     filename: str
     status: str
     face_count: int
-    thumbnail_url: str
-    download_url: str
+    # URLs are None when the caller is a non-owner superadmin. The
+    # public privacy / security copy promises the in-app admin console
+    # only exposes event metadata to operators — no photo viewer. The
+    # list still returns filenames + counts + status so the audit
+    # console can show what's there.
+    thumbnail_url: Optional[str] = None
+    download_url: Optional[str] = None
     uploaded_at: datetime
 
 class PhotoListResponse(BaseModel):
@@ -1235,9 +1240,20 @@ async def list_photos(
     # Audit superadmin cross-tenant read.
     audit_superadmin_cross_tenant(db, current_user, event, "list_event_photos")
 
+    # Strip URLs when a non-owner superadmin is reading this event's
+    # photo list. The public privacy / security copy promises that the
+    # in-app admin console exposes only event METADATA to operators —
+    # no photo viewer. Returning filenames + status + counts honours
+    # the audit need; returning signed URLs would silently break that
+    # promise. Owners still see normal URLs and can use the photos
+    # page as usual.
+    is_cross_tenant_admin = (
+        current_user.is_superadmin and event.owner_user_id != current_user.id
+    )
+
     # Build query
     query = db.query(Image).filter(Image.event_id == event_uuid)
-    
+
     # Apply status filter if provided
     if status_filter:
         if status_filter not in ['pending', 'indexed', 'no_faces', 'failed']:
@@ -1246,23 +1262,27 @@ async def list_photos(
                 detail="Invalid status filter"
             )
         query = query.filter(Image.status == status_filter)
-    
+
     # Get total count
     total = query.count()
-    
+
     # Apply pagination
     offset = (page - 1) * limit
     images = query.order_by(Image.uploaded_at.desc()).offset(offset).limit(limit).all()
-    
-    # Build response with presigned URLs
+
+    # Build response with presigned URLs (owner-only).
     photo_list = []
     for image in images:
-        thumbnail_url = storage_service.generate_url(
-            event_id=event_uuid, image_id=image.id, photo_type='thumb'
-        )
-        download_url = storage_service.generate_url(
-            event_id=event_uuid, image_id=image.id, photo_type='original'
-        )
+        if is_cross_tenant_admin:
+            thumbnail_url = None
+            download_url = None
+        else:
+            thumbnail_url = storage_service.generate_url(
+                event_id=event_uuid, image_id=image.id, photo_type='thumb'
+            )
+            download_url = storage_service.generate_url(
+                event_id=event_uuid, image_id=image.id, photo_type='original'
+            )
 
         photo_list.append(PhotoListItem(
             image_id=str(image.id),
@@ -1526,6 +1546,35 @@ async def admin_download_zip(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
     if not current_user.is_superadmin and event.owner_user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
+    # Non-owner superadmin: photo BYTES are out of scope per the
+    # public operator-access promise (no photo viewer in the admin
+    # console). Log the attempt + 403 — this is policy enforcement,
+    # not an ownership check, hence the distinct action name.
+    if current_user.is_superadmin and event.owner_user_id != current_user.id:
+        log_action(
+            db=db,
+            event_id=event.id,
+            actor_type='admin',
+            actor_id=current_user.id,
+            action='superadmin_photo_download_blocked',
+            metadata={
+                'operation': 'admin_download_zip',
+                'requested_image_count': len(request.image_ids) if request.image_ids else 0,
+                'event_owner_user_id': str(event.owner_user_id),
+                'event_name': event.name,
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "OPERATOR_PHOTO_ACCESS_DENIED",
+                "message": (
+                    "Operators cannot download photos from another organizer's "
+                    "event. This matches the operator-access policy in the "
+                    "public security disclosure."
+                ),
+            },
+        )
 
     if not request.image_ids:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No images specified")
@@ -1645,6 +1694,33 @@ async def admin_download_all_zip(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
     if not current_user.is_superadmin and event.owner_user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
+    # Non-owner superadmin: photo BYTES are out of scope per the
+    # public operator-access promise. Block + audit; same policy as
+    # admin_download_zip above.
+    if current_user.is_superadmin and event.owner_user_id != current_user.id:
+        log_action(
+            db=db,
+            event_id=event.id,
+            actor_type='admin',
+            actor_id=current_user.id,
+            action='superadmin_photo_download_blocked',
+            metadata={
+                'operation': 'admin_download_all_zip',
+                'event_owner_user_id': str(event.owner_user_id),
+                'event_name': event.name,
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "OPERATOR_PHOTO_ACCESS_DENIED",
+                "message": (
+                    "Operators cannot download photos from another organizer's "
+                    "event. This matches the operator-access policy in the "
+                    "public security disclosure."
+                ),
+            },
+        )
 
     images = db.query(Image).filter(Image.event_id == event_uuid).all()
     if not images:

@@ -5,8 +5,11 @@ export interface Photo {
   filename: string
   status: string
   face_count: number
-  thumbnail_url: string
-  download_url: string
+  // Nullable when a non-owner superadmin reads another organizer's
+  // event — the operator-access policy strips signed photo URLs so
+  // the admin console only shows metadata. Owners always get non-null.
+  thumbnail_url: string | null
+  download_url: string | null
   uploaded_at: string
 }
 
