@@ -18,10 +18,16 @@ services:
     # on the VPS host (i.e., something running through SSH) can reach
     # this port. Required so ops can SSH-tunnel and connect via local
     # tools (HeidiSQL, pgAdmin, psql) for inspection / debugging.
-    # If you ever change this to "5432:5432" or "0.0.0.0:5432:5432"
-    # you expose the DB to the public internet — don't.
+    #
+    # Host port 5433 (NOT 5432): the VPS has a system postgres of its
+    # own listening on 127.0.0.1:5432, so the docker postgres steals
+    # the next loopback port instead of fighting it. The SSH-tunnel
+    # command on the docs side uses 5433 too.
+    #
+    # If you ever change this to "5433:5432" without the 127.0.0.1
+    # prefix you expose the DB to the public internet — don't.
     ports: !override
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:5433:5432"
     restart: unless-stopped
 
   minio:
