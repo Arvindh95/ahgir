@@ -215,8 +215,9 @@ export default function EventDetailsPage() {
               <div className="flex-1">
                 <div className="font-semibold text-orange-200">This event is frozen</div>
                 <p className="text-sm mt-1 text-orange-300/80">
-                  Your subscription doesn&apos;t cover this many active events. Guests can still view existing photos,
-                  but uploads and reindexing are disabled. Upgrade your plan or delete a newer event to reactivate.
+                  Your subscription doesn&apos;t cover this many active events. The event link is locked for guests,
+                  and uploads and reindexing are disabled. Upgrade your plan or delete a newer event to reactivate
+                  guest access.
                 </p>
                 <a
                   href="/admin/billing"

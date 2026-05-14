@@ -21,11 +21,15 @@ export const auditService = {
     eventId: string,
     page: number = 1,
     limit: number = 50,
-    action?: string
+    action?: string,
+    actorType?: 'admin' | 'guest'
   ): Promise<AuditLogsResponse> {
     const params: any = { page, limit }
     if (action) {
       params.action = action
+    }
+    if (actorType) {
+      params.actor_type = actorType
     }
     const response = await api.get(`/events/${eventId}/logs`, { params })
     return response.data

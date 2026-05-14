@@ -55,24 +55,24 @@ export default function EventMonitoring({ eventId }: EventMonitoringProps) {
   const loadAuditLogs = async () => {
     try {
       setIsLoadingLogs(true)
-      // Handle special filter cases
+      // Translate the UI filter into separate backend params. Previously we
+      // pulled only one page and applied admin_only/guest_only locally,
+      // which meant admin actions on page 2+ vanished and the total stayed
+      // at the unfiltered page count — both misleading to ops.
       let action: string | undefined = undefined
-      if (actionFilter && actionFilter !== 'admin_only' && actionFilter !== 'guest_only') {
+      let actorType: 'admin' | 'guest' | undefined = undefined
+      if (actionFilter === 'admin_only') {
+        actorType = 'admin'
+      } else if (actionFilter === 'guest_only') {
+        actorType = 'guest'
+      } else if (actionFilter) {
         action = actionFilter
       }
 
-      const data = await auditService.getAuditLogs(eventId, page, logsPerPage, action)
+      const data = await auditService.getAuditLogs(eventId, page, logsPerPage, action, actorType)
 
-      // Client-side filtering for actor_type (admin_only/guest_only)
-      let filteredLogs = data.logs
-      if (actionFilter === 'admin_only') {
-        filteredLogs = data.logs.filter(log => log.actor_type === 'admin')
-      } else if (actionFilter === 'guest_only') {
-        filteredLogs = data.logs.filter(log => log.actor_type === 'guest')
-      }
-
-      setAuditLogs(filteredLogs)
-      setTotal(actionFilter === 'admin_only' || actionFilter === 'guest_only' ? filteredLogs.length : data.total)
+      setAuditLogs(data.logs)
+      setTotal(data.total)
     } catch (err: any) {
       setError(err.response?.data?.error?.message || 'Failed to load audit logs')
     } finally {

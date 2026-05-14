@@ -501,5 +501,93 @@ def test_audit_log_created_on_event_creation(db_session: Session):
     assert len(logs) == 1
     assert logs[0].actor_type == 'admin'
     assert logs[0].actor_id == user.id
-    
+
     app.dependency_overrides.clear()
+
+
+def test_query_audit_logs_with_actor_type_filter(db_session: Session):
+    """The /logs endpoint must filter server-side on actor_type so the
+    EventMonitoring panel doesn't show empty admin results when the
+    first page happens to be all guest activity, and so the total
+    reflects the filtered count.
+
+    Pre-fix: frontend pulled one page and filtered locally, so admin
+    actions buried deeper in the result set were invisible and the
+    total stayed at the unfiltered page count.
+    """
+    user = User(email=f"actor-filter-{uuid.uuid4().hex}@example.com", password_hash=hash_password("password"))
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+
+    event = Event(
+        owner_user_id=user.id,
+        slug=f"actor-filter-{uuid.uuid4().hex[:8]}",
+        name="Actor filter event",
+        retention_days=30,
+    )
+    db_session.add(event)
+    db_session.commit()
+    db_session.refresh(event)
+
+    # Stack 25 guest scans then 3 admin uploads. With a 20/page limit and
+    # the old client-side filter, the admin filter on page 1 returned 0
+    # rows because page 1 is all guests.
+    for _ in range(25):
+        log_action(
+            db=db_session, event_id=event.id, actor_type='guest',
+            actor_id=uuid.uuid4(), action='scan', metadata={},
+        )
+    for _ in range(3):
+        log_action(
+            db=db_session, event_id=event.id, actor_type='admin',
+            actor_id=user.id, action='upload', metadata={},
+        )
+
+    def override_get_db():
+        try:
+            yield db_session
+        finally:
+            pass
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    token = create_access_token(
+        data={"sub": str(user.id), "email": user.email},
+        expires_delta=timedelta(hours=1),
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
+    try:
+        # admin-only filter must return ALL 3 admin rows even though they
+        # sort to page 2 (newest first puts admin on page 1, but the test
+        # sets a small enough page size that the order doesn't matter —
+        # only the filtered total).
+        r = client.get(f"/events/{event.id}/logs?actor_type=admin&limit=20", headers=headers)
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert data['total'] == 3, f"expected 3 admin rows, got {data['total']}"
+        assert len(data['logs']) == 3
+        for log in data['logs']:
+            assert log['actor_type'] == 'admin'
+
+        # guest-only filter must return all 25 guest rows, paginated.
+        r = client.get(f"/events/{event.id}/logs?actor_type=guest&limit=20", headers=headers)
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert data['total'] == 25
+        assert len(data['logs']) == 20  # first page of 25
+        for log in data['logs']:
+            assert log['actor_type'] == 'guest'
+
+        # No filter → both actor types counted in total.
+        r = client.get(f"/events/{event.id}/logs?limit=20", headers=headers)
+        assert r.status_code == 200, r.text
+        assert r.json()['total'] == 28  # 25 + 3
+
+        # Invalid actor_type must 422 from pydantic regex, not silently
+        # return all rows.
+        r = client.get(f"/events/{event.id}/logs?actor_type=robot", headers=headers)
+        assert r.status_code == 422, r.text
+    finally:
+        app.dependency_overrides.clear()

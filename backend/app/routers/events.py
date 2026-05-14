@@ -1744,17 +1744,23 @@ async def get_audit_logs(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200),
     action: Optional[str] = None,
+    actor_type: Optional[str] = Query(None, pattern="^(admin|guest)$"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
     Get audit logs for an Event with pagination and filtering
-    
+
     - **event_id**: UUID of the event
     - **page**: Page number (default: 1)
     - **limit**: Items per page (default: 50)
     - **action**: Filter by action type (optional)
-    
+    - **actor_type**: Filter by actor type — 'admin' or 'guest' (optional).
+      Pushed server-side so the page total reflects the filtered result
+      set rather than the unfiltered count, and so admin-only filters
+      don't appear empty when the first page happens to be all guest
+      activity.
+
     Returns paginated list of audit logs
     Requires ownership validation
     """
@@ -1785,11 +1791,13 @@ async def get_audit_logs(
 
     # Build query
     query = db.query(AuditLog).filter(AuditLog.event_id == event_uuid)
-    
+
     # Apply action filter if provided
     if action:
         query = query.filter(AuditLog.action == action)
-    
+    if actor_type:
+        query = query.filter(AuditLog.actor_type == actor_type)
+
     # Get total count
     total = query.count()
     
