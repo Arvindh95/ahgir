@@ -50,8 +50,15 @@ jobs:
       POSTGRES_TEST_DB: picur_test
       REDIS_HOST: localhost
       REDIS_PORT: "6379"
-      # Enable pgvector ext on the freshly-created test DB before
-      # anything tries to import the Face model with Vector(512).
+      # conftest reads POSTGRES_* / REDIS_* for the test connection,
+      # but the APPLICATION code reads DATABASE_URL and REDIS_URL
+      # (pydantic Settings). Without overriding those, the app's
+      # module-level redis client tries to connect to 'redis:6379'
+      # — the docker service hostname — and CI fails with name
+      # resolution errors on every test that touches the rate
+      # limiter or background queue.
+      DATABASE_URL: postgresql://picur:picur@localhost:5432/picur_test
+      REDIS_URL: redis://localhost:6379/0
       TEST_DATABASE_URL: postgresql://picur:picur@localhost:5432/picur_test
 
     steps:
