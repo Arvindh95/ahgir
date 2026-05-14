@@ -1,4 +1,6 @@
 from datetime import datetime, timedelta
+
+from app.utils.time import to_utc_iso
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
@@ -1019,7 +1021,7 @@ async def get_gallery(
                 original_url=original_url,
                 download_url=download_url,
                 filename=image.filename or f"photo_{image.id}.jpg",
-                uploaded_at=image.uploaded_at.isoformat() if image.uploaded_at else ""
+                uploaded_at=to_utc_iso(image.uploaded_at) or ""
             ))
         except Exception as e:
             logger.error(f"Failed to generate URL for gallery image {image.id}: {e}")

@@ -2,6 +2,8 @@
 
 import logging
 from datetime import datetime, timedelta
+
+from app.utils.time import to_utc_iso
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 
@@ -111,7 +113,7 @@ async def list_users(
             tier_name=limits["tier_name"],
             max_events=limits["max_events"],
             max_photos_per_event=limits["max_photos_per_event"],
-            created_at=user.created_at.isoformat()
+            created_at=to_utc_iso(user.created_at)
         ))
 
     return {"users": [u.model_dump() for u in result]}
@@ -467,7 +469,7 @@ async def get_global_analytics(
     ).limit(31).all()
 
     scans_by_day = [
-        {"date": row[0].isoformat() if row[0] else None, "count": row[1]}
+        {"date": to_utc_iso(row[0]) if row[0] else None, "count": row[1]}
         for row in scans_by_day_raw
     ]
 
@@ -517,7 +519,7 @@ async def admin_list_events(
             "user_tier": limits["tier_name"],
             "photo_limit": et.photo_limit if et else limits["max_photos_per_event"],
             "has_override": et is not None,
-            "created_at": event.created_at.isoformat(),
+            "created_at": to_utc_iso(event.created_at),
         }
 
     return {"events": [_row(event, email) for event, email in events]}
@@ -728,7 +730,7 @@ async def admin_list_payments(
                 "amount_cents": p.amount_cents,
                 "currency": p.currency,
                 "status": p.status,
-                "created_at": p.created_at.isoformat(),
+                "created_at": to_utc_iso(p.created_at),
             }
             for p, email in payments
         ],
@@ -814,7 +816,7 @@ async def admin_list_audit_log(
         "entries": [
             {
                 "id": str(a.id),
-                "timestamp": a.timestamp.isoformat(),
+                "timestamp": to_utc_iso(a.timestamp),
                 "actor_type": a.actor_type,
                 "actor_id": str(a.actor_id) if a.actor_id else None,
                 "actor_email": actor_email,

@@ -2,6 +2,8 @@
 Event management router
 """
 from datetime import datetime, timedelta
+
+from app.utils.time import UTCDateTime, to_utc_iso
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile, File
 from fastapi.responses import Response, StreamingResponse
@@ -94,7 +96,7 @@ class EventResponse(BaseModel):
     owner_user_id: str
     allow_downloads: bool
     retention_days: int
-    created_at: datetime
+    created_at: UTCDateTime
 
 class EventListItem(BaseModel):
     event_id: str
@@ -105,7 +107,7 @@ class EventListItem(BaseModel):
     indexed_count: int
     face_count: int
     event_status: str = 'active'  # active, frozen, expired
-    created_at: datetime
+    created_at: UTCDateTime
 
 class EventListResponse(BaseModel):
     events: List[EventListItem]
@@ -146,7 +148,7 @@ class EventDetailResponse(BaseModel):
     status: EventStatusResponse
     tier: Optional[EventTierInfo] = None
     user_tier: Optional[UserTierInfo] = None
-    created_at: datetime
+    created_at: UTCDateTime
 
 # Helper functions
 def generate_slug(name: str, db: Session) -> str:
@@ -787,7 +789,7 @@ class PhotoListItem(BaseModel):
     # console can show what's there.
     thumbnail_url: Optional[str] = None
     download_url: Optional[str] = None
-    uploaded_at: datetime
+    uploaded_at: UTCDateTime
 
 class PhotoListResponse(BaseModel):
     photos: List[PhotoListItem]
@@ -809,7 +811,7 @@ class AuditLogItem(BaseModel):
     actor_type: str
     action: str
     metadata: dict
-    timestamp: datetime
+    timestamp: UTCDateTime
 
 class AuditLogListResponse(BaseModel):
     logs: List[AuditLogItem]
@@ -2183,7 +2185,7 @@ async def get_event_analytics(
         "total_downloads": total_downloads,
         "total_gallery_views": total_gallery_views,
         "scans_by_day": [
-            {"date": row.date.isoformat() if row.date else None, "count": row.count}
+            {"date": to_utc_iso(row.date) if row.date else None, "count": row.count}
             for row in scans_by_day
         ],
         "peak_hours": [
@@ -2195,7 +2197,7 @@ async def get_event_analytics(
                 "id": str(log.id),
                 "action": log.action,
                 "actor_type": log.actor_type,
-                "timestamp": log.timestamp.isoformat(),
+                "timestamp": to_utc_iso(log.timestamp),
                 "metadata": log.metadata_
             }
             for log in recent
