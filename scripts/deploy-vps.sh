@@ -48,11 +48,22 @@ fi
 if [ "$MODE" = "full" ]; then
     echo "==> Building backend / worker / frontend images"
     $COMPOSE build backend worker frontend
+
+    # Run DB migrations BEFORE recreating backend/worker so new code never
+    # starts against a stale schema. Use the just-built image rather than
+    # the running container so the migration runs on the new code's
+    # alembic revision history. --no-deps because alembic only needs DB.
+    # NOTE: this is a one-shot run; container is removed on exit.
+    echo "==> Running alembic migrations (alembic upgrade head)"
+    $COMPOSE run --rm --no-deps backend alembic upgrade head
+
     echo "==> Recreating backend / worker / retention-scheduler"
     $COMPOSE up -d --no-deps --force-recreate backend worker retention-scheduler
 else
     # frontend-only: only rebuild the frontend image. Touching backend/worker
     # images here would force a recreate even though we don't want one.
+    # No alembic step in this mode — the schema is owned by backend, and
+    # a frontend-only deploy doesn't ship new migrations.
     echo "==> Building frontend image"
     $COMPOSE build frontend
     # Make sure backend/worker/retention are running, but don't rebuild or

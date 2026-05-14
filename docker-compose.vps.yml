@@ -1,0 +1,133 @@
+# VPS overlay: production topology when an external nginx terminates TLS and
+# load-balances the two frontend instances. Pairs with docker-compose.yml.
+#
+# Differences vs docker-compose.prod.yml:
+#   - Two Next.js frontend instances (frontend + frontend-2) for rolling deploys
+#   - Caddy disabled (the host's nginx handles TLS + routing)
+#   - All published ports bound to 127.0.0.1 only (nginx is the only ingress)
+#   - CompreFace admin/UI exposed on a loopback port for ops access
+#   - restart: unless-stopped on every long-running service
+#
+# Run with:
+#   docker compose -f docker-compose.yml -f docker-compose.vps.yml up -d
+#
+# scripts/deploy-vps.sh assumes this layout.
+services:
+  postgres:
+    ports: !reset []
+    restart: unless-stopped
+
+  minio:
+    ports: !reset []
+    restart: unless-stopped
+
+  redis:
+    ports: !reset []
+    restart: unless-stopped
+
+  backend:
+    volumes: !reset []
+    environment:
+      ENVIRONMENT: production
+    ports: !override
+      - "127.0.0.1:8005:8000"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4 --proxy-headers --forwarded-allow-ips=172.18.0.1,127.0.0.1
+    restart: unless-stopped
+
+  worker:
+    volumes: !reset []
+    environment:
+      ENVIRONMENT: production
+    restart: unless-stopped
+
+  retention-scheduler:
+    volumes: !reset []
+    environment:
+      ENVIRONMENT: production
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        BUILD_ENV: production
+        NEXT_PUBLIC_API_URL: /api
+    environment:
+      SERVER_API_URL: http://backend:8000
+    volumes: !reset []
+    ports: !override
+      - "127.0.0.1:3001:3000"
+    command: ["npm", "start"]
+    restart: unless-stopped
+
+  # Second frontend instance for rolling-deploy zero-downtime.
+  # Identical build to `frontend`; nginx upstream group fronts both on 127.0.0.1:3001,3002.
+  frontend-2:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        BUILD_ENV: production
+        NEXT_PUBLIC_API_URL: /api
+    image: ahgir-frontend
+    container_name: picur-frontend-2
+    environment:
+      NEXT_PUBLIC_API_URL: /api
+      SERVER_API_URL: http://backend:8000
+    command: ["npm", "start"]
+    ports:
+      - "127.0.0.1:3002:3000"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  compreface-admin:
+    ports: !override
+      - "127.0.0.1:8082:8080"
+    restart: unless-stopped
+
+  compreface-api:
+    ports: !reset []
+    environment:
+      API_JAVA_OPTS: "-Xmx2g"
+    restart: unless-stopped
+
+  compreface-core:
+    restart: unless-stopped
+
+  compreface-postgres-db:
+    restart: unless-stopped
+
+  # Caddy is disabled in VPS mode — the host's nginx terminates TLS instead.
+  caddy:
+    deploy:
+      replicas: 0
+
+  # CompreFace UI bundle (missing from base compose). FE = React app, ui-nginx
+  # routes /api/* -> api backend, /admin/* -> admin backend, /* -> fe.
+  compreface-fe:
+    image: exadel/compreface-fe:1.2.0
+    container_name: compreface-fe
+    environment:
+      CLIENT_MAX_BODY_SIZE: 50M
+      PROXY_READ_TIMEOUT: 60s
+      PROXY_CONNECT_TIMEOUT: 60s
+      MAX_FILE_SIZE: 5242880
+    depends_on:
+      - compreface-admin
+      - compreface-api
+    restart: unless-stopped
+
+  compreface-ui-nginx:
+    image: nginx:1.25-alpine
+    container_name: compreface-ui-nginx
+    depends_on:
+      - compreface-fe
+      - compreface-admin
+      - compreface-api
+    ports:
+      - "127.0.0.1:8090:80"
+    volumes:
+      - ./compreface-ui-nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    restart: unless-stopped

@@ -115,12 +115,58 @@ def _looks_like_placeholder(value: str) -> bool:
     return any(token in lowered for token in _PLACEHOLDER_TOKENS)
 
 
+def _looks_like_production() -> bool:
+    """Heuristics that strongly suggest this process is running in production
+    even when ENVIRONMENT was left at the development default.
+
+    Prevents the silent-prod-as-dev failure: someone copies env values for
+    domain hosts but forgets ENVIRONMENT=production, so the dev defaults
+    skip secret validation entirely. If anything looks production-shaped,
+    we assert anyway.
+    """
+    frontend = (getattr(settings, "frontend_url", "") or "").lower()
+    minio_ext = (getattr(settings, "minio_external_endpoint", "") or "").lower()
+    cors = (getattr(settings, "cors_origins", "") or "").lower()
+
+    def _is_real_host(value: str) -> bool:
+        if not value:
+            return False
+        if "localhost" in value or "127.0.0.1" in value or "0.0.0.0" in value:
+            return False
+        # An https scheme or a hostname containing a TLD-looking dot is a
+        # strong signal that this is a real deployment, not a dev box.
+        return value.startswith("https://") or ("." in value.split("//")[-1].split("/")[0])
+
+    return any(_is_real_host(v) for v in (frontend, minio_ext, cors))
+
+
 def validate_production_secrets():
-    """Fail fast if production is missing critical secrets or using dev defaults."""
+    """Fail fast if production is missing critical secrets or using dev defaults.
+
+    Trips when EITHER ENVIRONMENT is explicitly production OR the resolved
+    config looks production-shaped (real frontend URL, real MinIO host, real
+    CORS origin). The latter catches the silent-prod-as-dev failure where a
+    missing ENVIRONMENT= leaves the development default in place and skips
+    every secret check.
+    """
     if settings.environment.lower() != "production":
-        return
+        if not _looks_like_production():
+            return
+        # Looks-like-prod fallthrough. Treat as production for the rest of
+        # this function; refuse to keep running with a development label
+        # against a production-shaped config.
+        # (We don't mutate settings.environment here; the caller can fix the
+        # env once the error message points at the missing flag.)
 
     errors = []
+    if settings.environment.lower() != "production":
+        errors.append(
+            f"ENVIRONMENT is set to '{settings.environment}' but the resolved "
+            f"config looks like production (frontend_url, minio_external_endpoint, "
+            f"or cors_origins points at a real host). Set ENVIRONMENT=production "
+            f"to enable production behaviour."
+        )
+
     if settings.jwt_secret_key in ("your-secret-key-change-in-production", "dev-only-not-for-prod", ""):
         errors.append("JWT_SECRET_KEY is unset or using dev default")
     elif len(settings.jwt_secret_key) < 32:

@@ -48,6 +48,10 @@ PicUr is a wedding photo sharing platform that enables photographers to manage e
    docker-compose exec backend alembic upgrade head
    ```
 
+   For production deployments via `scripts/deploy-vps.sh`, migrations run
+   automatically before the backend/worker recreate step. No manual step
+   is needed there.
+
 5. Access the application:
    - Frontend: http://localhost:3000
    - Backend API: http://localhost:8000

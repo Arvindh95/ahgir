@@ -1,12 +1,15 @@
 services:
   postgres:
     ports: !reset []  # do not publish; access only via internal docker network
+    restart: unless-stopped
 
   minio:
     ports: !reset []  # do not publish; access only via Caddy /storage proxy
+    restart: unless-stopped
 
   redis:
     ports: !reset []  # do not publish
+    restart: unless-stopped
 
   backend:
     volumes: !reset []
@@ -17,18 +20,34 @@ services:
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4 --proxy-headers --forwarded-allow-ips=172.18.0.1,127.0.0.1
     ports: !reset []  # do not publish; Caddy proxies /api → backend:8000
     environment:
+      # Pin ENVIRONMENT here so a missing/typo'd .env can't silently leave the
+      # service on the development default (which disables
+      # validate_production_secrets and lets dev placeholders through).
+      ENVIRONMENT: production
       COMPREFACE_API_URL: "http://compreface-api:8080,http://compreface-api-2:8080"
     depends_on:
       compreface-api-2:
         condition: service_started
+    restart: unless-stopped
 
   worker:
     volumes: !reset []
     environment:
+      ENVIRONMENT: production
       COMPREFACE_API_URL: "http://compreface-api:8080,http://compreface-api-2:8080"
     depends_on:
       compreface-api-2:
         condition: service_started
+    restart: unless-stopped
+
+  # Same hardening as backend/worker/frontend: drop the dev source bind mount
+  # (else cron runs mutable host code while the rest of the stack runs built
+  # images) and pin ENVIRONMENT so the cron loop logs prod-correct context.
+  retention-scheduler:
+    volumes: !reset []
+    environment:
+      ENVIRONMENT: production
+    restart: unless-stopped
 
   frontend:
     build:
@@ -48,6 +67,36 @@ services:
     volumes: !reset []
     ports: !reset []  # do not publish; Caddy proxies /* → frontend:3000
     command: ["npm", "start"]
+    restart: unless-stopped
+
+  # Wire the prod Caddyfile (security headers, /storage removed, log to file).
+  # Base compose mounts the dev Caddyfile; without this override a prod-only
+  # header / log change made in Caddyfile.prod would silently not apply.
+  caddy:
+    volumes: !override
+      - ./Caddyfile.prod:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
+  # CompreFace admin disabled in prod (saves ~660MB RAM); also no port pub
+  compreface-admin:
+    ports: !reset []
+    deploy:
+      replicas: 0
+
+  # Tune CompreFace API memory (8g -> 2g) and unpublish port (internal-only in prod)
+  compreface-api:
+    ports: !reset []
+    environment:
+      API_JAVA_OPTS: "-Xmx2g"
+    restart: unless-stopped
+
+  compreface-core:
+    restart: unless-stopped
+
+  compreface-postgres-db:
+    restart: unless-stopped
 
   # CompreFace admin disabled in prod (saves ~660MB RAM); also no port pub
   compreface-admin:
@@ -81,6 +130,7 @@ services:
         condition: service_healthy
       compreface-core-2:
         condition: service_started
+    restart: unless-stopped
 
   compreface-core-2:
     image: exadel/compreface-core:1.2.0
@@ -93,3 +143,4 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
+    restart: unless-stopped
