@@ -85,9 +85,17 @@ class Settings(BaseSettings):
     scan_rate_window_hours: int = 1
     auth_rate_limit: int = 30
     auth_rate_window_hours: int = 1
-    # Per-event passcode brute-force limiter (defends against rotating-IP attackers).
-    event_passcode_rate_limit: int = 10
+    # Two-tier passcode brute-force defence:
+    # * event_passcode_rate_limit applies per event slug. Catches
+    #   distributed (rotating-IP) attacks but, if set too low, a single
+    #   bad actor could exhaust it and lock all guests out for the window.
+    # * event_passcode_ip_rate_limit applies per (slug, client_ip) pair.
+    #   Catches a single bad actor without affecting other guests.
+    # Both must allow the attempt for it to proceed.
+    event_passcode_rate_limit: int = 50
     event_passcode_rate_window_hours: int = 1
+    event_passcode_ip_rate_limit: int = 5
+    event_passcode_ip_rate_window_hours: int = 1
     share_rate_limit: int = 60
     share_rate_window_hours: int = 1
     bulk_download_max_images: int = 100

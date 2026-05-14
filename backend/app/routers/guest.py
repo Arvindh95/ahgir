@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text, func
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import uuid
 import base64
 import hashlib
@@ -22,9 +22,11 @@ from app.storage import storage_service, generate_signed_cover_url
 from app.rate_limiter import (
     rate_limiter,
     scan_ip_rate_limiter,
+    download_ip_rate_limiter,
     auth_rate_limiter,
     share_rate_limiter,
     event_passcode_rate_limiter,
+    event_passcode_ip_rate_limiter,
 )
 from app.audit import log_action
 from app.config import settings, get_compreface_url
@@ -216,19 +218,35 @@ async def authenticate_guest(
     # budget is consumed only by wrong/missing passcode attempts, which is
     # the threat we actually care about.
     if event.passcode_hash:
+        # Two-tier passcode failure throttling:
+        #   1. event_passcode_ip_rate_limiter (per slug+client_ip) trips first
+        #      when a SINGLE bad actor is brute-forcing. Tight ceiling
+        #      protects them from locking other guests out.
+        #   2. event_passcode_rate_limiter (per slug) catches rotating-IP
+        #      distributed attacks where no single IP exceeds its tier-1 bucket.
+        # Both enforce calls happen on failure paths only, so successful
+        # auths never consume either budget.
+        def _record_passcode_failure() -> None:
+            event_passcode_ip_rate_limiter.enforce_rate_limit(
+                f"{slug}:{client_ip}", action="event_passcode_fail_ip"
+            )
+            event_passcode_rate_limiter.enforce_rate_limit(
+                slug, action="event_passcode_fail"
+            )
+
         if not passcode_data.passcode:
-            event_passcode_rate_limiter.enforce_rate_limit(slug, action="event_passcode_fail")
+            _record_passcode_failure()
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Passcode required"
             )
 
         if not verify_password(passcode_data.passcode, event.passcode_hash):
-            # Recording the failure is what raises 429 once the per-slug
-            # failure budget is exhausted; until then it returns and we raise
-            # the normal 401. Either way, a successful passcode never touches
-            # the limiter.
-            event_passcode_rate_limiter.enforce_rate_limit(slug, action="event_passcode_fail")
+            # Recording the failure is what raises 429 once one of the
+            # two failure budgets is exhausted; until then it returns
+            # and we raise the normal 401. A successful passcode never
+            # touches either limiter.
+            _record_passcode_failure()
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid passcode"
@@ -276,9 +294,20 @@ async def authenticate_guest(
 
 
 # Face scanning models
+# Bound the base64 string length BEFORE Pydantic accepts the payload, so
+# a multi-GB body can't be parsed into memory first and rejected later.
+# Per-frame cap: max_scan_frame_bytes * 4/3 (base64 inflation) + slack for
+# data: URL header. Frame count cap: 4 additional (5 total).
+_MAX_FRAME_B64_LEN = (settings.max_scan_frame_bytes * 4 // 3) + 256
+
+
 class FaceScanRequest(BaseModel):
-    image: str  # Base64 encoded image (primary frame)
-    additional_frames: Optional[List[str]] = None  # Extra frames for multi-angle scan
+    image: str = Field(..., max_length=_MAX_FRAME_B64_LEN)  # Base64 encoded image (primary frame)
+    additional_frames: Optional[List[str]] = Field(
+        default=None,
+        max_length=4,
+        description="Extra frames for multi-angle scan; capped to 4 additional (5 total).",
+    )
 
 
 class FaceMatch(BaseModel):
@@ -765,12 +794,20 @@ async def scan_face(
 # ─── Bulk Download (ZIP) ─────────────────────────────────────────────────────
 
 class BulkDownloadRequest(BaseModel):
-    image_ids: List[str]
+    # Pre-parse caps so a multi-million-element list can't be deserialised
+    # in the first place. The list cap matches the route-level
+    # bulk_download_max_images check (still kept as defense-in-depth);
+    # each ID is bounded to a generous UUID-string length.
+    image_ids: List[str] = Field(
+        ...,
+        max_length=settings.bulk_download_max_images,
+    )
 
 
 @router.post("/download-zip")
 async def download_zip(
     request: BulkDownloadRequest,
+    http_request: Request,
     event_token: EventTokenPayload = Depends(get_event_from_token),
     db: Session = Depends(get_db)
 ):
@@ -780,13 +817,21 @@ async def download_zip(
     - **image_ids**: List of image UUID strings to include
 
     Returns a ZIP file containing the requested photos.
-    Rate limited to 10 downloads per hour per session.
+    Rate limited per session AND per (event_id, client_ip) — re-authing
+    to mint a fresh session_id resets the per-session budget but the
+    per-IP one carries over, so a guest can't trivially loop the zip
+    download by rolling sessions.
     """
     event_id = uuid.UUID(event_token.event_id)
     session_id = uuid.UUID(event_token.session_id)
 
-    # Enforce rate limit
+    # Enforce both rate limits before any DB work.
     rate_limiter.enforce_rate_limit(str(session_id), action="download")
+
+    client_ip = http_request.client.host if http_request.client else "unknown"
+    download_ip_rate_limiter.enforce_rate_limit(
+        f"{event_id}:{client_ip}", action="download_ip"
+    )
 
     # Verify event exists and allows downloads
     event = db.query(Event).filter(Event.id == event_id).first()

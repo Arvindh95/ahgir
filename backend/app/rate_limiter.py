@@ -212,6 +212,18 @@ rate_limiter = RateLimiter(redis_client)
 # lift its ceiling without affecting the per-session budget that the
 # rate-limit tests deliberately exercise.
 scan_ip_rate_limiter = RateLimiter(redis_client)
+# Same pattern for the per-event+IP download (zip bulk) budget. Without
+# this, a guest could mint a fresh session via re-auth and reset the
+# per-session download counter to bypass the throttle.
+download_ip_rate_limiter = RateLimiter(redis_client)
 auth_rate_limiter = RateLimiter(redis_client, limit=settings.auth_rate_limit, window_hours=settings.auth_rate_window_hours)
 share_rate_limiter = RateLimiter(redis_client, limit=settings.share_rate_limit, window_hours=settings.share_rate_window_hours)
 event_passcode_rate_limiter = RateLimiter(redis_client, limit=settings.event_passcode_rate_limit, window_hours=settings.event_passcode_rate_window_hours)
+# Per (slug, client_ip) passcode-failure limiter. Trips before the
+# per-slug limiter when a single bad actor is the one brute-forcing,
+# so other guests on different IPs aren't collaterally locked out.
+event_passcode_ip_rate_limiter = RateLimiter(
+    redis_client,
+    limit=settings.event_passcode_ip_rate_limit,
+    window_hours=settings.event_passcode_ip_rate_window_hours,
+)

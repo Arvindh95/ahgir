@@ -11,6 +11,8 @@ from app.models import User, Event, Image, Face, GuestSession, AuditLog, RateLim
 from app.rate_limiter import (
     RateLimiter,
     auth_rate_limiter,
+    download_ip_rate_limiter,
+    event_passcode_ip_rate_limiter,
     event_passcode_rate_limiter,
     scan_ip_rate_limiter,
     share_rate_limiter,
@@ -115,12 +117,20 @@ def _lift_auth_rate_limits():
     the per-IP limiter. The scan rate limiter is intentionally NOT touched so
     test_rate_limiting_integration can still exercise the scan budget.
     """
-    # scan_ip_rate_limiter is included so the per-session scan-rate tests
-    # (test_rate_limiting_integration) aren't tripped by a parallel per-IP
-    # budget — those tests deliberately exercise the per-session ceiling.
-    # The test_scan_failure_modes file then dials its limit DOWN locally
-    # to assert the per-IP budget survives re-auth.
-    affected = (auth_rate_limiter, event_passcode_rate_limiter, share_rate_limiter, scan_ip_rate_limiter)
+    # scan_ip_rate_limiter / download_ip_rate_limiter / event_passcode_ip
+    # _rate_limiter are included so the corresponding per-session /
+    # per-slug rate tests aren't tripped by a parallel per-IP budget —
+    # those tests deliberately exercise one tier. The dedicated abuse-
+    # control tests dial individual limits DOWN locally to assert the
+    # per-IP budget survives session / IP rotation.
+    affected = (
+        auth_rate_limiter,
+        event_passcode_rate_limiter,
+        event_passcode_ip_rate_limiter,
+        share_rate_limiter,
+        scan_ip_rate_limiter,
+        download_ip_rate_limiter,
+    )
     originals = [(lim, lim.limit) for lim in affected]
     for lim in affected:
         lim.limit = 10_000
