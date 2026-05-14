@@ -62,17 +62,24 @@ async def get_photo_signed(
     if not event or event.status != 'active':
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
 
-    image = (
-        db.query(Image.id)
-        .filter(
-            Image.id == image_uuid,
-            Image.event_id == event_uuid,
-            Image.status.in_(('indexed', 'no_faces')),
+    # Covers are event-scoped (one per event) and use event_id as a
+    # sentinel in the image_id slot — see generate_signed_cover_url.
+    # They don't have a row in the images table, so skip the Image
+    # status lookup for cover requests. The event-active check above
+    # is sufficient gating: as soon as the event is frozen / expired,
+    # the cover stops serving too.
+    if photo_type != "cover":
+        image = (
+            db.query(Image.id)
+            .filter(
+                Image.id == image_uuid,
+                Image.event_id == event_uuid,
+                Image.status.in_(('indexed', 'no_faces')),
+            )
+            .first()
         )
-        .first()
-    )
-    if not image:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
+        if not image:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
 
     try:
         photo_bytes = storage_service.get_photo(event_uuid, image_uuid, photo_type)

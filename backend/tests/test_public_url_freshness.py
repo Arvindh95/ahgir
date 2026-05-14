@@ -145,6 +145,73 @@ def test_signed_url_serves_when_image_no_faces(client, db_session: Session):
     assert r.status_code == 200
 
 
+def test_signed_url_serves_cover_with_event_id_sentinel(client, db_session: Session):
+    """Covers are event-scoped (one per event); generate_signed_cover_url
+    encodes the event_id in BOTH the event_id and image_id positions of
+    the URL. There is no Image row with id == event_id, so the photo
+    route's image-status check must skip when photo_type == 'cover'.
+    Pre-fix regression: the new DB check 404'd every cover URL, breaking
+    the "Customize Landing Page" cover thumbnail.
+    """
+    user = User(
+        email=f"cov-{uuid.uuid4().hex}@example.com",
+        password_hash=hash_password("x"),
+        is_verified=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+
+    event = Event(
+        owner_user_id=user.id,
+        slug=f"cov-{uuid.uuid4().hex[:8]}",
+        name="Cover test",
+        retention_days=30,
+        status="active",
+        cover_image=f"events/cover-key.jpg",
+    )
+    db_session.add(event)
+    db_session.commit()
+    db_session.refresh(event)
+
+    path = _signed_path(event.id, event.id, "cover")
+    with patch.object(storage_service, "get_photo", return_value=b"fake-cover-bytes"):
+        r = client.get(path)
+    assert r.status_code == 200, r.text
+    assert r.content == b"fake-cover-bytes"
+
+
+def test_signed_cover_url_rejected_when_event_frozen(client, db_session: Session):
+    """Cover requests must still be gated by event.status. Skipping the
+    image lookup for covers doesn't mean we skip the event check.
+    """
+    user = User(
+        email=f"cov-{uuid.uuid4().hex}@example.com",
+        password_hash=hash_password("x"),
+        is_verified=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+
+    event = Event(
+        owner_user_id=user.id,
+        slug=f"cov-{uuid.uuid4().hex[:8]}",
+        name="Frozen cover",
+        retention_days=30,
+        status="frozen",
+        cover_image=f"events/cover-key.jpg",
+    )
+    db_session.add(event)
+    db_session.commit()
+    db_session.refresh(event)
+
+    path = _signed_path(event.id, event.id, "cover")
+    with patch.object(storage_service, "get_photo", return_value=b"fake-cover-bytes"):
+        r = client.get(path)
+    assert r.status_code == 404
+
+
 # ─── P3 #2: /share restricts to guest-visible statuses ────────────────────
 
 
