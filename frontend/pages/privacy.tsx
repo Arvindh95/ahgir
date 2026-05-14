@@ -78,7 +78,7 @@ export default function PrivacyPolicy() {
             <h2 className="text-xl font-semibold text-white mb-3">6. Data Retention</h2>
             <ul className="list-disc list-inside space-y-2 ml-2">
               <li><span className="text-white font-medium">Account data:</span> Retained until you request account deletion.</li>
-              <li><span className="text-white font-medium">Event photos and face data:</span> Retained for the retention window of the event&apos;s plan — 30 days on Free, 6 months on Starter, 1 year on Pro, and a custom window on enterprise / one-time event packages. When the window expires or the organizer deletes the event, all associated photos, thumbnails, and facial vectors are permanently removed from storage, the face recognition engine, and the database.</li>
+              <li><span className="text-white font-medium">Event photos and face data:</span> Retained for the retention window of the event&apos;s plan — 30 days on Free, 6 months on Starter, 1 year on Pro, and a custom window on enterprise / one-time event packages. When the window expires or the organizer deletes the event, all associated photos, thumbnails, and facial vectors are immediately removed from active storage, the face recognition engine, and the database. Encrypted operational backups containing this data roll off on a 7-day rotation, after which it is permanently gone.</li>
               <li><span className="text-white font-medium">Selfie scan data:</span> Processed in real-time and not permanently stored.</li>
               <li><span className="text-white font-medium">Payment history:</span> Stripe customer IDs and invoice records are retained for accounting and tax purposes as required by Malaysian law.</li>
             </ul>

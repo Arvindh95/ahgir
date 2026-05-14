@@ -1,6 +1,14 @@
 #!/bin/bash
-# Database restore script for PicUr
-# This script restores a PostgreSQL database from a backup file
+# Database restore script for PicUr's application DB (picur).
+#
+# Expects a pg_dump custom-format file (`.dump`) produced by the matching
+# `backup-database.sh`. Uses `pg_restore --clean --if-exists` so existing
+# objects are dropped before being re-created — this is a TRUE overwrite,
+# unlike piping plain SQL into psql which fails on duplicate keys.
+#
+# For backwards compatibility we still accept legacy `.sql.gz` plain-SQL
+# files: those go through psql but with a DROP/CREATE SCHEMA dance first
+# so the overwrite warning is actually honored.
 
 set -e
 
@@ -12,15 +20,15 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml -f docker-compose.prod.yml}"
+COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml -f docker-compose.vps.yml}"
 
 # Check if backup file is provided
 if [ -z "$1" ]; then
     echo -e "${RED}Error: Backup file not specified${NC}"
-    echo -e "${YELLOW}Usage: $0 <backup_file.sql.gz>${NC}"
+    echo -e "${YELLOW}Usage: $0 <backup_file.dump|backup_file.sql.gz>${NC}"
     echo ""
     echo -e "${YELLOW}Available backups:${NC}"
-    ls -lh /backups/postgres/*.sql.gz 2>/dev/null || echo "No backups found"
+    ls -lh /backups/postgres/*.dump /backups/postgres/*.sql.gz 2>/dev/null || echo "No backups found"
     exit 1
 fi
 
@@ -32,11 +40,21 @@ if [ ! -f "$BACKUP_FILE" ]; then
     exit 1
 fi
 
+case "$BACKUP_FILE" in
+    *.dump)  FORMAT="custom" ;;
+    *.sql.gz) FORMAT="plain-gz" ;;
+    *)
+        echo -e "${RED}Error: Unrecognised backup extension. Use .dump or .sql.gz${NC}"
+        exit 1
+        ;;
+esac
+
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}PicUr Database Restore${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo -e "${YELLOW}Backup file: $BACKUP_FILE${NC}"
 echo -e "${YELLOW}Backup size: $(du -h "$BACKUP_FILE" | cut -f1)${NC}"
+echo -e "${YELLOW}Format:      $FORMAT${NC}"
 echo ""
 
 # Confirmation prompt
@@ -50,27 +68,51 @@ fi
 
 # Stop backend and worker services
 echo -e "${YELLOW}Stopping backend and worker services...${NC}"
-docker compose -f $COMPOSE_FILE stop backend worker
+docker compose -f $COMPOSE_FILE stop backend worker retention-scheduler
 echo -e "${GREEN}✓ Services stopped${NC}"
 echo ""
 
 # Restore database
 echo -e "${YELLOW}Restoring database...${NC}"
-if gunzip -c "$BACKUP_FILE" | \
+RESTORE_OK=0
+if [ "$FORMAT" = "custom" ]; then
+    # Custom-format dump: pg_restore handles DROP IF EXISTS for every
+    # object, including the vector extension's types and indexes.
+    if docker compose -f $COMPOSE_FILE exec -T postgres \
+        pg_restore --clean --if-exists --no-owner --no-privileges \
+                   -U picur -d picur < "$BACKUP_FILE"; then
+        RESTORE_OK=1
+    fi
+else
+    # Plain SQL: drop the public schema first so subsequent CREATEs
+    # don't trip over existing tables. Re-create the schema + vector
+    # extension before applying the dump.
     docker compose -f $COMPOSE_FILE exec -T postgres \
-    psql -U picur picur; then
+        psql -U picur -d picur -v ON_ERROR_STOP=1 -c "
+            DROP SCHEMA IF EXISTS public CASCADE;
+            CREATE SCHEMA public;
+            CREATE EXTENSION IF NOT EXISTS vector;
+        "
+    if gunzip -c "$BACKUP_FILE" | \
+        docker compose -f $COMPOSE_FILE exec -T postgres \
+        psql -U picur -d picur -v ON_ERROR_STOP=1; then
+        RESTORE_OK=1
+    fi
+fi
+
+if [ "$RESTORE_OK" = "1" ]; then
     echo -e "${GREEN}✓ Database restored successfully${NC}"
 else
     echo -e "${RED}✗ Database restore failed${NC}"
     echo -e "${YELLOW}Starting services...${NC}"
-    docker compose -f $COMPOSE_FILE start backend worker
+    docker compose -f $COMPOSE_FILE start backend worker retention-scheduler
     exit 1
 fi
 echo ""
 
 # Start services
 echo -e "${YELLOW}Starting backend and worker services...${NC}"
-docker compose -f $COMPOSE_FILE start backend worker
+docker compose -f $COMPOSE_FILE start backend worker retention-scheduler
 echo -e "${GREEN}✓ Services started${NC}"
 echo ""
 
@@ -89,3 +131,5 @@ echo ""
 echo -e "${BLUE}========================================${NC}"
 echo -e "${GREEN}Database restore completed at $(date)${NC}"
 echo -e "${BLUE}========================================${NC}"
+echo -e "${YELLOW}NOTE: This restored only the application DB. If you also need${NC}"
+echo -e "${YELLOW}face-recognition state, run scripts/restore-compreface.sh too.${NC}"

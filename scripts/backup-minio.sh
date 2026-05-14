@@ -6,7 +6,7 @@ set -e
 
 # Configuration
 BACKUP_DIR="${BACKUP_DIR:-/backups/minio}"
-RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-30}"
+RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-7}"
 DATE=$(date +%Y%m%d_%H%M%S)
 BACKUP_FILE="$BACKUP_DIR/minio_backup_$DATE.tar.gz"
 

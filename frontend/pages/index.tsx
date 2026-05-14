@@ -278,7 +278,7 @@ export default function Home() {
               {[
                 { icon: Lock, title: 'Encrypted everywhere', desc: 'TLS in transit, encrypted storage at rest, bcrypt passwords. GPS and EXIF metadata stripped before storage.' },
                 { icon: ScanFace, title: 'Math, not faces', desc: 'Face matching uses numerical embeddings on our own self-hosted AI. No third-party vendor sees your photos.' },
-                { icon: Shield, title: 'Auto-deletes with the event', desc: 'Photos, thumbnails, and face data are purged when the retention window ends. No backup we keep.' },
+                { icon: Shield, title: 'Auto-deletes with the event', desc: 'Photos, thumbnails, and face data are purged when the retention window ends; encrypted backups roll off within 7 days.' },
               ].map((item) => (
                 <FadeIn key={item.title}>
                   <div className="glass-card rounded-2xl p-8 flex flex-col h-full">

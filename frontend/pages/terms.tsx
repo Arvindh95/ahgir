@@ -98,7 +98,7 @@ export default function TermsOfService() {
           <section>
             <h2 className="text-xl font-semibold text-white mb-3">8. Data Ownership</h2>
             <p>
-              Users own their personal data and uploaded content. PicUr acts as a data processor on behalf of event organizers. When an organizer deletes an event, all associated data (photos, face recognition data) is permanently removed from our systems.
+              Users own their personal data and uploaded content. PicUr acts as a data processor on behalf of event organizers. When an organizer deletes an event, all associated data (photos, face recognition data) is immediately removed from active systems; encrypted operational backups retain a copy for up to 7 days before they too are rotated out.
             </p>
           </section>
 
@@ -122,7 +122,7 @@ export default function TermsOfService() {
               Either party may terminate the relationship at any time:
             </p>
             <ul className="list-disc list-inside space-y-2 ml-2">
-              <li><span className="text-white font-medium">By you:</span> You may delete your account at any time. Upon deletion, your events, photos, and associated data will be permanently removed.</li>
+              <li><span className="text-white font-medium">By you:</span> You may delete your account at any time. Upon deletion, your events, photos, and associated data are immediately removed from active systems; encrypted backups roll off within 7 days.</li>
               <li><span className="text-white font-medium">By us:</span> We may suspend or terminate your account if you violate these terms, with notice where practicable.</li>
             </ul>
           </section>

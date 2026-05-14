@@ -1,15 +1,19 @@
 #!/bin/bash
-# Database backup script for PicUr
-# This script creates a compressed backup of the PostgreSQL database
+# Database backup script for PicUr's application DB (picur).
+#
+# Uses pg_dump custom format (-Fc) so the matching `restore-database.sh`
+# can use `pg_restore --clean --if-exists` to do a true overwrite. Plain
+# SQL piped into psql on a populated DB fails with duplicate-key / object
+# errors on existing rows.
 
 set -e
 
 # Configuration
 BACKUP_DIR="${BACKUP_DIR:-/backups/postgres}"
-RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-30}"
+RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-7}"
 DATE=$(date +%Y%m%d_%H%M%S)
-BACKUP_FILE="$BACKUP_DIR/picur_backup_$DATE.sql.gz"
-COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml -f docker-compose.prod.yml}"
+BACKUP_FILE="$BACKUP_DIR/picur_backup_$DATE.dump"
+COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml -f docker-compose.vps.yml}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -28,23 +32,26 @@ if ! docker compose -f $COMPOSE_FILE ps postgres | grep -q "Up"; then
     exit 1
 fi
 
-# Create backup
+# Create backup (custom format, internally compressed by pg_dump)
 echo -e "${YELLOW}Creating backup: $BACKUP_FILE${NC}"
 if docker compose -f $COMPOSE_FILE exec -T postgres \
-    pg_dump -U picur picur | gzip > "$BACKUP_FILE"; then
+    pg_dump -U picur -Fc -d picur > "$BACKUP_FILE"; then
     echo -e "${GREEN}Backup created successfully${NC}"
-    
+
     # Get backup size
     BACKUP_SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
     echo -e "${GREEN}Backup size: $BACKUP_SIZE${NC}"
 else
     echo -e "${RED}Error: Backup failed${NC}"
+    rm -f "$BACKUP_FILE"
     exit 1
 fi
 
 # Clean up old backups
 echo -e "${YELLOW}Cleaning up backups older than $RETENTION_DAYS days${NC}"
-DELETED_COUNT=$(find "$BACKUP_DIR" -name "picur_backup_*.sql.gz" -mtime +$RETENTION_DAYS -delete -print | wc -l)
+DELETED_COUNT=$(find "$BACKUP_DIR" -name "picur_backup_*.dump" -mtime +$RETENTION_DAYS -delete -print | wc -l)
+# Also clean up legacy .sql.gz from before the format switch.
+find "$BACKUP_DIR" -name "picur_backup_*.sql.gz" -mtime +$RETENTION_DAYS -delete 2>/dev/null || true
 echo -e "${GREEN}Deleted $DELETED_COUNT old backup(s)${NC}"
 
 # List recent backups

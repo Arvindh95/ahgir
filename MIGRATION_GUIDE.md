@@ -317,26 +317,32 @@ If `173.212.247.3` is gone and you have NO snapshot:
 - **MinIO photos**: lost. Customer photos gone. **Action: now.** Set up a daily off-site backup.
 - **CompreFace embeddings**: lost. All events must re-index.
 
-### Off-site backup plan (TODO if not done)
+### Local nightly backup (now in place)
 
-Two minimum viable options:
+The repo ships a backup rotation that runs nightly via cron:
+
+- `scripts/backup-all.sh` — wraps the three component scripts:
+  - `scripts/backup-database.sh` — app DB → `/backups/postgres/*.dump`
+  - `scripts/backup-compreface.sh` — face embeddings → `/backups/compreface/*.dump`
+  - `scripts/backup-minio.sh` — photo bytes → `/backups/minio/*.tar.gz`
+- `scripts/cron/picur-backups` — cron entry installed at `/etc/cron.d/picur-backups`
+- `scripts/install-backup-cron.sh` — one-shot installer (root, run once per VPS)
+
+Retention: 7 days. Restore: `scripts/restore-database.sh <file>.dump` for the
+app DB and `scripts/restore-compreface.sh <file>.dump` for face embeddings.
+
+### Off-site backup plan (still TODO)
+
+The above only protects against logical corruption / accidental delete. A
+full-host loss (data centre fire, account takeover) still wipes you out.
+Add one of:
 
 **Option A — daily rsync to second cheap VPS or NAS:**
 
 ```bash
-# On current host, /opt/ahgir/scripts/backup-offsite.sh
-#!/usr/bin/env bash
-set -euo pipefail
-TS=$(date +%Y%m%d_%H%M%S)
-docker exec picur-postgres pg_dump -U picur -d picur -Fc -f /tmp/picur-$TS.dump
-docker exec compreface-postgres-db pg_dump -U compreface -d frs -Fc -f /tmp/frs-$TS.dump
-rsync -az /tmp/picur-$TS.dump /tmp/frs-$TS.dump backup-host:/backups/
-docker cp picur-minio:/data/photos /tmp/photos-$TS
-rsync -az /tmp/photos-$TS/ backup-host:/backups/photos/
-rm -rf /tmp/picur-$TS.dump /tmp/frs-$TS.dump /tmp/photos-$TS
+# Wraps backup-all.sh; only the off-site copy is the new bit.
+0 4 * * * rsync -az /backups/ backup-host:/backups/picur/ >> /var/log/picur-backups-offsite.log 2>&1
 ```
-
-Add to root crontab: `0 3 * * * /opt/ahgir/scripts/backup-offsite.sh`
 
 **Option B — managed backup service:**
 - Hetzner Storage Box: $5/mo for 1TB, mount via SFTP/SSHFS

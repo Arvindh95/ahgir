@@ -1,0 +1,13 @@
+# PicUr nightly backup cron job.
+#
+# Installed as /etc/cron.d/picur-backups by scripts/install-backup-cron.sh.
+# Runs the full backup (app DB + CompreFace + MinIO + config) at 03:15 UTC
+# every day. Stdout/stderr go to /var/log/picur-backups.log; the logrotate
+# config at /etc/logrotate.d/picur-backups rotates it weekly.
+#
+# To disable temporarily: comment the line below and `service cron reload`.
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+15 3 * * * root cd /opt/ahgir && /opt/ahgir/scripts/backup-all.sh >> /var/log/picur-backups.log 2>&1
