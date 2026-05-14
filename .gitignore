@@ -3,6 +3,8 @@
 .env.local
 .next/
 node_modules/
+# Next/TypeScript incremental-build artefact from `tsc --noEmit`; local-only.
+*.tsbuildinfo
 __pycache__/
 *.pyc
 .hypothesis/
