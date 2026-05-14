@@ -156,6 +156,7 @@ def test_rate_limit_on_scan_endpoint(client, guest_session, test_image_with_face
     assert retry_after > 0
 
 
+@pytest.mark.requires_external_services
 def test_rate_limit_reset_allows_new_scans(client, guest_session, test_image_with_face):
     """
     Test that resetting rate limit allows new scans.
@@ -181,6 +182,7 @@ def test_rate_limit_reset_allows_new_scans(client, guest_session, test_image_wit
     assert response.status_code in [200, 400]  # Not rate limited
 
 
+@pytest.mark.requires_external_services
 def test_different_sessions_have_separate_limits(client, test_db, test_event, test_image_with_face):
     """
     Test that different guest sessions have separate rate limits.
