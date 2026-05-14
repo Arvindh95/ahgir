@@ -5,6 +5,7 @@ import hmac
 import time
 from minio import Minio
 from minio.error import S3Error
+from minio.sse import SseS3
 from io import BytesIO
 from typing import Optional
 import uuid
@@ -125,7 +126,13 @@ class StorageService:
         photo_data: bytes,
         content_type: str = "image/jpeg",
     ) -> str:
-        """Upload an event cover image to MinIO with retry. Always overwrites existing cover."""
+        """Upload an event cover image to MinIO with retry. Always overwrites existing cover.
+
+        Passes sse=SseS3() so MinIO encrypts the object at write time
+        with the server-managed KMS key (configured via
+        MINIO_KMS_SECRET_KEY env in docker-compose.vps.yml). Requires
+        MinIO to have been started with that env or this call 400s.
+        """
         object_path = f"events/{event_id}/cover.jpg"
         try:
             self.client.put_object(
@@ -134,6 +141,7 @@ class StorageService:
                 BytesIO(photo_data),
                 length=len(photo_data),
                 content_type=content_type,
+                sse=SseS3(),
             )
             return object_path
         except S3Error as e:
@@ -163,14 +171,15 @@ class StorageService:
             StorageError: If upload fails after retries
         """
         object_path = f"events/{event_id}/{photo_type}/{image_id}.jpg"
-        
+
         try:
             self.client.put_object(
                 self.bucket,
                 object_path,
                 BytesIO(photo_data),
                 length=len(photo_data),
-                content_type="image/jpeg"
+                content_type="image/jpeg",
+                sse=SseS3(),  # SSE-S3: server-side encryption with MinIO KMS
             )
             return object_path
         except S3Error as e:

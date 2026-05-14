@@ -33,6 +33,15 @@ services:
   minio:
     ports: !reset []
     restart: unless-stopped
+    environment:
+      # Inherit credentials from base compose; ADD a KMS master key for
+      # SSE-S3 server-side encryption. Format: <name>:<base64-32-byte-key>.
+      # The key MUST stay stable across restarts — losing it makes every
+      # encrypted object unreadable. The value lives in .env.production
+      # on the VPS only (never committed); back it up in a password
+      # manager. Without this env, app put_object calls with sse=SseS3()
+      # would 400. With it, MinIO encrypts each new object on write.
+      MINIO_KMS_SECRET_KEY: "${MINIO_KMS_SECRET_KEY}"
 
   redis:
     ports: !reset []
