@@ -100,6 +100,31 @@ def redis_client():
     client.flushdb()
     client.close()
 
+
+@pytest.fixture(scope="session", autouse=True)
+def _flush_app_cache_at_session_start():
+    """Flush the application's redis cache (DB 0) once at session start
+    so cached fixtures from a prior pytest invocation don't poison the
+    current run.
+
+    Symptom that motivated this: test_get_event_by_valid_slug seeds an
+    Event with hardcoded slug 'test-wedding-2024'; the /e/{slug}
+    endpoint caches the response in DB 0; the db_session fixture rolls
+    back the seed; the next pytest invocation creates a NEW event with
+    the same slug but the cache hit returns the prior run's event_id.
+
+    The standard `redis_client` fixture only flushes DB 1 (the rate-
+    limiter test DB). DB 0 holds the app's own cache.
+    """
+    from app.cache import get_redis
+
+    try:
+        get_redis().flushdb()
+    except Exception:
+        # Test redis may be unreachable in pure-unit runs; not fatal.
+        pass
+    yield
+
 @pytest.fixture
 def rate_limiter(redis_client):
     """Rate limiter instance for testing"""
