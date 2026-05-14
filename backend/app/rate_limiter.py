@@ -207,6 +207,11 @@ class RateLimiter:
 
 # Global rate limiter instances
 rate_limiter = RateLimiter(redis_client)
+# Dedicated limiter for the per-event+IP scan budget. Same defaults as the
+# per-session limiter, but a separate instance so test infrastructure can
+# lift its ceiling without affecting the per-session budget that the
+# rate-limit tests deliberately exercise.
+scan_ip_rate_limiter = RateLimiter(redis_client)
 auth_rate_limiter = RateLimiter(redis_client, limit=settings.auth_rate_limit, window_hours=settings.auth_rate_window_hours)
 share_rate_limiter = RateLimiter(redis_client, limit=settings.share_rate_limit, window_hours=settings.share_rate_window_hours)
 event_passcode_rate_limiter = RateLimiter(redis_client, limit=settings.event_passcode_rate_limit, window_hours=settings.event_passcode_rate_window_hours)

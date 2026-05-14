@@ -33,7 +33,7 @@ from app.models import (
     Image,
     User,
 )
-from app.rate_limiter import rate_limiter
+from app.rate_limiter import rate_limiter, scan_ip_rate_limiter
 from app.routers import guest as guest_router
 
 
@@ -136,7 +136,7 @@ def scan_setup(db_session: Session):
 
     # Reset the IP-bucket for this event so a prior test run doesn't
     # poison a fresh test's budget.
-    rate_limiter.reset_limit(f"{event.id}:testclient", "scan_ip")
+    scan_ip_rate_limiter.reset_limit(f"{event.id}:testclient", "scan_ip")
 
     return {"event": event, "image": image, "session_id": session_id, "token": token}
 
@@ -292,8 +292,10 @@ def test_reauthenticating_does_not_reset_scan_rate_budget(
     )
 
     # Squeeze the per-IP limit way down for this test, then restore.
-    original_limit = rate_limiter.limit
-    rate_limiter.limit = 2
+    # The conftest autouse fixture has lifted scan_ip_rate_limiter.limit
+    # to 10_000 so other tests can run; we override locally here.
+    original_limit = scan_ip_rate_limiter.limit
+    scan_ip_rate_limiter.limit = 2
     try:
         with patch("app.routers.guest._recognize_single_frame", mock_frame):
             r1 = client.post("/scan", json={"image": _jpeg_b64()}, headers=headers)
@@ -324,6 +326,6 @@ def test_reauthenticating_does_not_reset_scan_rate_budget(
                 f"new-session call returned {r3.status_code}"
             )
     finally:
-        rate_limiter.limit = original_limit
+        scan_ip_rate_limiter.limit = original_limit
         # Clean the IP bucket so other tests aren't affected.
-        rate_limiter.reset_limit(f"{event.id}:testclient", "scan_ip")
+        scan_ip_rate_limiter.reset_limit(f"{event.id}:testclient", "scan_ip")

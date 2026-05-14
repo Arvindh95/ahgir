@@ -19,7 +19,13 @@ from app.auth import verify_password, create_event_token, get_event_from_token, 
 from app.database import get_db
 from app.models import Event, GuestSession, Face, Image
 from app.storage import storage_service, generate_signed_cover_url
-from app.rate_limiter import rate_limiter, auth_rate_limiter, share_rate_limiter, event_passcode_rate_limiter
+from app.rate_limiter import (
+    rate_limiter,
+    scan_ip_rate_limiter,
+    auth_rate_limiter,
+    share_rate_limiter,
+    event_passcode_rate_limiter,
+)
 from app.audit import log_action
 from app.config import settings, get_compreface_url
 from app.cache import cache_get, cache_set
@@ -676,7 +682,7 @@ async def scan_face(
     # fine; the limit still applies, it just collapses unknown-IP traffic
     # into one bucket per event.
     client_ip = request.client.host if request.client else "unknown"
-    rate_limiter.enforce_rate_limit(
+    scan_ip_rate_limiter.enforce_rate_limit(
         f"{event_id}:{client_ip}", action="scan_ip"
     )
 
