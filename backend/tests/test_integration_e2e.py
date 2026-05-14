@@ -417,8 +417,10 @@ class TestBackgroundProcessingFlow:
         # can verify the end-state without waiting on RQ.
         from app.workers.reindex_event import reindex_event_task
 
+        # The worker does `from app.queue import enqueue_face_indexing`
+        # inside the function body, so patch the source module.
         with patch('app.queue.enqueue_event_reindex') as mock_enqueue, \
-             patch('app.workers.reindex_event.enqueue_face_indexing') as mock_face_queue:
+             patch('app.queue.enqueue_face_indexing') as mock_face_queue:
             mock_enqueue.return_value = "fake-reindex-job-id"
             response = client.post(f"/events/{event.id}/reindex", headers=headers)
             assert response.status_code == 200
