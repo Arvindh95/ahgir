@@ -22,7 +22,7 @@ export const auditService = {
     page: number = 1,
     limit: number = 50,
     action?: string,
-    actorType?: 'admin' | 'guest'
+    actorType?: 'admin' | 'guest' | 'system'
   ): Promise<AuditLogsResponse> {
     const params: any = { page, limit }
     if (action) {

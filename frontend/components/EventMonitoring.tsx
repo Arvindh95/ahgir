@@ -18,7 +18,11 @@ export default function EventMonitoring({ eventId }: EventMonitoringProps) {
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date())
-  const logsPerPage = 20
+  // Smaller per-page count keeps the audit-log section from dominating
+  // the page when there are lots of rows. The table itself is also
+  // wrapped in a max-height scroll container below — so even at this
+  // count the section has a consistent footprint.
+  const logsPerPage = 10
 
   useEffect(() => {
     loadEvent()
@@ -258,14 +262,19 @@ export default function EventMonitoring({ eventId }: EventMonitoringProps) {
           </div>
         ) : (
           <>
-            <div className="overflow-x-auto">
+            {/* Vertical scroll cap so a page full of rows doesn't
+                stretch the section off-screen. Combined with the
+                10-row per-page limit and Previous/Next pagination
+                below, the section stays compact while still letting
+                ops scroll within the page if they want to skim. */}
+            <div className="overflow-x-auto overflow-y-auto max-h-[420px] rounded-lg border border-white/5">
               <table className="w-full text-left text-sm">
-                <thead>
+                <thead className="sticky top-0 bg-black/40 backdrop-blur-sm">
                   <tr className="border-b border-white/10 text-gray-400">
-                    <th className="pb-3 pl-2 font-medium">Timestamp</th>
-                    <th className="pb-3 font-medium">Actor</th>
-                    <th className="pb-3 font-medium">Action</th>
-                    <th className="pb-3 font-medium">Details</th>
+                    <th className="pb-3 pt-3 pl-2 font-medium">Timestamp</th>
+                    <th className="pb-3 pt-3 font-medium">Actor</th>
+                    <th className="pb-3 pt-3 font-medium">Action</th>
+                    <th className="pb-3 pt-3 font-medium">Details</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
