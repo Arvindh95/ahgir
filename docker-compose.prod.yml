@@ -13,11 +13,18 @@ services:
 
   backend:
     volumes: !reset []
-    # Trust forwarded headers ONLY from the docker bridge gateway. Edge nginx
-    # already overwrites X-Forwarded-For with the real client IP from
-    # CF-Connecting-IP, so the stack rejects attacker-supplied XFF that
-    # bypasses the edge. Adjust the IP list to match your bridge network.
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4 --proxy-headers --forwarded-allow-ips=172.18.0.1,127.0.0.1
+    # Caddy mode: backend port is NOT externally published (ports: !reset
+    # below). The only path to backend:8000 is the Caddy container in the
+    # same docker network, which connects with its OWN container IP — not
+    # the bridge gateway 172.18.0.1. A narrow allow-list of
+    # "172.18.0.1,127.0.0.1" would make uvicorn ignore X-Forwarded-For from
+    # Caddy, collapsing every IP-keyed rate limit + audit row to "caddy's
+    # docker IP". Since the backend port is unreachable from outside the
+    # docker network, `*` is safe: only Caddy can deliver the headers, and
+    # Caddy unconditionally overwrites X-Forwarded-For with the real client.
+    # The vps overlay still uses the narrow list because there the ingress
+    # is HOST nginx and the docker bridge gateway IS the proxy IP.
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4 --proxy-headers --forwarded-allow-ips=*
     ports: !reset []  # do not publish; Caddy proxies /api → backend:8000
     environment:
       # Pin ENVIRONMENT here so a missing/typo'd .env can't silently leave the

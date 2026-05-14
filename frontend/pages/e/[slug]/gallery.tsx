@@ -104,7 +104,7 @@ export default function Gallery() {
         <div className="flex flex-col sm:flex-row justify-between items-center gap-4 mb-8 glass-card p-4 rounded-xl">
           <h1 className="text-xl font-bold">{eventName} - Gallery</h1>
           <div className="flex items-center gap-4">
-            {localStorage.getItem('scan_results') && (
+            {typeof window !== 'undefined' && sessionStorage.getItem('scan_results') && (
               <button
                 onClick={() => router.push(`/e/${slug}/results`)}
                 className="flex items-center gap-2 text-green-400 hover:text-green-300 transition-colors font-medium"

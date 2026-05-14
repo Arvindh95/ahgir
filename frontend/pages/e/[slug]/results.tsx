@@ -43,7 +43,7 @@ export default function ScanResults() {
       return
     }
 
-    const resultsStr = localStorage.getItem('scan_results')
+    const resultsStr = sessionStorage.getItem('scan_results')
     if (!resultsStr) {
       router.push(`/e/${slug}/scan`)
       return
@@ -66,7 +66,7 @@ export default function ScanResults() {
   }, [slug, router])
 
   const handleBackToScanner = () => {
-    localStorage.removeItem('scan_results')
+    sessionStorage.removeItem('scan_results')
     router.push(`/e/${slug}/scan`)
   }
 

@@ -448,8 +448,13 @@ export default function FaceScanner() {
       setScanResult(response.data)
       setScanPhase(null)
 
-      // Store results in localStorage for results page
-      localStorage.setItem('scan_results', JSON.stringify(response.data))
+      // Hand off to /results via sessionStorage — per-tab, dies on close.
+      // Used to be localStorage, which persisted scan matches across tabs
+      // and made them readable by any XSS payload on picur.my for as long
+      // as the guest didn't clear browser data. The handoff is the only
+      // consumer (/results reads it once and removes it), so sessionStorage
+      // is functionally equivalent and gives a smaller XSS surface.
+      sessionStorage.setItem('scan_results', JSON.stringify(response.data))
 
       // Release the camera BEFORE routing. Unmount cleanup also stops
       // tracks, but doing it here guarantees the LED is off the moment

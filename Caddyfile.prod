@@ -1,10 +1,21 @@
 picur.my {
-    # Security headers
+    # Security headers — kept in lockstep with the host nginx vhost
+    # (/etc/nginx/sites-enabled/picur on the VPS) and Caddyfile (dev). All
+    # three production ingress paths must serve the same CSP, otherwise an
+    # XSS on the path with the looser policy gets unrestricted access to
+    # localStorage (admin tokens, guest event tokens, scan results).
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
         X-Frame-Options "SAMEORIGIN"
         X-Content-Type-Options "nosniff"
         Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "geolocation=(), microphone=(), camera=(self)"
+        # 'unsafe-inline' for scripts is required by _document.tsx's
+        # TITLE_SCRIPT (sets the document title before hydration). Without
+        # `unsafe-inline` Next would refuse to load the page. Stripe, the
+        # CDN bundles for @vladmandic/face-api, and Cloudflare Insights are
+        # explicitly allowlisted.
+        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://js.stripe.com https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https://api.stripe.com https://cloudflareinsights.com https://cdn.jsdelivr.net; frame-src https://js.stripe.com https://hooks.stripe.com; media-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'"
         -Server
     }
 
