@@ -107,10 +107,16 @@ def setup_event_with_faces(db_session: Session):
         db_session.refresh(image)
 
     for i, image in enumerate(images):
+        # Bbox sized to fall in the MEDIUM tier (min_side >= face_size_medium_px,
+        # default 60px). Without this the sort/similarity test below uses a
+        # subject at similarity 0.86, which fails the strict small-face floor
+        # (0.90). The matching-engine behaviour under test is sort + dedupe,
+        # not threshold tiering — sizing into medium tier (0.85 floor) lets
+        # 0.86 pass and exercises what the test actually means to.
         face = Face(
             image_id=image.id,
             event_id=event.id,
-            bbox=[10.0 + i * 10, 10.0 + i * 10, 50.0 + i * 10, 50.0 + i * 10],
+            bbox=[10.0 + i * 10, 10.0 + i * 10, 90.0 + i * 10, 90.0 + i * 10],
             quality_score=0.9,
             embedding=[0.0] * 512,
             compreface_subject_id=f"{event.id}/{image.id}",
