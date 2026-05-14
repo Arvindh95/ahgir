@@ -338,7 +338,7 @@ export default function SuperadminPage() {
                 </div>
               </div>
               <div className="glass-card p-4 rounded-xl text-center">
-                <div className="text-2xl font-bold text-emerald-400 mb-1">RM {(stats.total_revenue_cents / 100).toFixed(0)}</div>
+                <div className="text-2xl font-bold text-emerald-400 mb-1">${(stats.total_revenue_cents / 100).toFixed(0)}</div>
                 <div className="text-xs text-gray-400 uppercase tracking-wider flex items-center justify-center gap-1">
                   <DollarSign className="w-3 h-3" /> Revenue
                 </div>
@@ -740,7 +740,7 @@ export default function SuperadminPage() {
                             {payment.tier_name}
                           </span>
                         </td>
-                        <td className="py-3 font-medium">RM {(payment.amount_cents / 100).toFixed(0)}</td>
+                        <td className="py-3 font-medium">${(payment.amount_cents / 100).toFixed(0)}</td>
                         <td className="py-3">
                           <span className={`px-2 py-0.5 rounded text-xs font-medium ${
                             payment.status === 'completed' ? 'bg-green-500/20 text-green-400' :

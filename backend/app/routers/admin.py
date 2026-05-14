@@ -818,7 +818,7 @@ async def admin_list_payments(
             for p, email in payments
         ],
         "total_revenue_cents": total_revenue,
-        "total_revenue_display": f"RM {total_revenue / 100:.2f}",
+        "total_revenue_display": f"${total_revenue / 100:.2f}",
     }
 
 
