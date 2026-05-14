@@ -1,0 +1,13 @@
+{
+  "$schema": "https://github.com/IBM/audit-ci/raw/main/docs/schema.json",
+  "high": true,
+  "skip-dev": true,
+  "allowlist": [
+    "node-fetch",
+    "postcss",
+    "@tensorflow/tfjs-core",
+    "face-api.js",
+    "next"
+  ],
+  "report-type": "summary"
+}

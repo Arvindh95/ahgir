@@ -5,8 +5,9 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
-RUN npm install
+# Use `npm ci` (not `npm install`) so the build fails if package-lock.json
+# is out of sync with package.json — matches what CI's `npm ci` enforces.
+RUN npm ci
 
 # Copy application code
 COPY . .

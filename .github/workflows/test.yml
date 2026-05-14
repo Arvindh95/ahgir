@@ -112,6 +112,14 @@ jobs:
         working-directory: frontend
         run: npm ci
 
+      - name: npm audit (production deps)
+        working-directory: frontend
+        # Gate on new high+ vulnerabilities in production deps.
+        # Currently-accepted advisories are allowlisted in
+        # audit-ci.json and documented in SECURITY_AUDIT.md; a
+        # NEW vulnerable package in `--omit=dev` will fail this.
+        run: npx audit-ci --config audit-ci.json
+
       - name: Lint
         working-directory: frontend
         run: npm run lint

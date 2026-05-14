@@ -1,14 +1,21 @@
 # Frontend Security Audit Exceptions
 
-`npm audit --omit=dev` reports advisories against `next@14.2.35` and the
-`face-api.js → @tensorflow/tfjs-core → node-fetch` chain. This document
-records why each is not currently applicable to PicUr's deployed
-configuration and what would change that.
+`npm audit --omit=dev` currently reports 5 advisories on
+`next@15.5.18` (the version pinned in `package.json`) and the
+`face-api.js → @tensorflow/tfjs-core → node-fetch` chain. This
+document records why each is not currently applicable to PicUr's
+deployed configuration and what would change that.
 
-The `next-14` dist-tag is pinned at `14.2.35` — the 14.x line is EOL for
-security patches. Every fix for the advisories below is on the 15.x
-backport line or later. We accept the audit warnings because none of the
-vulnerable code paths are reachable in PicUr's actual configuration.
+CI gates these with `audit-ci` (`frontend/audit-ci.json`); the
+modules listed below are explicitly allowlisted. A new vulnerable
+production dependency outside that allowlist will fail the
+`npm audit` step in `.github/workflows/test.yml`.
+
+We are on the Next 15.x line. Most of the 14.x-era advisories below
+are already fixed; the remaining ones either don't apply to our
+configuration (Pages Router, no `next/image` optimizer, etc.) or
+ride a transitive `postcss` advisory that only affects build-time
+processing of untrusted CSS — which we don't have.
 
 ## Next.js advisories
 
@@ -24,12 +31,13 @@ vulnerable code paths are reachable in PicUr's actual configuration.
 | GHSA-ffhc-5mcf-pf4q (App Router CSP nonce XSS) | No | Pages Router only; no App Router routes. |
 | GHSA-gx5p-jg67-6x7h (beforeInteractive Script XSS with untrusted input) | No | App has no `<Script strategy="beforeInteractive">` usage. |
 | GHSA-ggv3-7p47-pfv8 (HTTP request smuggling in rewrites) | No | `next.config.js` defines no `rewrites`. |
+| postcss `</style>` XSS in Stringify (moderate, transitive via Next) | No | We don't run user-controlled CSS through postcss; postcss is build-time only. |
 
 If any of those preconditions change (enabling `next/image` optimization,
 migrating to the App Router, adding rewrites, or introducing
 `beforeInteractive` scripts with untrusted input), the corresponding row
-becomes applicable and the upgrade to `next@15.5.x` or newer must happen
-before that change ships.
+becomes applicable and the dependency upgrade must happen before that
+change ships.
 
 ## face-api.js → tfjs-core → node-fetch
 
@@ -55,8 +63,10 @@ entirely and rely only on the browser-loaded CDN bundle.
 - A new advisory appears that does match our configuration (most likely:
   re-enabling `next/image` optimization, or any move toward the App
   Router / RSC).
-- We migrate to Next 15.x.
-- We replace `face-api.js` with `@vladmandic/face-api` in `package.json`.
+- We replace `face-api.js` with `@vladmandic/face-api` in `package.json`
+  — this would drop the `node-fetch` transitive and remove the high.
+- A NEW production dependency starts pulling a vulnerable transitive
+  outside the allowlist in `audit-ci.json`. CI will catch that.
 
 Last reviewed: 2026-05-14.
 
