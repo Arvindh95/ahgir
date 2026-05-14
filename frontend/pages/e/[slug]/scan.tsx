@@ -44,6 +44,12 @@ export default function FaceScanner() {
   // Live head-yaw estimate: -1 (turned to one side) ... 0 (straight) ... +1 (other side).
   // Computed each detection tick from the 68-point face landmarks.
   const yawRef = useRef<number>(0)
+  // Ref-mirror of `stream` state so cleanup functions can stop tracks
+  // without depending on a closure over `stream` at the time the
+  // effect ran. The init effect runs once on mount when `stream` is
+  // still null; reading it from this ref in cleanup gets the latest
+  // MediaStream and actually releases the camera on navigation.
+  const streamRef = useRef<MediaStream | null>(null)
 
   const [stream, setStream] = useState<MediaStream | null>(null)
   const [scanning, setScanning] = useState(false)
@@ -109,11 +115,16 @@ export default function FaceScanner() {
     initializeCamera()
 
     return () => {
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop())
+      // Read from the ref, not the closed-over state. At the time this
+      // cleanup function was created, `stream` was null; the ref is
+      // updated by initializeCamera once getUserMedia resolves.
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop())
+        streamRef.current = null
       }
       if (detectionIntervalRef.current) {
         clearInterval(detectionIntervalRef.current)
+        detectionIntervalRef.current = null
       }
     }
   }, [slug, router])
@@ -220,6 +231,7 @@ export default function FaceScanner() {
       })
 
       setStream(mediaStream)
+      streamRef.current = mediaStream
 
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream
@@ -439,6 +451,20 @@ export default function FaceScanner() {
       // Store results in localStorage for results page
       localStorage.setItem('scan_results', JSON.stringify(response.data))
 
+      // Release the camera BEFORE routing. Unmount cleanup also stops
+      // tracks, but doing it here guarantees the LED is off the moment
+      // the user lands on /results — they shouldn't see a "camera
+      // active" indicator while browsing their matches.
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop())
+        streamRef.current = null
+        setStream(null)
+      }
+      if (detectionIntervalRef.current) {
+        clearInterval(detectionIntervalRef.current)
+        detectionIntervalRef.current = null
+      }
+
       // Navigate to results
       router.push(`/e/${slug}/results`)
 
@@ -472,12 +498,15 @@ export default function FaceScanner() {
     localStorage.removeItem('event_name')
     localStorage.removeItem('allow_downloads')
 
-    if (stream) {
-      stream.getTracks().forEach(track => track.stop())
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop())
+      streamRef.current = null
+      setStream(null)
     }
 
     if (detectionIntervalRef.current) {
       clearInterval(detectionIntervalRef.current)
+      detectionIntervalRef.current = null
     }
 
     router.push(`/e/${slug}`)

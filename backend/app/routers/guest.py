@@ -29,6 +29,19 @@ import asyncio
 logger = logging.getLogger(__name__)
 
 
+class CompreFaceUpstreamError(Exception):
+    """CompreFace is unreachable, returning 5xx/auth-failing, or timed out.
+
+    Distinct from a successful response that found no face: an upstream
+    error must bubble up so the API returns 502 instead of silently
+    pretending the scan succeeded with zero matches.
+    """
+
+
+class NoFaceDetectedError(Exception):
+    """CompreFace explicitly reports no usable face in the submitted image."""
+
+
 async def recognize_with_compreface(
     image_bytes: bytes,
     api_key: str,
@@ -40,6 +53,12 @@ async def recognize_with_compreface(
     Passes ``face_plugins`` through to CompreFace so each face result
     carries plugin output (``gender``: {value, probability}) that the
     scan handler uses to reject cross-gender false positives.
+
+    Raises:
+        NoFaceDetectedError: CompreFace returned 400 (no usable face).
+        CompreFaceUpstreamError: auth failure, server error, timeout, or
+            network failure. Caller must surface this rather than treat
+            it as an empty match list.
     """
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -62,13 +81,34 @@ async def recognize_with_compreface(
             if response.status_code == 200:
                 result = response.json()
                 return result.get("result", [])
-            else:
-                logger.error(f"CompreFace recognition failed: {response.status_code} - {response.text}")
-                return []
 
+            # CompreFace reports "no usable face" via 400 with a message
+            # body. Treat that as a per-frame no-face signal rather than
+            # an upstream outage.
+            if response.status_code == 400:
+                logger.info(
+                    f"CompreFace returned 400 (no face): {response.text[:200]}"
+                )
+                raise NoFaceDetectedError(response.text[:200] or "no face detected")
+
+            # 401/403 means our API key is bad; 429 means CompreFace itself
+            # rate-limited us; 5xx is its problem. All of these are upstream
+            # failures the guest can't fix and the caller must raise on.
+            logger.error(
+                f"CompreFace recognition failed: {response.status_code} - {response.text[:500]}"
+            )
+            raise CompreFaceUpstreamError(
+                f"CompreFace HTTP {response.status_code}"
+            )
+
+    except (NoFaceDetectedError, CompreFaceUpstreamError):
+        raise
+    except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPError) as e:
+        logger.error(f"CompreFace transport error: {e}")
+        raise CompreFaceUpstreamError(str(e))
     except Exception as e:
-        logger.error(f"Error calling CompreFace: {e}")
-        return []
+        logger.error(f"Unexpected error calling CompreFace: {e}")
+        raise CompreFaceUpstreamError(str(e))
 
 router = APIRouter(tags=["guest"])
 
@@ -280,10 +320,24 @@ def _scrub_gallery_payload(payload: dict) -> dict:
 
 
 async def _recognize_single_frame(image_bytes: bytes, api_key: str) -> list:
-    """Recognize faces in a single frame, using largest face only."""
-    results = await recognize_with_compreface(image_bytes, api_key, det_prob_threshold=0.5)
+    """Recognize faces in a single frame, using largest face only.
+
+    Returns an empty list when CompreFace can see the image but cannot
+    find a usable face (NoFaceDetectedError after the lower-threshold
+    retry). Lets CompreFaceUpstreamError propagate so the caller can
+    distinguish "no face" from "recognizer is down."
+    """
+    try:
+        results = await recognize_with_compreface(image_bytes, api_key, det_prob_threshold=0.5)
+    except NoFaceDetectedError:
+        results = []
+
     if not results:
-        results = await recognize_with_compreface(image_bytes, api_key, det_prob_threshold=0.3)
+        try:
+            results = await recognize_with_compreface(image_bytes, api_key, det_prob_threshold=0.3)
+        except NoFaceDetectedError:
+            results = []
+
     if not results:
         return []
 
@@ -300,6 +354,42 @@ async def _recognize_single_frame(image_bytes: bytes, api_key: str) -> list:
     return results
 
 
+def _log_scan_outcome(
+    db: Session,
+    event_id: uuid.UUID,
+    session_id: uuid.UUID,
+    *,
+    outcome: str,
+    frame_count: int,
+    match_count: int = 0,
+    similarity_avg: float = 0.0,
+    detail: Optional[str] = None,
+) -> None:
+    """Single source of truth for scan-attempt audit logging.
+
+    Every code path in the scan flow must call this — success, no-face,
+    no-matches, filtered, upstream-error — so analytics can count real
+    scan attempts instead of just successful matches.
+    """
+    metadata: dict = {
+        "outcome": outcome,
+        "match_count": match_count,
+        "frame_count": frame_count,
+        "similarity_avg": similarity_avg,
+        "recognition_engine": "compreface",
+    }
+    if detail:
+        metadata["detail"] = detail
+    log_action(
+        db=db,
+        event_id=event_id,
+        actor_type="guest",
+        actor_id=session_id,
+        action="scan",
+        metadata=metadata,
+    )
+
+
 async def _scan_with_compreface(
     all_frames: List[bytes],
     event_id: uuid.UUID,
@@ -307,15 +397,60 @@ async def _scan_with_compreface(
     event: Event,
     db: Session
 ) -> FaceScanResponse:
-    """Perform face scan using CompreFace, processing multiple frames in parallel."""
+    """Perform face scan using CompreFace, processing multiple frames in parallel.
+
+    Raises:
+        NoFaceDetectedError: every submitted frame came back without a
+            usable face. The scan endpoint translates this into 400.
+        CompreFaceUpstreamError: at least one frame failed because the
+            recognizer is unreachable / auth-failing / 5xx-ing. The scan
+            endpoint translates this into 502 so the guest sees a real
+            error instead of an empty match list.
+    """
     api_key = settings.compreface_api_key
 
-    # Process all frames in parallel
+    # Process all frames in parallel. return_exceptions so a per-frame
+    # upstream failure doesn't abort frames that did succeed — but we
+    # still bubble the upstream error if NO frame succeeded.
     frame_tasks = [_recognize_single_frame(frame, api_key) for frame in all_frames]
-    frame_results = await asyncio.gather(*frame_tasks)
+    frame_results_raw = await asyncio.gather(*frame_tasks, return_exceptions=True)
+
+    frame_results: list[list] = []
+    upstream_failures = 0
+    for r in frame_results_raw:
+        if isinstance(r, CompreFaceUpstreamError):
+            upstream_failures += 1
+            continue
+        if isinstance(r, BaseException):
+            # Genuine programming error — let it propagate; uvicorn will 500.
+            raise r
+        frame_results.append(r)
+
+    frames_with_face = sum(1 for r in frame_results if r)
+
+    if not frame_results and upstream_failures:
+        # Every frame hit an upstream error; nothing succeeded.
+        _log_scan_outcome(
+            db, event_id, session_id,
+            outcome="upstream_error",
+            frame_count=len(all_frames),
+            detail=f"{upstream_failures} frame(s) failed upstream",
+        )
+        raise CompreFaceUpstreamError("all frames failed against recognizer")
+
+    if frames_with_face == 0:
+        # Recognizer reachable, but no face was found in any submitted
+        # frame. Distinct from "found a face but no matching photos."
+        _log_scan_outcome(
+            db, event_id, session_id,
+            outcome="no_face",
+            frame_count=len(all_frames),
+        )
+        raise NoFaceDetectedError("no face detected in any submitted frame")
 
     logger.info(f"Multi-scan: processed {len(all_frames)} frames, "
-                f"faces found in {sum(1 for r in frame_results if r)} frames")
+                f"faces found in {frames_with_face} frames, "
+                f"upstream failures: {upstream_failures}")
 
     # Determine the guest's gender from CompreFace plugin output across all
     # frames. Each frame already filtered to its largest face, so we take a
@@ -361,6 +496,11 @@ async def _scan_with_compreface(
 
     if not candidates:
         logger.warning("No matching faces found across all frames")
+        _log_scan_outcome(
+            db, event_id, session_id,
+            outcome="no_matches",
+            frame_count=len(all_frames),
+        )
         return FaceScanResponse(
             matches=[],
             scan_id=str(uuid.uuid4()),
@@ -426,6 +566,12 @@ async def _scan_with_compreface(
         logger.info(
             f"All {len(candidates)} candidates filtered out by size-tiered threshold"
         )
+        _log_scan_outcome(
+            db, event_id, session_id,
+            outcome="filtered",
+            frame_count=len(all_frames),
+            detail=f"{len(candidates)} candidate(s) all filtered",
+        )
         return FaceScanResponse(
             matches=[],
             scan_id=str(uuid.uuid4()),
@@ -475,19 +621,17 @@ async def _scan_with_compreface(
             logger.error(f"Failed to generate URL for image {match['image_id']}: {e}")
             continue
 
-    # Log face scan
-    log_action(
-        db=db,
-        event_id=event_id,
-        actor_type='guest',
-        actor_id=session_id,
-        action='scan',
-        metadata={
-            'match_count': len(face_matches),
-            'frame_count': len(all_frames),
-            'similarity_avg': sum(m.similarity for m in face_matches) / len(face_matches) if face_matches else 0,
-            'recognition_engine': 'compreface'
-        }
+    # Log successful scan (matched at least one photo)
+    similarity_avg = (
+        sum(m.similarity for m in face_matches) / len(face_matches)
+        if face_matches else 0.0
+    )
+    _log_scan_outcome(
+        db, event_id, session_id,
+        outcome="matched" if face_matches else "no_matches",
+        frame_count=len(all_frames),
+        match_count=len(face_matches),
+        similarity_avg=similarity_avg,
     )
 
     return FaceScanResponse(
@@ -500,6 +644,7 @@ async def _scan_with_compreface(
 @router.post("/scan", response_model=FaceScanResponse)
 async def scan_face(
     scan_request: FaceScanRequest,
+    request: Request,
     event_token: EventTokenPayload = Depends(get_event_from_token),
     db: Session = Depends(get_db)
 ):
@@ -512,14 +657,28 @@ async def scan_face(
 
     Returns matched photos with presigned URLs
 
-    Rate limited to 30 scans per hour per session.
+    Rate limited to 30 scans per hour per session AND 30 scans per hour
+    per event+client-IP pair. The second limiter prevents a guest from
+    re-authenticating to obtain a fresh session_id and reset the per-
+    session budget — re-auth still gets a new session token but the IP
+    budget rolls over and continues counting against the same client.
     """
     # Parse event_id from token
     event_id = uuid.UUID(event_token.event_id)
     session_id = uuid.UUID(event_token.session_id)
 
-    # Enforce rate limit
+    # Per-session limiter (existing).
     rate_limiter.enforce_rate_limit(str(session_id), action="scan")
+
+    # Per (event, IP) limiter. Key on event_id so one user scanning across
+    # different events isn't penalised. "unknown" is the FastAPI fallback
+    # when request.client is None (e.g., under some test clients) — that's
+    # fine; the limit still applies, it just collapses unknown-IP traffic
+    # into one bucket per event.
+    client_ip = request.client.host if request.client else "unknown"
+    rate_limiter.enforce_rate_limit(
+        f"{event_id}:{client_ip}", action="scan_ip"
+    )
 
     # Verify event exists
     event = db.query(Event).filter(Event.id == event_id).first()
@@ -575,10 +734,26 @@ async def scan_face(
             detail="Invalid base64 image data"
         )
 
-    # Use CompreFace for face recognition (multi-frame)
-    return await _scan_with_compreface(
-        all_frames, event_id, session_id, event, db
-    )
+    # Use CompreFace for face recognition (multi-frame). Translate the
+    # two domain exceptions into HTTP responses the frontend already
+    # understands: 400 for "no usable face in your selfie" (so the user
+    # gets retry guidance) and 502 for "the recognizer is down" (so we
+    # don't hide an outage as a successful zero-match scan).
+    try:
+        return await _scan_with_compreface(
+            all_frames, event_id, session_id, event, db
+        )
+    except NoFaceDetectedError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No face detected. Try better lighting, remove sunglasses, and face the camera directly."
+        )
+    except CompreFaceUpstreamError as e:
+        logger.error(f"Scan failed due to CompreFace upstream error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Face recognition service is temporarily unavailable. Please try again in a moment."
+        )
 
 
 # ─── Bulk Download (ZIP) ─────────────────────────────────────────────────────
