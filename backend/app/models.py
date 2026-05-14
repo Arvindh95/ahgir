@@ -44,13 +44,28 @@ class Event(Base):
     status = Column(String(20), default='active', nullable=False, index=True)  # active, frozen, expired
     created_at = Column(TIMESTAMP, server_default=func.now(), nullable=False)
     updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now(), nullable=False)
-    
+
+    # Mirror the DB-level CHECK constraint added in migration s5b6c7d8e9.
+    # The Base.metadata.create_all() path used by tests doesn't read live DB
+    # constraints, so without this declaration the test schema accepts any
+    # string and only production rejects bad values.
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'frozen', 'expired')", name="valid_event_status"),
+        {"schema": None},
+    )
+
     # Relationships
     owner = relationship("User", back_populates="events")
     images = relationship("Image", back_populates="event", cascade="all, delete-orphan")
     faces = relationship("Face", back_populates="event", cascade="all, delete-orphan")
     guest_sessions = relationship("GuestSession", back_populates="event", cascade="all, delete-orphan")
-    audit_logs = relationship("AuditLog", back_populates="event", cascade="all, delete-orphan")
+    # AuditLog rows DELIBERATELY survive event deletion via the FK's
+    # ON DELETE SET NULL (see migration a3d4e5f6g7). passive_deletes=True
+    # tells SQLAlchemy NOT to preemptively delete audit rows on Event delete,
+    # so the DB-level FK action actually fires. Adding cascade="all,
+    # delete-orphan" here would silently override the FK and wipe the
+    # audit trail, defeating the migration's intent.
+    audit_logs = relationship("AuditLog", back_populates="event", passive_deletes=True)
     tier = relationship("EventTier", back_populates="event", uselist=False, cascade="all, delete-orphan")
 
 class Image(Base):
@@ -101,6 +116,20 @@ class Face(Base):
     # Relationships
     image = relationship("Image", back_populates="faces")
     event = relationship("Event", back_populates="faces")
+
+
+# Partial unique index on compreface_subject_id (excludes NULLs). Catches the
+# race condition where two concurrent face-indexer jobs for the same image both
+# clear stale faces and re-insert with overlapping `{event_id}/{image_id}/{seq}`
+# subject IDs. Second concurrent insert fails with IntegrityError, the worker's
+# row-lock-first approach (see face_indexer_compreface.py) makes the second
+# job a no-op anyway, but this is the belt-and-suspenders DB-level guarantee.
+Index(
+    "uq_faces_compreface_subject_id_not_null",
+    Face.compreface_subject_id,
+    unique=True,
+    postgresql_where=Face.compreface_subject_id.isnot(None),
+)
 
 class GuestSession(Base):
     __tablename__ = "guest_sessions"

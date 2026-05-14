@@ -15,10 +15,11 @@ def log_action(
     actor_type: str,
     actor_id: Optional[uuid.UUID],
     action: str,
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None,
+    commit: bool = True,
 ) -> AuditLog:
     """
-    Create an audit log entry
+    Create an audit log entry.
 
     Args:
         db: Database session
@@ -30,14 +31,24 @@ def log_action(
         action: Action performed (e.g., 'access', 'scan', 'upload',
             'reindex', 'delete', 'admin_user_update', 'admin_event_delete')
         metadata: Optional metadata as dictionary
+        commit: When True (default, backwards-compatible), the helper
+            commits its own transaction. Set False when the caller wants
+            the audit row to be part of a larger transaction — e.g., a
+            destructive event-delete flow that must keep the audit
+            insert atomic with the delete so a failed cleanup rolls
+            back the audit entry too. With commit=False the caller is
+            responsible for calling db.commit() afterwards.
 
     Returns:
-        Created AuditLog instance
+        Created AuditLog instance. When commit=False the returned
+        instance has been flushed but not committed; its primary key is
+        populated and it is safe to reference, but it will be rolled
+        back if the caller's transaction fails.
     """
     # Validate actor_type
     if actor_type not in ['admin', 'guest']:
         raise ValueError(f"Invalid actor_type: {actor_type}. Must be 'admin' or 'guest'")
-    
+
     # Create audit log entry
     audit_log = AuditLog(
         event_id=event_id,
@@ -46,9 +57,16 @@ def log_action(
         action=action,
         metadata_=metadata or {}
     )
-    
+
     db.add(audit_log)
-    db.commit()
-    db.refresh(audit_log)
-    
+    if commit:
+        db.commit()
+        db.refresh(audit_log)
+    else:
+        # Flush so the row is sent to the DB (PK + server defaults populated)
+        # but stays inside the caller's transaction. A subsequent
+        # rollback by the caller discards the audit row alongside the
+        # failed work, preserving atomicity for destructive flows.
+        db.flush()
+
     return audit_log

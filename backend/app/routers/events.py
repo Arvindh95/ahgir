@@ -1872,7 +1872,10 @@ async def delete_event(
             detail="You do not have permission to delete this event"
         )
 
-    # Log event deletion before deleting (audit log will be deleted with cascade)
+    # Stage the audit row inside the same transaction as the delete (commit
+    # =False) so a downstream failure rolls back both. The FK action on
+    # audit_logs.event_id is ON DELETE SET NULL, so the row survives the
+    # event delete with event_id=NULL — preserving the audit trail.
     log_action(
         db=db,
         event_id=event_uuid,
@@ -1882,9 +1885,10 @@ async def delete_event(
         metadata={
             'event_name': event.name,
             'photo_count': db.query(func.count(Image.id)).filter(Image.event_id == event_uuid).scalar() or 0
-        }
+        },
+        commit=False,
     )
-    
+
     # Drop CompreFace subjects before the DB cascade nukes face rows.
     try:
         delete_compreface_subjects_for_event(db, event_uuid)
@@ -1904,7 +1908,10 @@ async def delete_event(
     cache_delete_pattern(f"gallery:{event_uuid}:*")
     cache_delete_pattern(f"share:{event_uuid}:*")
 
-    # Delete event from database (cascades to images, faces, sessions, audit logs)
+    # Delete event from database. Audit row's event_id is set to NULL via
+    # the FK action (audit row survives). Images/faces/sessions/tier still
+    # cascade-delete because their relationships keep cascade="all, delete-
+    # orphan" — that data is intrinsically tied to the event lifecycle.
     db.delete(event)
     db.commit()
 

@@ -192,8 +192,13 @@ def index_photo_compreface(image_id: str, api_key: str, db_session: Optional[Ses
         else:
             db = db_session
 
-        # Fetch image record
-        image = db.query(Image).filter(Image.id == image_uuid).first()
+        # Fetch + row-lock the image. with_for_update() blocks any concurrent
+        # face-indexer job from racing us through the wipe-and-reinsert
+        # flow below. Without this, two RQ workers picking up the same
+        # image_id (which can happen if a retry fires before the failure
+        # is marked) both clear Face rows then both insert new ones,
+        # producing duplicate compreface_subject_id values.
+        image = db.query(Image).filter(Image.id == image_uuid).with_for_update().first()
 
         if not image:
             logger.error(f"Image not found: {image_id}")
@@ -204,6 +209,21 @@ def index_photo_compreface(image_id: str, api_key: str, db_session: Optional[Ses
                 'error': 'Image not found'
             }
 
+        # If a parallel worker already finished this image while we were
+        # waiting on the lock, bail out idempotently. Returning the live
+        # status keeps callers (RQ retries especially) from treating a
+        # successful first attempt as a failure when they reawake later.
+        if image.status == 'indexed':
+            logger.info(
+                f"Image {image_id} already indexed (status={image.status}, "
+                f"face_count={image.face_count}); skipping duplicate job"
+            )
+            return {
+                'image_id': image_id,
+                'status': image.status,
+                'face_count': image.face_count,
+            }
+
         logger.info(f"Processing image {image_id} for event {image.event_id}")
 
         # Wipe any Face rows left over from a prior failed attempt at this
@@ -212,6 +232,12 @@ def index_photo_compreface(image_id: str, api_key: str, db_session: Optional[Ses
         # face on the same photo. The CompreFace-side subjects with the
         # exact same subject_id will simply overwrite themselves on the
         # add_face POST, so we only need to clear the DB side here.
+        # NOTE: we still commit here so the delete is durable even if the
+        # subsequent compreface calls take a while; the row lock above is
+        # released when we commit, but by then image.status has been
+        # implicitly held inside our session and the new INSERTs go through
+        # the unique partial index on compreface_subject_id as a final
+        # backstop.
         existing_faces = db.query(Face).filter(Face.image_id == image_uuid).count()
         if existing_faces:
             logger.info(

@@ -173,11 +173,26 @@ def test_event_deletion_cascade(
     # Verify event is deleted
     assert test_db.query(Event).filter(Event.id == event_id).count() == 0
     
-    # Verify all associated records are deleted (cascade)
+    # Verify intrinsic event data is cascade-deleted: images, faces,
+    # guest sessions all die with their parent event.
     assert test_db.query(Image).filter(Image.event_id == event_id).count() == 0
     assert test_db.query(Face).filter(Face.event_id == event_id).count() == 0
     assert test_db.query(GuestSession).filter(GuestSession.event_id == event_id).count() == 0
+    # Audit rows DELIBERATELY survive event deletion via the FK's
+    # ON DELETE SET NULL action (migration a3d4e5f6g7). The original
+    # cascade behaviour wiped the audit trail with the event — the
+    # exact opposite of what an audit log is for. Verify the rows now
+    # persist with event_id=NULL instead.
     assert test_db.query(AuditLog).filter(AuditLog.event_id == event_id).count() == 0
+    surviving_audits = (
+        test_db.query(AuditLog)
+        .filter(AuditLog.event_id.is_(None), AuditLog.actor_id == user.id, AuditLog.action == 'test_action')
+        .count()
+    )
+    assert surviving_audits == audit_log_count, (
+        f"audit rows must survive event delete via FK SET NULL — "
+        f"expected {audit_log_count} surviving rows, got {surviving_audits}"
+    )
     
     # Verify photos are deleted from MinIO
     # Note: In the actual implementation, storage_service.delete_event_photos should be called

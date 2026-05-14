@@ -58,7 +58,9 @@ def check_and_delete_expired_events(db: Session = None):
                     Image.event_id == event.id
                 ).scalar() or 0
                 
-                # Log event deletion
+                # Stage the audit row inside the same transaction (commit=
+                # False). FK SET NULL preserves the row past the event
+                # delete; rollback on cleanup failure discards it.
                 log_action(
                     db=db,
                     event_id=event.id,
@@ -70,9 +72,10 @@ def check_and_delete_expired_events(db: Session = None):
                         'photo_count': photo_count,
                         'retention_days': event.retention_days,
                         'reason': 'retention_policy'
-                    }
+                    },
+                    commit=False,
                 )
-                
+
                 delete_compreface_subjects_for_event(db, event.id)
 
                 # Delete all photos from MinIO
