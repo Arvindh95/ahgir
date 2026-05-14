@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import api from '@/lib/api'
-import { BarChart3, Users, Download, Eye, Loader2, Activity } from 'lucide-react'
+import { BarChart3, Users, Download, Eye, Loader2 } from 'lucide-react'
 
 interface AnalyticsData {
   total_scans: number
@@ -9,13 +9,6 @@ interface AnalyticsData {
   total_gallery_views: number
   scans_by_day: { date: string; count: number }[]
   peak_hours: { hour: number; count: number }[]
-  recent_activity: {
-    id: string
-    action: string
-    actor_type: string
-    timestamp: string
-    metadata: Record<string, any>
-  }[]
 }
 
 interface EventAnalyticsProps {
@@ -43,29 +36,10 @@ export default function EventAnalytics({ eventId }: EventAnalyticsProps) {
     }
   }
 
-  const formatTimestamp = (ts: string) => {
-    return new Date(ts).toLocaleString('en-US', {
-      month: 'short', day: 'numeric', hour: 'numeric', minute: 'numeric'
-    })
-  }
-
   const formatDate = (ts: string) => {
     return new Date(ts).toLocaleDateString('en-US', {
       month: 'short', day: 'numeric'
     })
-  }
-
-  const getActionColor = (action: string) => {
-    const colors: Record<string, string> = {
-      scan: 'bg-blue-500/20 text-blue-400',
-      access: 'bg-cyan-500/20 text-cyan-400',
-      upload: 'bg-green-500/20 text-green-400',
-      bulk_download: 'bg-purple-500/20 text-purple-400',
-      gallery_view: 'bg-yellow-500/20 text-yellow-400',
-      reindex: 'bg-orange-500/20 text-orange-400',
-      delete: 'bg-red-500/20 text-red-400',
-    }
-    return colors[action] || 'bg-gray-500/20 text-gray-400'
   }
 
   if (loading) {
@@ -163,27 +137,6 @@ export default function EventAnalytics({ eventId }: EventAnalyticsProps) {
         </div>
       )}
 
-      {/* Recent Activity */}
-      {data.recent_activity.length > 0 && (
-        <div>
-          <h3 className="text-sm font-semibold text-gray-300 mb-3 flex items-center gap-2">
-            <Activity className="w-4 h-4" /> Recent Activity
-          </h3>
-          <div className="space-y-2">
-            {data.recent_activity.map((log) => (
-              <div key={log.id} className="flex items-center gap-3 p-2 rounded-lg bg-white/5 text-sm">
-                <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wider ${getActionColor(log.action)}`}>
-                  {log.action}
-                </span>
-                <span className={`px-1.5 py-0.5 rounded text-xs ${log.actor_type === 'admin' ? 'bg-purple-500/20 text-purple-300' : 'bg-gray-500/20 text-gray-300'}`}>
-                  {log.actor_type}
-                </span>
-                <span className="text-gray-500 text-xs ml-auto">{formatTimestamp(log.timestamp)}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   )
 }

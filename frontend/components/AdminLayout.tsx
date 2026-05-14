@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
 import Image from 'next/image'
 import { authService } from '@/lib/auth'
-import { LogOut, Shield, Menu, X, CreditCard } from 'lucide-react'
+import { LogOut, Shield, Menu, X, CreditCard, Zap } from 'lucide-react'
 
 interface AdminLayoutProps {
   children: React.ReactNode
@@ -43,6 +43,13 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
                   className="text-sm font-medium text-gray-300 hover:text-white transition-colors"
                 >
                   Events
+                </a>
+                <a
+                  href="/admin/plan"
+                  className="text-sm font-medium text-gray-300 hover:text-white transition-colors flex items-center gap-1"
+                >
+                  <Zap className="w-3.5 h-3.5" />
+                  Plan &amp; Usage
                 </a>
                 <a
                   href="/admin/billing"
@@ -88,6 +95,13 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
                 className="block px-3 py-2 text-sm font-medium text-gray-300 hover:text-white hover:bg-white/5 rounded-lg"
               >
                 Events
+              </a>
+              <a
+                href="/admin/plan"
+                className="flex items-center gap-1 px-3 py-2 text-sm font-medium text-gray-300 hover:text-white hover:bg-white/5 rounded-lg"
+              >
+                <Zap className="w-3.5 h-3.5" />
+                Plan &amp; Usage
               </a>
               <a
                 href="/admin/billing"

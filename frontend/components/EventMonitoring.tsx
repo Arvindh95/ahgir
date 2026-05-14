@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { eventService, EventDetails } from '@/lib/events'
-import { auditService, AuditLog } from '@/lib/audit'
-import { RefreshCcw, Activity, Upload, Trash2, ScanFace, Search, Loader2 } from 'lucide-react'
+import { RefreshCcw, Activity, Loader2 } from 'lucide-react'
 
 interface EventMonitoringProps {
   eventId: string
@@ -9,20 +8,9 @@ interface EventMonitoringProps {
 
 export default function EventMonitoring({ eventId }: EventMonitoringProps) {
   const [event, setEvent] = useState<EventDetails | null>(null)
-  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([])
   const [isLoadingEvent, setIsLoadingEvent] = useState(true)
-  const [isLoadingLogs, setIsLoadingLogs] = useState(true)
   const [error, setError] = useState('')
-  const [actionFilter, setActionFilter] = useState<string>('admin_only')
   const [isReindexing, setIsReindexing] = useState(false)
-  const [page, setPage] = useState(1)
-  const [total, setTotal] = useState(0)
-  const [lastUpdated, setLastUpdated] = useState<Date>(new Date())
-  // Smaller per-page count keeps the audit-log section from dominating
-  // the page when there are lots of rows. The table itself is also
-  // wrapped in a max-height scroll container below — so even at this
-  // count the section has a consistent footprint.
-  const logsPerPage = 10
 
   useEffect(() => {
     loadEvent()
@@ -39,50 +27,15 @@ export default function EventMonitoring({ eventId }: EventMonitoringProps) {
     return () => clearInterval(interval)
   }, [event?.status.pending, eventId])
 
-  useEffect(() => {
-    loadAuditLogs()
-  }, [eventId, actionFilter, page])
-
   const loadEvent = async () => {
     try {
       setIsLoadingEvent(true)
       const data = await eventService.getEvent(eventId)
       setEvent(data)
-      setLastUpdated(new Date())
     } catch (err: any) {
       setError(err.response?.data?.error?.message || 'Failed to load event')
     } finally {
       setIsLoadingEvent(false)
-    }
-  }
-
-  const loadAuditLogs = async () => {
-    try {
-      setIsLoadingLogs(true)
-      // Translate the UI filter into separate backend params. Previously we
-      // pulled only one page and applied admin_only/guest_only locally,
-      // which meant admin actions on page 2+ vanished and the total stayed
-      // at the unfiltered page count — both misleading to ops.
-      let action: string | undefined = undefined
-      let actorType: 'admin' | 'guest' | 'system' | undefined = undefined
-      if (actionFilter === 'admin_only') {
-        actorType = 'admin'
-      } else if (actionFilter === 'guest_only') {
-        actorType = 'guest'
-      } else if (actionFilter === 'system_only') {
-        actorType = 'system'
-      } else if (actionFilter) {
-        action = actionFilter
-      }
-
-      const data = await auditService.getAuditLogs(eventId, page, logsPerPage, action, actorType)
-
-      setAuditLogs(data.logs)
-      setTotal(data.total)
-    } catch (err: any) {
-      setError(err.response?.data?.error?.message || 'Failed to load audit logs')
-    } finally {
-      setIsLoadingLogs(false)
     }
   }
 
@@ -100,33 +53,6 @@ export default function EventMonitoring({ eventId }: EventMonitoringProps) {
       setError(err.response?.data?.error?.message || 'Failed to start reindexing')
     } finally {
       setIsReindexing(false)
-    }
-  }
-
-  const formatTimestamp = (timestamp: string) => {
-    return new Date(timestamp).toLocaleString('en-US', {
-       month: 'short',
-       day: 'numeric',
-       hour: 'numeric',
-       minute: 'numeric',
-       second: 'numeric'
-    })
-  }
-
-  const getActionColorDetails = (action: string) => {
-    switch (action) {
-      case 'access':
-        return 'bg-cyan-500/20 text-cyan-400'
-      case 'scan':
-        return 'bg-blue-500/20 text-blue-400'
-      case 'upload':
-        return 'bg-green-500/20 text-green-400'
-      case 'reindex':
-        return 'bg-orange-500/20 text-orange-400'
-      case 'delete':
-        return 'bg-red-500/20 text-red-400'
-      default:
-        return 'bg-gray-500/20 text-gray-400'
     }
   }
 
@@ -222,121 +148,6 @@ export default function EventMonitoring({ eventId }: EventMonitoringProps) {
         </div>
       </div>
 
-      {/* Audit Logs Section */}
-      <div className="glass-card p-6 rounded-2xl">
-        <div className="flex flex-col sm:flex-row justify-between items-center gap-4 mb-6">
-          <h2 className="text-xl font-bold flex items-center gap-2">
-             <Search className="w-5 h-5" /> Audit Logs
-          </h2>
-          <div className="flex items-center gap-2 bg-white/5 px-3 py-1.5 rounded-lg border border-white/10 w-full sm:w-auto">
-            <label htmlFor="actionFilter" className="text-sm text-gray-400">Filter:</label>
-            <select
-              id="actionFilter"
-              value={actionFilter}
-              onChange={(e) => {
-                setActionFilter(e.target.value)
-                setPage(1)
-              }}
-              className="bg-transparent border-none text-sm text-white focus:ring-0 cursor-pointer w-full"
-            >
-              <option value="admin_only" className="bg-black">Admin Only</option>
-              <option value="" className="bg-black">All Activity</option>
-              <option value="guest_only" className="bg-black">Guest Only</option>
-              <option value="system_only" className="bg-black">System (automated)</option>
-              <option value="access" className="bg-black">Access</option>
-              <option value="scan" className="bg-black">Scan</option>
-              <option value="upload" className="bg-black">Upload</option>
-              <option value="reindex" className="bg-black">Reindex</option>
-              <option value="delete" className="bg-black">Delete</option>
-            </select>
-          </div>
-        </div>
-
-        {isLoadingLogs ? (
-          <div className="flex justify-center p-8">
-             <Loader2 className="w-6 h-6 animate-spin text-white" />
-          </div>
-        ) : auditLogs.length === 0 ? (
-          <div className="text-center text-gray-500 p-8">
-            No audit logs found
-          </div>
-        ) : (
-          <>
-            {/* Vertical scroll cap so a page full of rows doesn't
-                stretch the section off-screen. Combined with the
-                10-row per-page limit and Previous/Next pagination
-                below, the section stays compact while still letting
-                ops scroll within the page if they want to skim. */}
-            <div className="overflow-x-auto overflow-y-auto max-h-[420px] rounded-lg border border-white/5">
-              <table className="w-full text-left text-sm">
-                <thead className="sticky top-0 bg-black/40 backdrop-blur-sm">
-                  <tr className="border-b border-white/10 text-gray-400">
-                    <th className="pb-3 pt-3 pl-2 font-medium">Timestamp</th>
-                    <th className="pb-3 pt-3 font-medium">Actor</th>
-                    <th className="pb-3 pt-3 font-medium">Action</th>
-                    <th className="pb-3 pt-3 font-medium">Details</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                  {auditLogs.map((log) => (
-                    <tr key={log.log_id} className="hover:bg-white/5 transition-colors">
-                      <td className="py-3 pl-2 text-gray-300 whitespace-nowrap">
-                        {formatTimestamp(log.timestamp)}
-                      </td>
-                      <td className="py-3">
-                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                           log.actor_type === 'admin'
-                             ? 'bg-purple-500/20 text-purple-300'
-                             : log.actor_type === 'system'
-                               ? 'bg-amber-500/20 text-amber-300'
-                               : 'bg-gray-500/20 text-gray-300'
-                        }`}>
-                          {log.actor_type}
-                        </span>
-                      </td>
-                      <td className="py-3">
-                        <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wider ${getActionColorDetails(log.action)}`}>
-                          {log.action}
-                        </span>
-                      </td>
-                      <td className="py-3 text-gray-400 font-mono text-xs break-all pr-2">
-                        {log.metadata && Object.keys(log.metadata).length > 0 ? (
-                          <span>{JSON.stringify(log.metadata)}</span>
-                        ) : (
-                          <span className="opacity-50">-</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Pagination */}
-            {total > logsPerPage && (
-              <div className="flex justify-center items-center gap-2 mt-6 pt-4 border-t border-white/10">
-                <button
-                  onClick={() => setPage(page - 1)}
-                  disabled={page === 1}
-                  className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  Previous
-                </button>
-                <span className="px-4 py-2 text-sm text-gray-400">
-                  Page {page} of {Math.ceil(total / logsPerPage)}
-                </span>
-                <button
-                  onClick={() => setPage(page + 1)}
-                  disabled={page >= Math.ceil(total / logsPerPage)}
-                  className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  Next
-                </button>
-              </div>
-            )}
-          </>
-        )}
-      </div>
     </div>
   )
 }

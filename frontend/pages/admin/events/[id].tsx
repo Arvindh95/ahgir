@@ -10,8 +10,7 @@ import { eventService, EventDetails } from '@/lib/events'
 import { useToast } from '@/hooks/useToast'
 import api from '@/lib/api'
 import { getErrorMessage } from '@/lib/errors'
-import UpgradeModal from '@/components/UpgradeModal'
-import { Loader2, ArrowLeft, Image as ImageIcon, Trash2, Calendar, Link as LinkIcon, Download, Clock, QrCode, Copy, Pencil, Save, MapPin, Upload, Zap } from 'lucide-react'
+import { Loader2, ArrowLeft, Image as ImageIcon, Trash2, Calendar, Link as LinkIcon, Download, Clock, QrCode, Copy, Pencil, Save, MapPin, Upload } from 'lucide-react'
 import Image from 'next/image'
 import EventDetailSkeleton from '@/components/skeletons/EventDetailSkeleton'
 import Breadcrumbs from '@/components/Breadcrumbs'
@@ -35,7 +34,6 @@ export default function EventDetailsPage() {
   const [coverImageUrl, setCoverImageUrl] = useState<string | null>(null)
   const [isSavingDetails, setIsSavingDetails] = useState(false)
   const [isUploadingCover, setIsUploadingCover] = useState(false)
-  const [showUpgradeModal, setShowUpgradeModal] = useState(false)
   const coverInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -399,57 +397,8 @@ export default function EventDetailsPage() {
             </div>
           </div>
 
-          {/* Plan & Usage */}
-          {(() => {
-            const userTier = event.user_tier
-            const effectiveLimit = event.tier?.photo_limit || userTier?.max_photos_per_event || 25
-            const tierLabel = userTier?.tier_name || 'free'
-            const canUpgrade = tierLabel !== 'pro' && tierLabel !== 'custom'
-            return (
-              <div className="glass-card p-6 rounded-2xl mb-8">
-                <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
-                  <Zap className="w-5 h-5 text-yellow-400" /> Plan & Usage
-                </h2>
-                <div className="flex flex-wrap items-center gap-3 mb-4">
-                  <span className={`px-3 py-1 rounded-full text-sm font-bold uppercase ${
-                    tierLabel === 'free' ? 'bg-gray-500/20 text-gray-400' :
-                    tierLabel === 'starter' ? 'bg-blue-500/20 text-blue-400' :
-                    tierLabel === 'pro' ? 'bg-purple-500/20 text-purple-400' :
-                    'bg-yellow-500/20 text-yellow-400'
-                  }`}>
-                    {tierLabel}
-                  </span>
-                  {userTier && (
-                    <span className="text-sm text-gray-400">
-                      {userTier.events_used} / {userTier.max_events} events
-                    </span>
-                  )}
-                  <span className="text-sm text-gray-400">
-                    {event.status.total_photos} / {effectiveLimit} photos
-                    {event.tier ? ' (override)' : ''}
-                  </span>
-                </div>
-                <div className="w-full bg-white/10 rounded-full h-3 mb-4">
-                  <div
-                    className={`h-3 rounded-full transition-all ${
-                      (event.status.total_photos / effectiveLimit) > 0.9 ? 'bg-red-500' :
-                      (event.status.total_photos / effectiveLimit) > 0.7 ? 'bg-yellow-500' :
-                      'bg-blue-500'
-                    }`}
-                    style={{ width: `${Math.min(100, (event.status.total_photos / effectiveLimit) * 100)}%` }}
-                  />
-                </div>
-                {canUpgrade && (
-                  <button
-                    onClick={() => setShowUpgradeModal(true)}
-                    className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-blue-700 transition-colors text-sm"
-                  >
-                    <Zap className="w-4 h-4" /> Upgrade Plan
-                  </button>
-                )}
-              </div>
-            )
-          })()}
+          {/* Plan & Usage moved to /admin/plan so the per-event page stays
+              focused on what's happening to this event right now. */}
 
           {/* Event Monitoring Dashboard */}
           <EventMonitoring eventId={event.event_id} />
@@ -471,11 +420,6 @@ export default function EventDetailsPage() {
           onCancel={() => setShowDeleteConfirm(false)}
         />
 
-        <UpgradeModal
-          open={showUpgradeModal}
-          currentTier={event.user_tier?.tier_name || 'free'}
-          onClose={() => setShowUpgradeModal(false)}
-        />
       </AdminLayout>
     </ProtectedRoute>
   )

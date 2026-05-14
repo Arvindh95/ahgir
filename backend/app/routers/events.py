@@ -2153,14 +2153,9 @@ async def get_event_analytics(
         func.extract('hour', AuditLog.timestamp)
     ).all()
 
-    # Recent activity (last 10) — owner + guest + system only. Superadmin
-    # reads on someone else's event were previously surfacing in the
-    # customer-facing feed (logged as actor_type='admin' but with a
-    # different actor_id than the event owner). Filter those out.
-    recent = db.query(AuditLog).filter(
-        AuditLog.event_id == event_uuid,
-        OWNER_OR_GUEST,
-    ).order_by(AuditLog.timestamp.desc()).limit(10).all()
+    # `recent_activity` field used to live on this response; it's gone now
+    # that the customer-facing event page no longer renders an activity
+    # feed. Audit logs are still queryable from /admin/audit-log for ops.
 
     return {
         "total_scans": total_scans,
@@ -2175,14 +2170,4 @@ async def get_event_analytics(
             {"hour": int(row.hour), "count": row.count}
             for row in peak_hours
         ],
-        "recent_activity": [
-            {
-                "id": str(log.id),
-                "action": log.action,
-                "actor_type": log.actor_type,
-                "timestamp": to_utc_iso(log.timestamp),
-                "metadata": log.metadata_
-            }
-            for log in recent
-        ]
     }
