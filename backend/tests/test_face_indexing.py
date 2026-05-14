@@ -77,8 +77,16 @@ def create_mock_compreface_add_response():
     }
 
 
+@pytest.mark.requires_external_services
 class TestFaceIndexingWorker:
-    """Tests for face indexing worker with CompreFace."""
+    """Tests for face indexing worker with CompreFace.
+
+    These tests call storage_service.get_photo against a real MinIO
+    endpoint and don't mock it — they need the docker-compose MinIO
+    stack running. CI excludes them via
+    `-m "not requires_external_services"`; run locally with the
+    docker stack to exercise them.
+    """
 
     @patch('app.workers.face_indexer_compreface._run_async')
     def test_index_photo_with_faces(self, mock_run_async, test_db):

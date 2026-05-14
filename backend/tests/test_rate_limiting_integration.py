@@ -113,10 +113,16 @@ def test_image_with_face(test_db, test_event):
     return image
 
 
+@pytest.mark.requires_external_services
 def test_rate_limit_on_scan_endpoint(client, guest_session, test_image_with_face):
     """
     Test that rate limiting is enforced on the /scan endpoint.
-    
+
+    Hits the real /scan handler which calls CompreFace; without that
+    upstream available, the new upstream-error handling returns 502
+    instead of a normal match response. Skipped in CI; run locally
+    against the docker-compose stack to exercise the limiter.
+
     Requirements: 10.1, 10.2
     """
     # Create a dummy base64 image (1x1 pixel)

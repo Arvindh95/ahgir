@@ -86,8 +86,11 @@ jobs:
         working-directory: backend
         # Skip the hypothesis property suites — they're slow and run
         # separately on a nightly cron if/when we add one.
+        # Also skip tests that need a real MinIO / CompreFace; CI only
+        # spins up Postgres + Redis as service containers.
         run: |
           pytest -q \
+            -m "not requires_external_services" \
             --ignore=tests/test_face_matching_properties.py \
             --ignore=tests/test_face_indexing_properties.py
 
