@@ -26,7 +26,13 @@ jobs:
             cd /opt/ahgir
             git fetch origin main
             git checkout main
-            git pull --ff-only origin main
+            # `git reset --hard` instead of `git pull --ff-only` so the
+            # deploy never fails because the VPS working tree drifted
+            # (manual ssh ops mid-deploy, a docker container that wrote
+            # to a mounted file, etc.). The deploy rebuilds images from
+            # scratch anyway, so the working tree is throwaway between
+            # runs — nothing of value lives in it that isn't in git.
+            git reset --hard origin/main
 
             COMPOSE_FILES="-f docker-compose.yml -f docker-compose.vps.yml --env-file .env.production"
 
