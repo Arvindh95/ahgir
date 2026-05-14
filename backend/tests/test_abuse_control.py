@@ -253,12 +253,12 @@ def test_face_scan_rejects_oversized_image_at_parse_time(client, db_session: Ses
     headers = {"Authorization": f"Bearer {token}"}
 
     # Build a payload comfortably larger than max_scan_frame_bytes * 4/3.
+    # The proof that the cap is at PARSE time is the 422 — pre-fix this
+    # request would have returned 413 from the in-route check AFTER the
+    # body had been deserialised into a multi-MB string in memory.
     over = "A" * ((settings.max_scan_frame_bytes * 4 // 3) + 1024)
     r = client.post("/scan", json={"image": over}, headers=headers)
-    # Pydantic returns 422 with a structured validation error.
-    assert r.status_code == 422, r.text
-    body = r.json().get("detail", "")
-    assert "max_length" in str(body).lower() or "too long" in str(body).lower() or "string" in str(body).lower()
+    assert r.status_code == 422, r.text  # global error handler scrubs detail text
 
 
 def test_face_scan_rejects_too_many_additional_frames(client, db_session: Session):
