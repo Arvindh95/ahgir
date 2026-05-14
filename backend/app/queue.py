@@ -1,6 +1,8 @@
 """RQ queue configuration and job management."""
 
 import logging
+from typing import Optional
+
 import redis
 from rq import Queue, Retry
 from app.config import settings
@@ -175,6 +177,29 @@ def enqueue_subscription_processor() -> str:
         job_timeout='10m',
         failure_ttl='7d',
         result_ttl='7d',
+    )
+    return job.id
+
+
+def enqueue_event_reindex(event_id: str, actor_user_id: Optional[str] = None) -> str:
+    """Enqueue an asynchronous full-event reindex.
+
+    The HTTP /events/{id}/reindex endpoint used to do the work inline,
+    which could exceed the HTTP timeout on large events. This helper
+    pushes the same work onto the retention queue (lower priority than
+    face_indexing, so an in-progress reindex doesn't starve the
+    per-image jobs the reindex itself enqueues).
+    """
+    from typing import Optional as _Optional  # local alias for the def signature
+    from app.workers.reindex_event import reindex_event_task
+    job = retention_queue.enqueue(
+        reindex_event_task,
+        event_id,
+        actor_user_id,
+        job_id=f"reindex:{event_id}",
+        job_timeout="30m",
+        failure_ttl="7d",
+        result_ttl="7d",
     )
     return job.id
 

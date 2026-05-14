@@ -1827,68 +1827,47 @@ async def reindex_event(
 
     ensure_event_mutable(event, current_user)
 
-    # Get all images for this event
-    images = db.query(Image).filter(Image.event_id == event_uuid).all()
+    # Enqueue the work onto the retention queue and return 202 instead
+    # of doing the loop inline. Pre-fix the endpoint did per-face HTTP
+    # calls (10s timeout each) for CompreFace subject deletion plus
+    # per-image enqueue calls, which could exceed the HTTP timeout on
+    # events with several hundred photos. The async worker takes its
+    # time and the frontend already polls /events/{id} for per-image
+    # status to show progress.
+    from app.queue import enqueue_event_reindex
+    image_count_at_request = (
+        db.query(func.count(Image.id)).filter(Image.event_id == event_uuid).scalar() or 0
+    )
+    try:
+        reindex_job_id = enqueue_event_reindex(str(event_uuid), str(current_user.id))
+    except Exception as e:
+        logger.error(f"Failed to enqueue reindex task for event {event_uuid}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not queue reindex right now. Please try again in a moment.",
+        )
 
-    # Delete old CompreFace subjects BEFORE re-registering to avoid duplicates
-    old_faces = db.query(Face).filter(Face.event_id == event_uuid).all()
-    if old_faces and settings.compreface_api_key:
-        deleted_cf = 0
-        for face in old_faces:
-            if face.compreface_subject_id:
-                try:
-                    resp = httpx.delete(
-                        f"{get_compreface_url()}/api/v1/recognition/faces",
-                        headers={"x-api-key": settings.compreface_api_key},
-                        params={"subject": face.compreface_subject_id},
-                        timeout=10.0,
-                    )
-                    if resp.status_code in (200, 404):
-                        deleted_cf += 1
-                except Exception as e:
-                    logger.warning(f"Failed to delete CompreFace subject {face.compreface_subject_id}: {e}")
-        logger.info(f"Cleaned {deleted_cf}/{len(old_faces)} CompreFace subjects for event {event_uuid}")
-
-    # Reset all image statuses to pending
-    for image in images:
-        image.status = 'pending'
-        image.face_count = 0
-        image.indexed_at = None
-
-    # Delete all existing face records for this event
-    db.query(Face).filter(Face.event_id == event_uuid).delete()
-
-    db.commit()
-
-    # Invalidate guest-facing caches so guests don't see results from the
-    # pre-reindex face database. They'd otherwise see stale match lists or
-    # stale share thumbnails until the cache TTL expires.
-    cache_delete_pattern(f"gallery:{event_uuid}:*")
-    cache_delete_pattern(f"share:{event_uuid}:*")
-    
-    # Queue all images for reprocessing
-    queued_count = 0
-    for image in images:
-        try:
-            enqueue_face_indexing(str(image.id))
-            queued_count += 1
-        except Exception as e:
-            # Log error but continue queuing other images
-            logger.error(f"Failed to queue image {image.id} for reindexing: {e}")
-    
-    # Log reindex action
+    # Log the request itself. The actual work is audited by the worker
+    # when it finishes (action='reindex_completed').
     log_action(
         db=db,
         event_id=event_uuid,
         actor_type='admin',
         actor_id=current_user.id,
         action='reindex',
-        metadata={'queued_count': queued_count}
+        metadata={
+            'image_count_at_request': image_count_at_request,
+            'reindex_job_id': reindex_job_id,
+            'async': True,
+        }
     )
-    
+
     return ReindexResponse(
-        message="Reindexing started",
-        queued_count=queued_count
+        message=(
+            "Reindexing started in the background. Photo statuses will update "
+            "as images are reprocessed."
+        ),
+        queued_count=image_count_at_request,
     )
 
 

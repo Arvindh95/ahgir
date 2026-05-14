@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 from app.utils.time import to_utc_iso
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 logger = logging.getLogger(__name__)
 from sqlalchemy.orm import Session
@@ -82,22 +82,52 @@ class PlatformStats(BaseModel):
 
 @router.get("/users")
 async def list_users(
+    q: Optional[str] = None,
+    sort: str = Query("created_at_desc", pattern="^(created_at_desc|created_at_asc|email_asc|email_desc)$"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     current_user: User = Depends(get_superadmin_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    """List all users with event counts and tier info."""
-    users = db.query(User).order_by(User.created_at.desc()).all()
+    """List users with event counts + tier info. Paginated + searchable.
 
-    # Batch load user tiers and event counts
-    user_tiers = {
-        ut.user_id: ut
-        for ut in db.query(UserTier).all()
-    }
-    event_counts = dict(
-        db.query(Event.owner_user_id, func.count(Event.id))
-        .group_by(Event.owner_user_id)
-        .all()
-    )
+    Pre-fix this loaded every user / every UserTier / every Event into
+    memory and returned the whole list. Fine for tens of users; fatal
+    once the platform grows. Tier maps are now scoped to the current
+    page so the join cost is bounded.
+    """
+    base = db.query(User)
+    if q:
+        like = f"%{q.lower()}%"
+        base = base.filter(User.email.ilike(like))
+
+    total = base.with_entities(func.count(User.id)).scalar() or 0
+
+    # Sort. Sorting by email is useful for search-result review.
+    sort_clause = {
+        "created_at_desc": User.created_at.desc(),
+        "created_at_asc": User.created_at.asc(),
+        "email_asc": User.email.asc(),
+        "email_desc": User.email.desc(),
+    }[sort]
+    users = base.order_by(sort_clause).limit(limit).offset(offset).all()
+
+    # Tier + event count lookups are scoped to the page's user ids
+    # only, so the cost stays bounded regardless of platform size.
+    page_user_ids = [u.id for u in users]
+    user_tiers = {}
+    event_counts = {}
+    if page_user_ids:
+        user_tiers = {
+            ut.user_id: ut
+            for ut in db.query(UserTier).filter(UserTier.user_id.in_(page_user_ids)).all()
+        }
+        event_counts = dict(
+            db.query(Event.owner_user_id, func.count(Event.id))
+            .filter(Event.owner_user_id.in_(page_user_ids))
+            .group_by(Event.owner_user_id)
+            .all()
+        )
 
     result = []
     for user in users:
@@ -116,7 +146,12 @@ async def list_users(
             created_at=to_utc_iso(user.created_at)
         ))
 
-    return {"users": [u.model_dump() for u in result]}
+    return {
+        "users": [u.model_dump() for u in result],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @router.patch("/users/{user_id}")
@@ -485,26 +520,69 @@ async def get_global_analytics(
 
 @router.get("/events")
 async def admin_list_events(
+    q: Optional[str] = None,
+    event_status: Optional[str] = Query(None, pattern="^(active|frozen|expired)$"),
+    owner_id: Optional[str] = None,
+    sort: str = Query("created_at_desc", pattern="^(created_at_desc|created_at_asc|name_asc|name_desc)$"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     current_user: User = Depends(get_superadmin_user),
     db: Session = Depends(get_db),
 ):
-    """List all events with owner tier info (superadmin only)."""
-    events = (
+    """List events with owner tier info (superadmin only). Paginated.
+
+    Pre-fix this loaded every Event + every UserTier + every EventTier
+    + every Image (for photo counts) into memory in one shot. Now the
+    listing is scoped to the page; tier/photo-count joins are bounded
+    to the current page's events.
+    """
+    base = (
         db.query(Event, User.email)
         .outerjoin(User, Event.owner_user_id == User.id)
-        .order_by(Event.created_at.desc())
-        .all()
     )
+    if q:
+        like = f"%{q.lower()}%"
+        base = base.filter((Event.name.ilike(like)) | (Event.slug.ilike(like)))
+    if event_status:
+        base = base.filter(Event.status == event_status)
+    if owner_id:
+        try:
+            base = base.filter(Event.owner_user_id == uuid.UUID(owner_id))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid owner_id")
 
-    photo_counts = dict(
-        db.query(Image.event_id, func.count(Image.id))
-        .group_by(Image.event_id)
-        .all()
-    )
+    total = base.with_entities(func.count(Event.id)).scalar() or 0
 
-    # Load user tiers and event-level overrides
-    user_tiers = {ut.user_id: ut for ut in db.query(UserTier).all()}
-    event_tiers = {et.event_id: et for et in db.query(EventTier).all()}
+    sort_clause = {
+        "created_at_desc": Event.created_at.desc(),
+        "created_at_asc": Event.created_at.asc(),
+        "name_asc": Event.name.asc(),
+        "name_desc": Event.name.desc(),
+    }[sort]
+    rows = base.order_by(sort_clause).limit(limit).offset(offset).all()
+
+    page_event_ids = [event.id for event, _ in rows]
+    page_owner_ids = list({event.owner_user_id for event, _ in rows})
+
+    photo_counts = {}
+    user_tiers = {}
+    event_tiers = {}
+    if page_event_ids:
+        photo_counts = dict(
+            db.query(Image.event_id, func.count(Image.id))
+            .filter(Image.event_id.in_(page_event_ids))
+            .group_by(Image.event_id)
+            .all()
+        )
+        event_tiers = {
+            et.event_id: et
+            for et in db.query(EventTier).filter(EventTier.event_id.in_(page_event_ids)).all()
+        }
+    if page_owner_ids:
+        user_tiers = {
+            ut.user_id: ut
+            for ut in db.query(UserTier).filter(UserTier.user_id.in_(page_owner_ids)).all()
+        }
 
     def _row(event, email):
         ut = user_tiers.get(event.owner_user_id)
@@ -522,7 +600,12 @@ async def admin_list_events(
             "created_at": to_utc_iso(event.created_at),
         }
 
-    return {"events": [_row(event, email) for event, email in events]}
+    return {
+        "events": [_row(event, email) for event, email in rows],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @router.delete("/events/{event_id}")

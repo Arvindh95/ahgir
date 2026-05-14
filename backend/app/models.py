@@ -150,7 +150,7 @@ class GuestSession(Base):
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"
-    
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     # event_id is nullable: superadmin actions (user updates, tier changes,
     # retried jobs) aren't tied to a specific event. FK is SET NULL so audit
@@ -165,12 +165,39 @@ class AuditLog(Base):
     # Relationships
     event = relationship("Event", back_populates="audit_logs")
 
-    # Constraints
+    # Constraints + composite indexes for analytics paths.
     __table_args__ = (
         # 'system' covers automated jobs (retention sweep, scheduled
         # downgrades) so they're not attributed to a human admin in the
         # audit viewer. Migration c6e7f8g9h0 brings the prod DB in line.
         CheckConstraint("actor_type IN ('admin', 'guest', 'system')", name="valid_actor_type"),
+        # Global "scans by day", "downloads count", etc. filter by
+        # action + timestamp. Without this index those queries did a
+        # full scan of audit_logs once the table grew past a few
+        # thousand rows. DESC ordering on timestamp matches every
+        # callsite that wants the recent window first.
+        Index(
+            "idx_audit_action_timestamp",
+            "action", "timestamp",
+            postgresql_ops={"timestamp": "DESC"},
+        ),
+        # Per-event analytics ("scans-by-day for this event") filter by
+        # event_id AND action AND timestamp. The composite covers the
+        # common ordering of predicates so Postgres can use the index
+        # for both the equality match and the range scan.
+        Index(
+            "idx_audit_event_action_timestamp",
+            "event_id", "action", "timestamp",
+            postgresql_ops={"timestamp": "DESC"},
+        ),
+        # actor_type filters (admin_only / guest_only / system_only in
+        # the audit viewer, and unique-guest analytics) get their own
+        # index because they're orthogonal to action.
+        Index(
+            "idx_audit_actor_type_timestamp",
+            "actor_type", "timestamp",
+            postgresql_ops={"timestamp": "DESC"},
+        ),
         {"schema": None}
     )
 

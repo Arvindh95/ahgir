@@ -124,8 +124,12 @@ export default function SuperadminPage() {
     }
   }
 
+  // limit=200 keeps current behavior while the platform is small.
+  // Once we exceed 200 users / events, swap these calls for proper
+  // pagination + search controls (backend already supports `q`,
+  // `sort`, `limit`, `offset`).
   const loadUsers = async () => {
-    const response = await api.get('/admin/users')
+    const response = await api.get('/admin/users?limit=200')
     setUsers(response.data.users)
   }
 
@@ -143,7 +147,7 @@ export default function SuperadminPage() {
 
   const loadEvents = async () => {
     try {
-      const response = await api.get('/admin/events')
+      const response = await api.get('/admin/events?limit=200')
       setEvents(response.data.events || [])
     } catch { }
   }
