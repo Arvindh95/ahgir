@@ -356,6 +356,7 @@ async def reindex_event_images(event_slug: str, status_filter: str = "no_faces",
     Returns:
         dict: Number of images queued for reindexing
     """
+    from app.cache import cache_delete_pattern
     from app.database import SessionLocal
     from app.queue import enqueue_face_indexing
 
@@ -397,6 +398,13 @@ async def reindex_event_images(event_slug: str, status_filter: str = "no_faces",
             queued.append({"id": str(img.id), "filename": img.filename})
 
         db.commit()
+
+        # Same cache invalidation as the regular /events/{id}/reindex
+        # path. Without it, guests can keep seeing match lists / share
+        # previews built against the pre-reindex face database until the
+        # TTL expires.
+        cache_delete_pattern(f"gallery:{event_id}:*")
+        cache_delete_pattern(f"share:{event_id}:*")
 
         return {
             "event_slug": event_slug,

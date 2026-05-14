@@ -1089,7 +1089,21 @@ async def get_share_info(
     if not event or event.status != 'active':
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
 
-    image = db.query(Image.id).filter(Image.id == image_uuid, Image.event_id == event_uuid).first()
+    # Restrict to guest-visible statuses, matching the gallery filter.
+    # Without this an attacker who knew an image UUID could trigger a
+    # public signed URL via the share endpoint even when the image was
+    # in 'pending' (mid-upload), 'failed' (worker errored), or had been
+    # bounced back to 'pending' by a reindex — none of which should be
+    # publicly previewable.
+    image = (
+        db.query(Image.id)
+        .filter(
+            Image.id == image_uuid,
+            Image.event_id == event_uuid,
+            Image.status.in_(('indexed', 'no_faces')),
+        )
+        .first()
+    )
     if not image:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
 
