@@ -193,6 +193,17 @@ def validate_production_secrets():
         errors.append("SMTP_USERNAME or SMTP_PASSWORD is unset")
     elif _looks_like_placeholder(settings.smtp_username) or _looks_like_placeholder(settings.smtp_password):
         errors.append("SMTP_USERNAME or SMTP_PASSWORD still contains a placeholder")
+    # SMTP_FROM_EMAIL has a default in the code, but docker-compose.yml
+    # can override it with the empty string. Without a usable From
+    # address, transactional delivery fails (every relay rejects
+    # MAIL FROM:<>) even though SMTP_USERNAME / SMTP_PASSWORD pass.
+    from_email = getattr(settings, "smtp_from_email", "") or ""
+    if not from_email.strip():
+        errors.append("SMTP_FROM_EMAIL is unset")
+    elif _looks_like_placeholder(from_email):
+        errors.append("SMTP_FROM_EMAIL still contains a placeholder (e.g. noreply@yourdomain.com)")
+    elif "@" not in from_email or from_email.startswith("@") or from_email.endswith("@"):
+        errors.append(f"SMTP_FROM_EMAIL does not look like an email address: {from_email}")
     if not settings.compreface_api_key:
         errors.append("COMPREFACE_API_KEY is unset")
     elif _looks_like_placeholder(settings.compreface_api_key):

@@ -238,6 +238,52 @@ def ensure_event_mutable(event: Event, current_user: User) -> None:
         },
     )
 
+
+def audit_superadmin_cross_tenant(
+    db: Session,
+    current_user: User,
+    event: Event,
+    operation: str,
+) -> None:
+    """Log a row when a superadmin reaches into an event they do not own.
+
+    Privacy policy / operator-access disclosure promises that
+    superadmin-side reads + writes against other users' events are
+    recorded. Action-specific audit rows (upload, delete, reindex)
+    already capture WHO did WHAT for write endpoints, but cross-tenant
+    READS (event details, audit log, analytics, photo list) were
+    previously invisible. This helper closes that gap.
+
+    No-op when the actor is the event owner: that's a regular owner
+    action and the per-endpoint audit row (where one exists) is the
+    canonical record.
+
+    commit=True so read endpoints (which never reach a db.commit() of
+    their own) actually persist the audit row. Write endpoints already
+    have their own log_action calls inside the transaction they commit,
+    so calling this helper from a write endpoint will produce a second
+    audit row — that's intentional: the operation-specific row records
+    WHAT happened, this row records WHERE the privilege boundary was
+    crossed.
+    """
+    if not current_user.is_superadmin:
+        return
+    if event.owner_user_id == current_user.id:
+        return
+    log_action(
+        db=db,
+        event_id=event.id,
+        actor_type='admin',
+        actor_id=current_user.id,
+        action='superadmin_cross_tenant_access',
+        metadata={
+            'operation': operation,
+            'event_owner_user_id': str(event.owner_user_id),
+            'event_name': event.name,
+            'event_slug': event.slug,
+        },
+    )
+
 # Endpoints
 @router.post("", response_model=EventResponse, status_code=status.HTTP_201_CREATED)
 async def create_event(
@@ -470,6 +516,9 @@ async def get_event(
             detail="You do not have permission to access this event"
         )
 
+    # Audit superadmin cross-tenant read.
+    audit_superadmin_cross_tenant(db, current_user, event, "get_event_details")
+
     # Get status information
     status_info = get_event_status(event.id, db)
     
@@ -685,6 +734,9 @@ async def get_event_qr_code(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have permission to access this event"
         )
+
+    # Audit superadmin cross-tenant read.
+    audit_superadmin_cross_tenant(db, current_user, event, "get_event_qr_code")
 
     # Generate guest link and QR code
     guest_link = f"{settings.frontend_url}/e/{event.slug}"
@@ -1168,6 +1220,9 @@ async def list_photos(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have permission to access this event"
         )
+
+    # Audit superadmin cross-tenant read.
+    audit_superadmin_cross_tenant(db, current_user, event, "list_event_photos")
 
     # Build query
     query = db.query(Image).filter(Image.event_id == event_uuid)
@@ -1789,6 +1844,11 @@ async def get_audit_logs(
             detail="You do not have permission to access logs for this event"
         )
 
+    # Audit superadmin cross-tenant read. Especially important for the
+    # audit log endpoint itself — surfaces "superadmin opened this
+    # event's audit trail" in the audit trail.
+    audit_superadmin_cross_tenant(db, current_user, event, "get_event_audit_logs")
+
     # Build query
     query = db.query(AuditLog).filter(AuditLog.event_id == event_uuid)
 
@@ -1942,6 +2002,9 @@ async def get_event_analytics(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
     if not current_user.is_superadmin and event.owner_user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
+
+    # Audit superadmin cross-tenant read.
+    audit_superadmin_cross_tenant(db, current_user, event, "get_event_analytics")
 
     # Total scans
     total_scans = db.query(func.count(AuditLog.id)).filter(

@@ -110,14 +110,45 @@ async def register(user_data: UserRegister, request: Request, db: Session = Depe
         # as harmless idempotency).
         db.rollback()
 
-    # Queue verification email in background
+    # Queue verification email in background, with a synchronous fallback
+    # if Redis / RQ is unreachable. Pre-fix the handler logged the
+    # enqueue failure and still returned 201 with "check your email" —
+    # the user got a confirmation but no email ever arrived. The dual
+    # strategy keeps the happy path fast (background queue) while making
+    # the failure mode either deliver via sync send or surface a clean
+    # 503 so the client can retry.
     token = create_verification_token(new_user.id)
     verify_url = f"{settings.frontend_url}/admin/verify?token={token}"
+    delivered = False
     try:
         enqueue_email(new_user.email, verify_url)
+        delivered = True
     except Exception as e:
-        # Log but don't fail registration
         logger.error(f"Failed to enqueue verification email: {e}")
+        try:
+            from app.email import send_verification_email
+            send_verification_email(new_user.email, verify_url)
+            delivered = True
+            logger.warning(
+                f"Verification email for {new_user.email} fell back to synchronous send "
+                f"(enqueue path unavailable)"
+            )
+        except Exception as sync_e:
+            logger.error(
+                f"Synchronous verification-email fallback also failed for {new_user.email}: {sync_e}"
+            )
+
+    if not delivered:
+        # The user row is committed, so they CAN log in via /resend-verify
+        # once email delivery is back. 503 signals a transient problem
+        # rather than a permanent registration failure.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Account created but the verification email could not be sent. "
+                "Please use 'Resend verification email' shortly."
+            ),
+        )
 
     return UserResponse(
         user_id=str(new_user.id),
@@ -236,10 +267,32 @@ async def resend_verification(
 
     token = create_verification_token(user.id)
     verify_url = f"{settings.frontend_url}/admin/verify?token={token}"
+    delivered = False
     try:
         enqueue_email(user.email, verify_url)
+        delivered = True
     except Exception as e:
         logger.error(f"Failed to enqueue verification email: {e}")
+        try:
+            from app.email import send_verification_email
+            send_verification_email(user.email, verify_url)
+            delivered = True
+            logger.warning(
+                f"Resend-verify for {user.email} fell back to synchronous send"
+            )
+        except Exception as sync_e:
+            logger.error(
+                f"Synchronous resend-verify fallback also failed for {user.email}: {sync_e}"
+            )
+
+    if not delivered:
+        # The user explicitly clicked Resend — they're entitled to a
+        # clear failure signal if delivery isn't happening, rather than
+        # the misleading GENERIC "we sent it" response.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Email service temporarily unavailable. Please try again in a moment.",
+        )
 
     return GENERIC
 
@@ -263,6 +316,23 @@ async def forgot_password(request_data: ForgotPasswordRequest, request: Request,
             enqueue_password_reset_email(user.email, reset_url)
         except Exception as e:
             logger.error(f"Failed to enqueue password reset email: {e}")
+            # Synchronous fallback so a Redis outage doesn't silently
+            # withhold reset links. Unlike /register and /resend-verify,
+            # we do NOT raise 503 even if BOTH paths fail — that would
+            # leak whether the email exists (enumeration). We log
+            # alerting-loud instead so ops can intervene.
+            try:
+                from app.email import send_password_reset_email
+                send_password_reset_email(user.email, reset_url)
+                logger.warning(
+                    f"Forgot-password for {user.email} fell back to synchronous send"
+                )
+            except Exception as sync_e:
+                logger.critical(
+                    f"BOTH async + sync password-reset delivery failed for "
+                    f"{user.email}: enqueue={e}; sync={sync_e}. User cannot "
+                    f"recover their account without manual intervention."
+                )
 
     return MessageResponse(message="If the email is registered, a password reset link has been sent")
 

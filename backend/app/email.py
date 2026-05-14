@@ -1,4 +1,5 @@
 import smtplib
+import ssl
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
@@ -8,15 +9,27 @@ from app.retry_utils import exponential_backoff
 
 @exponential_backoff(max_retries=2, base_delay=2.0, exceptions=(smtplib.SMTPException, OSError, ConnectionError))
 def send_email(to_email: str, subject: str, html_body: str) -> None:
-    """Send an HTML email via SMTP."""
+    """Send an HTML email via SMTP with a CERT-verifying STARTTLS upgrade.
+
+    Pre-fix, ``server.starttls()`` was called with no SSL context. On
+    this Python runtime that defaults to ``ssl.CERT_NONE``, so the
+    server certificate was never validated and a network MITM between
+    us and the SMTP relay could intercept SMTP credentials and any
+    verification / password-reset links travelling over the upgraded
+    channel. ``ssl.create_default_context()`` builds a context that
+    verifies the peer cert against the system CA bundle and applies
+    a secure cipher / protocol selection.
+    """
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"] = settings.smtp_from_email
     msg["To"] = to_email
     msg.attach(MIMEText(html_body, "html"))
 
+    tls_context = ssl.create_default_context()
+
     with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as server:
-        server.starttls()
+        server.starttls(context=tls_context)
         server.login(settings.smtp_username, settings.smtp_password)
         server.sendmail(settings.smtp_from_email, to_email, msg.as_string())
 
