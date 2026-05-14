@@ -2,6 +2,7 @@
 Retention policy background job for cleaning up expired events
 """
 import logging
+import uuid
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import func, text
@@ -201,49 +202,129 @@ def process_overdue_subscriptions(db: Session = None):
             db.close()
 
 
-def requeue_stale_pending_indexing(db: Session = None, stale_minutes: int = 30) -> int:
-    """Re-enqueue images stuck at status='pending' for longer than stale_minutes.
+def requeue_stale_pending_indexing(
+    db: Session = None,
+    stale_minutes: int = 30,
+    enqueue_failed_lookback_days: int = 7,
+) -> int:
+    """Re-enqueue images that never made it through indexing for a
+    transient queueing reason. Covers two distinct stuck-state cases:
 
-    The upload path commits the Image row before enqueueing the face-indexing
-    job. If the enqueue fails (Redis down, worker not running, transient
-    network issue), the upload handler now flips the image to 'failed' —
-    but a process crash BETWEEN commit-image and enqueue would still leave a
-    pending row with no job. This reconciler is the backstop for that case.
+    1. ``status='pending'`` for longer than ``stale_minutes``. This is
+       the original case: upload committed the Image row, then the
+       process crashed before reaching the enqueue call, so the row
+       sits in pending with no RQ job pointing at it.
+
+    2. ``status='failed'`` where the failure was specifically the
+       upload-time enqueue (not the worker). The upload path now logs
+       ``action='index_enqueue_failed'`` audit rows when Redis is
+       briefly unreachable. We pick those rows up by audit-log join,
+       reset the image to 'pending', and re-enqueue. Without this,
+       a one-second Redis hiccup at upload time left photos
+       permanently failed and required a manual admin reindex.
+
+    Genuine indexing failures (the worker actually ran and CompreFace
+    raised, image was corrupted, etc.) do NOT have an
+    ``index_enqueue_failed`` audit row, so they are NOT retried here.
+    That stays a manual admin call.
 
     Run alongside the other daily jobs.
     """
-    from app.queue import enqueue_face_indexing  # local import: avoids worker-import cycles
+    # Local imports avoid worker-import cycles and keep AuditLog import
+    # local to this function so the rest of retention_policy doesn't
+    # pull it.
+    from app.queue import enqueue_face_indexing, JobAlreadyQueued
+    from app.models import AuditLog
 
     db_provided = db is not None
     if not db_provided:
         db = SessionLocal()
 
-    cutoff = datetime.utcnow() - timedelta(minutes=stale_minutes)
+    now = datetime.utcnow()
+    pending_cutoff = now - timedelta(minutes=stale_minutes)
+    audit_cutoff = now - timedelta(days=enqueue_failed_lookback_days)
     requeued = 0
+    skipped_already_queued = 0
 
     try:
-        stale = (
+        # Case 1: pending for too long
+        pending_stuck = (
             db.query(Image)
             .filter(
                 Image.status == "pending",
-                Image.uploaded_at < cutoff,
+                Image.uploaded_at < pending_cutoff,
             )
             .all()
         )
 
-        for img in stale:
+        # Case 2: failed with an index_enqueue_failed audit row in the
+        # recent past. metadata_ is a JSONB column; image_id is stored
+        # there at audit-write time.
+        enqueue_failed_audit_rows = (
+            db.query(AuditLog)
+            .filter(
+                AuditLog.action == "index_enqueue_failed",
+                AuditLog.timestamp >= audit_cutoff,
+            )
+            .all()
+        )
+        failed_image_uuids: list[uuid.UUID] = []
+        for row in enqueue_failed_audit_rows:
+            meta = row.metadata_ or {}
+            image_id_str = meta.get("image_id") if isinstance(meta, dict) else None
+            if not image_id_str:
+                continue
             try:
-                enqueue_face_indexing(str(img.id))
-                requeued += 1
-                logger.info(
-                    f"Requeued stale pending image {img.id} "
-                    f"(uploaded {img.uploaded_at}, age >= {stale_minutes} min)"
-                )
-            except Exception as e:
-                logger.error(f"Failed to requeue stale pending image {img.id}: {e}")
+                failed_image_uuids.append(uuid.UUID(str(image_id_str)))
+            except (TypeError, ValueError):
                 continue
 
-        logger.info(f"Stale-pending reconciler complete. Requeued {requeued} image(s).")
+        failed_to_recover: list[Image] = []
+        if failed_image_uuids:
+            failed_to_recover = (
+                db.query(Image)
+                .filter(
+                    Image.id.in_(failed_image_uuids),
+                    Image.status == "failed",
+                )
+                .all()
+            )
+
+        targets = pending_stuck + failed_to_recover
+
+        for img in targets:
+            try:
+                enqueue_face_indexing(str(img.id))
+                # Reset failed -> pending so the worker treats it as a
+                # fresh attempt rather than skipping under its already-
+                # indexed / already-failed guard.
+                if img.status == "failed":
+                    img.status = "pending"
+                requeued += 1
+                logger.info(
+                    f"Requeued image {img.id} "
+                    f"(was status={img.status}, uploaded {img.uploaded_at})"
+                )
+            except JobAlreadyQueued:
+                # Another reconciler tick already enqueued this image,
+                # or the deterministic job hash is still in flight from
+                # an earlier run. No need to re-enqueue.
+                skipped_already_queued += 1
+                logger.info(f"Skipping image {img.id} — job already queued")
+                continue
+            except Exception as e:
+                logger.error(f"Failed to requeue image {img.id}: {e}")
+                continue
+
+        if requeued and not db_provided:
+            db.commit()
+        elif requeued:
+            db.flush()
+
+        logger.info(
+            f"Stale-pending reconciler complete. Requeued {requeued} image(s); "
+            f"{skipped_already_queued} skipped (already queued)."
+        )
         return requeued
     finally:
         if not db_provided:

@@ -21,25 +21,59 @@ retention_queue = Queue('retention', connection=redis_conn)
 default_queue = Queue('default', connection=redis_conn)
 
 
+class JobAlreadyQueued(Exception):
+    """Raised when enqueue_face_indexing sees the deterministic job_id is
+    already present in the queue / registries. Callers can catch this to
+    treat duplicate enqueue attempts as a no-op rather than an error.
+    """
+
+
 def enqueue_face_indexing(image_id: str) -> str:
     """
     Enqueue a face indexing job for an image using CompreFace.
+
+    The job id is deterministic (``index:{image_id}``) so two callers
+    racing on the same image — typically the upload path plus the
+    daily stale-pending reconciler — don't both stuff the queue with
+    duplicate jobs. Within the ``failure_ttl`` / ``result_ttl`` window
+    after a previous run, RQ rejects the duplicate. Outside that
+    window the prior hash has aged out and a fresh enqueue is allowed,
+    which is what we want for genuinely re-running an image days
+    later.
 
     Args:
         image_id: UUID string of the image to process
 
     Returns:
         Job ID string
+
+    Raises:
+        JobAlreadyQueued: a job with this deterministic id is already
+            queued / started / deferred / scheduled. Callers should
+            usually log + skip rather than escalate.
     """
-    job = face_indexing_queue.enqueue(
-        index_photo_compreface,
-        image_id,
-        settings.compreface_api_key,
-        job_timeout='10m',
-        failure_ttl='1d',
-        result_ttl='1h',
-        retry=Retry(max=3, interval=[30, 120, 300])
-    )
+    job_id = f"index:{image_id}"
+    try:
+        job = face_indexing_queue.enqueue(
+            index_photo_compreface,
+            image_id,
+            settings.compreface_api_key,
+            job_id=job_id,
+            job_timeout='10m',
+            failure_ttl='1d',
+            result_ttl='1h',
+            retry=Retry(max=3, interval=[30, 120, 300])
+        )
+    except Exception as e:
+        # RQ versions differ on the exception class for duplicate job_id.
+        # Matching on the message is portable enough; if the error is
+        # unrelated, re-raise so the caller still sees the real failure.
+        message = str(e).lower()
+        if "already exists" in message or "duplicate" in message:
+            raise JobAlreadyQueued(
+                f"Face-indexing job for image {image_id} already queued"
+            ) from e
+        raise
 
     return job.id
 

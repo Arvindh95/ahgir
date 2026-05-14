@@ -125,12 +125,21 @@ services:
       redis:
         condition: service_healthy
     working_dir: /app
-    # 86400s = 24h. First run delayed 60s so the worker is up.
+    # First run delayed 60s so the worker is up. On success we sleep 24h
+    # before the next attempt. On failure (Redis briefly unreachable, DB
+    # blip, etc.) we retry in 1h instead of letting the failure silently
+    # mask retention + subscription downgrade + stale-pending recovery
+    # for an entire day. The compose loop's previous pattern of
+    # `python ... || echo` swallowed the exit code and always waited 24h.
     command: >
       /bin/sh -c "sleep 60;
       while true; do
-        PYTHONPATH=/app python scripts/run_retention.py || echo 'retention enqueue failed';
-        sleep 86400;
+        if PYTHONPATH=/app python scripts/run_retention.py; then
+          sleep 86400;
+        else
+          echo 'retention enqueue failed (exit non-zero); retrying in 1h';
+          sleep 3600;
+        fi;
       done"
     restart: unless-stopped
 
