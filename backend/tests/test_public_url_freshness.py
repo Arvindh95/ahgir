@@ -182,84 +182,89 @@ def test_share_rejects_frozen_event(client, db_session: Session):
 # ─── P3 #3: superadmin debug reindex invalidates caches ───────────────────
 
 
-def test_debug_reindex_invalidates_gallery_and_share_caches(client, db_session: Session, monkeypatch):
+def test_debug_reindex_invalidates_gallery_and_share_caches(monkeypatch):
     """Same cache-clear behaviour as the regular /events/{id}/reindex
     path. Pre-fix the debug path left stale guest payloads in Redis
     until TTL expired.
-    """
-    # We mock cache_delete_pattern so the test doesn't need a real
-    # Redis; the assertion is just "the patterns we expect were
-    # requested". The endpoint imports the function lazily inside the
-    # function body, so patch the source module.
-    seen_patterns: list[str] = []
 
-    def _record(pattern: str) -> int:
+    The HTTP endpoint uses ``SessionLocal()`` directly (not the
+    request-scoped ``get_db`` dependency), so the standard client+
+    db_session test fixtures point at different databases. We bypass
+    the HTTP layer and invoke the function directly with a mocked
+    SessionLocal so the assertion is solely about the cache invalidation
+    behaviour, not the route plumbing.
+    """
+    import asyncio
+    from app.routers import health as health_module
+
+    seen_patterns: list[str] = []
+    enqueued: list[str] = []
+
+    def _record_pattern(pattern: str) -> int:
         seen_patterns.append(pattern)
         return 0
 
-    # Patch at health.py's namespace because that's where the symbol is
-    # bound (module-level import). Patching app.cache.cache_delete_pattern
-    # would not affect references already captured at import time.
-    monkeypatch.setattr("app.routers.health.cache_delete_pattern", _record)
-    # health.py also imports enqueue_face_indexing lazily inside the
-    # function body; stub at the source so the lazy import picks it up.
-    monkeypatch.setattr("app.queue.enqueue_face_indexing", lambda *_a, **_k: "test-job-id")
-
-    # Make a superadmin user, log in, and seed an event with one
-    # no_faces image (the default status_filter on the debug endpoint).
-    superadmin = User(
-        email=f"super-{uuid.uuid4().hex}@example.com",
-        password_hash=hash_password("x"),
-        is_verified=True,
-        is_superadmin=True,
+    monkeypatch.setattr(
+        "app.routers.health.cache_delete_pattern", _record_pattern
     )
-    db_session.add(superadmin)
-    db_session.commit()
-    db_session.refresh(superadmin)
-
-    event = Event(
-        owner_user_id=superadmin.id,
-        slug=f"sa-{uuid.uuid4().hex[:8]}",
-        name="Debug reindex event",
-        retention_days=30,
-        status="active",
-    )
-    db_session.add(event)
-    db_session.commit()
-    db_session.refresh(event)
-
-    image = Image(
-        event_id=event.id,
-        filename="x.jpg",
-        file_hash=uuid.uuid4().hex + uuid.uuid4().hex,
-        size_bytes=100,
-        width=100,
-        height=100,
-        status="no_faces",
-        face_count=0,
-    )
-    db_session.add(image)
-    db_session.commit()
-
-    # /health/debug/reindex/{slug} requires the get_superadmin_user
-    # dependency. We need a JWT for the superadmin.
-    from app.auth import create_access_token
-    from datetime import timedelta as _td
-
-    token = create_access_token(
-        data={"sub": str(superadmin.id), "email": superadmin.email},
-        expires_delta=_td(hours=1),
+    monkeypatch.setattr(
+        "app.queue.enqueue_face_indexing",
+        lambda image_id: enqueued.append(image_id) or "test-job-id",
     )
 
-    r = client.post(
-        f"/health/debug/reindex/{event.slug}",
-        headers={"Authorization": f"Bearer {token}"},
+    event_uuid = uuid.uuid4()
+    image_uuid = uuid.uuid4()
+
+    # Fake SessionLocal — returns an object that responds to .execute()
+    # the way SQLAlchemy's Connection does. The endpoint only needs:
+    #   1. a SELECT for events.id by slug
+    #   2. a SELECT for images by event_id + status
+    #   3. an UPDATE images SET status='pending' ...
+    #   4. a DELETE FROM faces WHERE image_id = ...
+    #   5. commit + close
+    class _Row:
+        def __init__(self, **kw):
+            self.__dict__.update(kw)
+
+    class _FakeDb:
+        def __init__(self):
+            self.executed: list[str] = []
+
+        def execute(self, stmt, params=None):  # noqa: ARG002
+            sql = str(stmt).lower()
+            self.executed.append(sql)
+
+            class _Result:
+                def fetchone(_self):
+                    if "from events where slug" in sql:
+                        return _Row(id=event_uuid)
+                    return None
+
+                def fetchall(_self):
+                    if "from images" in sql:
+                        return [_Row(id=image_uuid, filename="x.jpg")]
+                    return []
+
+            return _Result()
+
+        def commit(self):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("app.database.SessionLocal", _FakeDb)
+
+    result = asyncio.run(
+        health_module.reindex_event_images("doesnt-matter-slug", status_filter="no_faces", _superadmin=object())
     )
-    assert r.status_code == 200, r.text
+
+    assert result["queued_count"] == 1
+    assert str(image_uuid) in enqueued
 
     expected = {
-        f"gallery:{event.id}:*",
-        f"share:{event.id}:*",
+        f"gallery:{event_uuid}:*",
+        f"share:{event_uuid}:*",
     }
     actual = set(seen_patterns)
     missing = expected - actual
