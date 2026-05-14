@@ -137,7 +137,7 @@ export default function ScanResults() {
                 </h2>
                 <p className="text-gray-400 text-sm mt-1">Sorted by match confidence</p>
                 <p className="text-gray-500 text-xs mt-1">
-                  AI matching is approximate — a few of your photos may be missed and the occasional lookalike may slip in.
+                  Heads up: your event doppelganger may have crashed the party.
                 </p>
               </div>
             </div>
