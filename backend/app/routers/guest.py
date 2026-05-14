@@ -131,7 +131,12 @@ class EventInfoResponse(BaseModel):
     cover_image_url: Optional[str] = None
 
 class PasscodeRequest(BaseModel):
-    passcode: str = None
+    # Cap passcode length at parse time so a huge JSON payload can't
+    # reach bcrypt / hash compare. Event passcodes are typed by hand
+    # and never long; 256 chars is generous and well below anything
+    # that risks DoS on the hash compare. Optional so the auth flow
+    # can still 401 with "Passcode required" for events that have one.
+    passcode: Optional[str] = Field(default=None, max_length=256)
 
 class EventTokenResponse(BaseModel):
     event_token: str

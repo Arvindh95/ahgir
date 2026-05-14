@@ -8,7 +8,7 @@ from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 import uuid
 import qrcode
 from io import BytesIO
@@ -575,9 +575,20 @@ async def get_event(
     )
 
 class EventUpdate(BaseModel):
-    slug: Optional[str] = None
-    location: Optional[str] = None
-    description: Optional[str] = None
+    # Mirror the bounds from EventCreate so PATCH validation doesn't
+    # silently accept oversized values that EventCreate would have
+    # rejected. Pre-fix a 100 KB description sailed past Pydantic and
+    # only failed at the DB column length, returning 500 instead of
+    # a clean 422.
+    slug: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    location: Optional[str] = Field(default=None, max_length=500)
+    description: Optional[str] = Field(default=None, max_length=2000)
+
+    # extra='forbid' rejects unknown keys at parse time. Pre-fix a
+    # typo in the client payload (e.g. `descripton`) was silently
+    # ignored and the server responded "Event updated" — but nothing
+    # changed. The 422 with the offending field name is far clearer.
+    model_config = ConfigDict(extra='forbid')
 
     @field_validator("slug")
     @classmethod
@@ -1397,7 +1408,11 @@ async def delete_photo(
 
 
 class BulkPhotoRequest(BaseModel):
-    image_ids: List[str]
+    # Mirror BulkDownloadRequest (guest path): cap list length at
+    # parse time so a multi-million-element body can't deserialise
+    # into memory in the first place. The bound matches the guest
+    # bulk download max.
+    image_ids: List[str] = Field(..., min_length=1, max_length=settings.bulk_download_max_images)
 
 
 @router.post("/{event_id}/photos/bulk-delete")
@@ -1426,12 +1441,24 @@ async def bulk_delete_photos(
     if not request.image_ids:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No images specified")
 
+    # Reject malformed UUIDs up-front instead of silently dropping
+    # them. Pre-fix the client got a partial-success "deleted N"
+    # response when half their list was typos, with no way to know
+    # which IDs were ignored. Guest /download-zip already enforces
+    # this; the admin path should match.
     image_uuids = []
+    invalid_ids = []
     for img_id in request.image_ids:
         try:
             image_uuids.append(uuid.UUID(img_id))
-        except ValueError:
-            pass
+        except (ValueError, TypeError):
+            invalid_ids.append(img_id)
+    if invalid_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid image ID(s): {invalid_ids[:5]}"
+            + (f" (+{len(invalid_ids) - 5} more)" if len(invalid_ids) > 5 else ""),
+        )
 
     images = db.query(Image).filter(Image.event_id == event_uuid, Image.id.in_(image_uuids)).all()
     deleted = 0
@@ -1503,12 +1530,24 @@ async def admin_download_zip(
     if not request.image_ids:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No images specified")
 
+    # Reject malformed UUIDs up-front instead of silently dropping
+    # them. Pre-fix the client got a partial-success "deleted N"
+    # response when half their list was typos, with no way to know
+    # which IDs were ignored. Guest /download-zip already enforces
+    # this; the admin path should match.
     image_uuids = []
+    invalid_ids = []
     for img_id in request.image_ids:
         try:
             image_uuids.append(uuid.UUID(img_id))
-        except ValueError:
-            pass
+        except (ValueError, TypeError):
+            invalid_ids.append(img_id)
+    if invalid_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid image ID(s): {invalid_ids[:5]}"
+            + (f" (+{len(invalid_ids) - 5} more)" if len(invalid_ids) > 5 else ""),
+        )
 
     images = db.query(Image).filter(Image.event_id == event_uuid, Image.id.in_(image_uuids)).all()
     if not images:

@@ -3,13 +3,37 @@
 import logging
 import traceback
 from typing import Union
-from fastapi import Request, status
+from fastapi import HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from sqlalchemy.exc import SQLAlchemyError
 from minio.error import S3Error
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.exceptions import PicUrException, RateLimitExceededError
+
+
+# Map HTTP status codes to stable error codes so the frontend has a
+# machine-readable hook in addition to the human message. New codes
+# can be added without breaking older clients — they still see the
+# generic `error.message` field.
+_HTTP_STATUS_TO_CODE = {
+    400: "BAD_REQUEST",
+    401: "UNAUTHORIZED",
+    403: "FORBIDDEN",
+    404: "NOT_FOUND",
+    405: "METHOD_NOT_ALLOWED",
+    409: "CONFLICT",
+    410: "GONE",
+    413: "PAYLOAD_TOO_LARGE",
+    415: "UNSUPPORTED_MEDIA_TYPE",
+    422: "VALIDATION_ERROR",
+    429: "RATE_LIMITED",
+    500: "INTERNAL_SERVER_ERROR",
+    502: "BAD_GATEWAY",
+    503: "SERVICE_UNAVAILABLE",
+    504: "GATEWAY_TIMEOUT",
+}
 
 # Configure logging
 logging.basicConfig(
@@ -193,6 +217,57 @@ async def s3_exception_handler(request: Request, exc: S3Error) -> JSONResponse:
     )
 
 
+async def http_exception_handler(
+    request: Request, exc: StarletteHTTPException
+) -> JSONResponse:
+    """Wrap FastAPI / Starlette HTTPException into the standard
+    {error: {code, message}} response shape.
+
+    Pre-fix, the global error contract was only enforced for
+    PicUrException / RequestValidationError / SQLAlchemyError, but
+    routers raise direct HTTPException heavily. Those flowed through
+    the default Starlette handler which only emits {"detail": "..."}.
+    The frontend errors.ts parser reads err.response.data.error.message
+    and falls back to a generic "Failed to X" string, so the actionable
+    backend message was lost on every direct-HTTPException path.
+
+    detail may be either a string (the common case) or a dict (some
+    routers return structured detail like
+    {"code": "EVENT_NOT_ACTIVE", "message": "...", "event_status": ...}).
+    For dicts we surface the inner code/message if present, otherwise
+    serialise the dict as the message.
+    """
+    code = _HTTP_STATUS_TO_CODE.get(exc.status_code, "HTTP_ERROR")
+    details = None
+    if isinstance(exc.detail, dict):
+        # Structured detail — surface its own code/message if present.
+        inner_code = exc.detail.get("code")
+        message = exc.detail.get("message") or str(exc.detail)
+        if inner_code:
+            code = str(inner_code)
+        # Pass remaining keys through as details for clients that want them.
+        details = {k: v for k, v in exc.detail.items() if k not in ("code", "message")}
+        if not details:
+            details = None
+    elif exc.detail is None:
+        message = "An error occurred"
+    else:
+        message = str(exc.detail)
+
+    response = create_error_response(
+        code=code,
+        message=message,
+        status_code=exc.status_code,
+        details=details,
+        request=request,
+    )
+    # Preserve any headers the original exception set (e.g., Retry-After).
+    if getattr(exc, "headers", None):
+        for k, v in exc.headers.items():
+            response.headers[k] = v
+    return response
+
+
 async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """
     Handle all other unhandled exceptions.
@@ -235,6 +310,10 @@ def register_error_handlers(app):
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
     app.add_exception_handler(SQLAlchemyError, sqlalchemy_exception_handler)
     app.add_exception_handler(S3Error, s3_exception_handler)
+    # Wrap Starlette's HTTPException (which FastAPI's HTTPException
+    # inherits from) so router-raised HTTPExceptions get the same
+    # {error: {code, message}} envelope the rest of the system uses.
+    app.add_exception_handler(StarletteHTTPException, http_exception_handler)
     app.add_exception_handler(Exception, generic_exception_handler)
-    
+
     logger.info("Error handlers registered successfully")
