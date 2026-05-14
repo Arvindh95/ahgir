@@ -412,16 +412,25 @@ class TestBackgroundProcessingFlow:
             db_session.add(image)
         db_session.commit()
         
-        # Step 1: Trigger Reindex
-        with patch('app.routers.events.enqueue_face_indexing') as mock_queue:
+        # Step 1: Trigger Reindex. The endpoint now enqueues an async
+        # task; run the task body in-place so the assertions below
+        # can verify the end-state without waiting on RQ.
+        from app.workers.reindex_event import reindex_event_task
+
+        with patch('app.queue.enqueue_event_reindex') as mock_enqueue, \
+             patch('app.workers.reindex_event.enqueue_face_indexing') as mock_face_queue:
+            mock_enqueue.return_value = "fake-reindex-job-id"
             response = client.post(f"/events/{event.id}/reindex", headers=headers)
             assert response.status_code == 200
             result = response.json()
             assert result["queued_count"] == 3
-            
-            # Verify all images were queued
-            assert mock_queue.call_count == 3
-        
+            assert mock_enqueue.call_count == 1
+
+            # Simulate the worker pulling the job off the queue.
+            reindex_event_task(str(event.id), str(admin.id), db=db_session)
+            # The worker is what enqueues per-image face_indexing jobs.
+            assert mock_face_queue.call_count == 3
+
         # Step 2: Verify Status Reset
         images = db_session.query(Image).filter(Image.event_id == event.id).all()
         for image in images:

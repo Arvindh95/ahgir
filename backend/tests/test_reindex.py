@@ -67,28 +67,41 @@ class TestReindexEndpoint:
         
         test_db.commit()
         
-        # Call reindex endpoint
-        response = client.post(
-            f"/events/{event.id}/reindex",
-            headers={"Authorization": f"Bearer {token}"}
-        )
-        
-        # Verify response
+        # Call reindex endpoint. The endpoint now enqueues an async
+        # task instead of doing the work inline; manually run the task
+        # body so the assertions below can verify the end-state.
+        from unittest.mock import patch
+        from app.workers.reindex_event import reindex_event_task
+
+        with patch("app.queue.enqueue_event_reindex") as fake_enqueue:
+            fake_enqueue.return_value = "fake-reindex-job-id"
+            response = client.post(
+                f"/events/{event.id}/reindex",
+                headers={"Authorization": f"Bearer {token}"}
+            )
+
+        # Endpoint replied as soon as the task was enqueued.
         assert response.status_code == 200
         data = response.json()
-        assert data['message'] == "Reindexing started"
-        assert data['queued_count'] == 3, "Should queue all 3 images"
-        
+        assert "Reindex" in data['message']
+        assert data['queued_count'] == 3, "Should report 3 images at request time"
+        fake_enqueue.assert_called_once_with(str(event.id), str(user.id))
+
+        # Simulate the worker running. It uses its own SessionLocal in
+        # prod; pass the test session so the rollback fixture stays
+        # consistent.
+        reindex_event_task(str(event.id), str(user.id), db=test_db)
+
         # Verify all images reset to pending
         test_db.refresh(images[0])
         test_db.refresh(images[1])
         test_db.refresh(images[2])
-        
+
         for image in images:
             assert image.status == 'pending', "All images should be reset to pending"
             assert image.face_count == 0, "Face count should be reset to 0"
             assert image.indexed_at is None, "indexed_at should be reset to None"
-        
+
         # Verify all face records deleted
         face_count = test_db.query(Face).filter(Face.event_id == event.id).count()
         assert face_count == 0, "All face records should be deleted"
