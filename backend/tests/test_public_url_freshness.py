@@ -63,14 +63,27 @@ def _seed(db: Session, *, event_status: str = "active", image_status: str = "ind
 
 
 def _signed_path(event_id: uuid.UUID, image_id: uuid.UUID, photo_type: str = "thumb") -> str:
+    """Build the request path TestClient should hit.
+
+    generate_signed_url returns the full URL the BROWSER hits — i.e.,
+    ``{frontend_url}/api/photos/...``. The ``/api/`` prefix is stripped
+    by Caddy / nginx at the edge before reaching the FastAPI app, so
+    the in-process route is mounted at ``/photos/...``. For TestClient
+    we need to peel both the host AND the /api segment.
+    """
+    from urllib.parse import urlparse
+
     full = generate_signed_url(event_id=event_id, image_id=image_id, photo_type=photo_type)
-    # generate_signed_url returns the full URL incl. host; we just need
-    # the path + query for TestClient.
     if full.startswith("http"):
-        from urllib.parse import urlparse
         u = urlparse(full)
-        return f"{u.path}?{u.query}"
-    return full
+        path = u.path
+        query = u.query
+    else:
+        # Unexpected — generate_signed_url normally returns http(s)://...
+        path, _, query = full.partition("?")
+    if path.startswith("/api/"):
+        path = path[4:]  # /api/photos/... -> /photos/...
+    return f"{path}?{query}" if query else path
 
 
 # ─── P3 #1: signed photo URL rejects frozen event ────────────────────────
@@ -184,9 +197,12 @@ def test_debug_reindex_invalidates_gallery_and_share_caches(client, db_session: 
         seen_patterns.append(pattern)
         return 0
 
-    monkeypatch.setattr("app.cache.cache_delete_pattern", _record)
-    # health.py also imports enqueue_face_indexing; stub it so we don't
-    # actually push jobs to a real RQ queue during tests.
+    # Patch at health.py's namespace because that's where the symbol is
+    # bound (module-level import). Patching app.cache.cache_delete_pattern
+    # would not affect references already captured at import time.
+    monkeypatch.setattr("app.routers.health.cache_delete_pattern", _record)
+    # health.py also imports enqueue_face_indexing lazily inside the
+    # function body; stub at the source so the lazy import picks it up.
     monkeypatch.setattr("app.queue.enqueue_face_indexing", lambda *_a, **_k: "test-job-id")
 
     # Make a superadmin user, log in, and seed an event with one

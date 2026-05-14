@@ -9,6 +9,7 @@ from sqlalchemy import text
 from minio.error import S3Error
 import redis
 
+from app.cache import cache_delete_pattern
 from app.database import engine
 from app.storage import storage_service
 from app.rate_limiter import redis_client
@@ -356,7 +357,6 @@ async def reindex_event_images(event_slug: str, status_filter: str = "no_faces",
     Returns:
         dict: Number of images queued for reindexing
     """
-    from app.cache import cache_delete_pattern
     from app.database import SessionLocal
     from app.queue import enqueue_face_indexing
 
