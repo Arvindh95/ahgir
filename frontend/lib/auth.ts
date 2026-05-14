@@ -4,12 +4,7 @@ export interface User {
   user_id: string
   email: string
   is_superadmin?: boolean
-}
-
-export interface LoginResponse {
-  access_token: string
-  token_type: string
-  expires_in: number
+  created_at?: string
 }
 
 export interface RegisterResponse {
@@ -18,16 +13,19 @@ export interface RegisterResponse {
   created_at: string
 }
 
+// Auth tokens live in HttpOnly cookies that JS can't read. This service
+// can no longer answer "are you logged in?" synchronously — it must ask
+// the backend. Callers cache the user in React state.
 export const authService = {
   async register(email: string, password: string): Promise<RegisterResponse> {
     const response = await api.post('/auth/register', { email, password })
     return response.data
   },
 
-  async login(email: string, password: string): Promise<LoginResponse> {
+  async login(email: string, password: string): Promise<User> {
+    // Backend sets picur_session cookie on success and returns the user.
+    // No token in the response body — there is nothing for us to store.
     const response = await api.post('/auth/login', { email, password })
-    const { access_token } = response.data
-    localStorage.setItem('token', access_token)
     return response.data
   },
 
@@ -36,12 +34,25 @@ export const authService = {
     return response.data
   },
 
-  logout() {
-    localStorage.removeItem('token')
+  async logout(): Promise<void> {
+    // Clears the cookie server-side. Idempotent; safe to call even if
+    // the session was already gone.
+    try {
+      await api.post('/auth/logout')
+    } catch {
+      // Network glitch on logout shouldn't trap the user on the page;
+      // they're trying to leave anyway.
+    }
   },
 
-  isAuthenticated(): boolean {
-    return !!localStorage.getItem('token')
+  async isAuthenticated(): Promise<boolean> {
+    // Async because the source of truth is now the server, not JS.
+    try {
+      await api.get('/auth/me')
+      return true
+    } catch {
+      return false
+    }
   },
 
   async verifyEmail(token: string): Promise<{ message: string }> {

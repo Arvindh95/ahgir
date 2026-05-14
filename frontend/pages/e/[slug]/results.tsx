@@ -37,8 +37,12 @@ export default function ScanResults() {
   const { shareMenuPhoto, setShareMenuPhoto, handleShare } = useShare(eventName)
 
   useEffect(() => {
-    const token = localStorage.getItem('event_token')
-    if (!token) {
+    // Auth lives in the picur_event cookie now (JS can't read it). The
+    // proxy for "did this user just authenticate?" is the per-tab
+    // sessionStorage that [slug].tsx writes after /auth succeeds. If a
+    // user lands here without it, they get bounced through entry → scan.
+    const storedEventName = sessionStorage.getItem('event_name')
+    if (!storedEventName) {
       router.push(`/e/${slug}`)
       return
     }
@@ -58,9 +62,7 @@ export default function ScanResults() {
       return
     }
 
-    const storedEventName = localStorage.getItem('event_name')
-    const storedAllowDownloads = localStorage.getItem('allow_downloads')
-
+    const storedAllowDownloads = sessionStorage.getItem('allow_downloads')
     setEventName(storedEventName || '')
     setAllowDownloads(storedAllowDownloads === 'true')
   }, [slug, router])

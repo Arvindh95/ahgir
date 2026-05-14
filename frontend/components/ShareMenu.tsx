@@ -23,7 +23,7 @@ export function ShareMenu({ imageId, eventName, onClose }: ShareMenuProps) {
   }, [onClose])
 
   const getShareUrl = () => {
-    const eventId = localStorage.getItem('event_id')
+    const eventId = sessionStorage.getItem('event_id')
     return `${window.location.origin}/share/${eventId}/${imageId}`
   }
 
@@ -73,7 +73,7 @@ export function useShare(eventName: string) {
   const [shareMenuPhoto, setShareMenuPhoto] = useState<string | null>(null)
 
   const handleShare = async (imageId: string) => {
-    const eventId = localStorage.getItem('event_id')
+    const eventId = sessionStorage.getItem('event_id')
     const shareUrl = `${window.location.origin}/share/${eventId}/${imageId}`
     const shareText = `Check out this photo from ${eventName}!`
 

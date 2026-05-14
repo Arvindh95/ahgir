@@ -2,8 +2,7 @@ import base64
 import hashlib
 from datetime import datetime, timedelta
 from typing import Optional
-from fastapi import Depends, HTTPException
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import Depends, HTTPException, Request, Response
 from jose import JWTError, jwt
 import bcrypt
 from sqlalchemy.orm import Session
@@ -15,8 +14,89 @@ from app.config import settings
 from app.database import get_db
 from app.models import User
 
-# HTTP Bearer token scheme
-security = HTTPBearer()
+# Cookie names. Kept short + namespaced so they don't collide with anything
+# else served from picur.my (CSAI-OCR, future apps).
+SESSION_COOKIE = "picur_session"   # admin / event-owner JWT
+EVENT_COOKIE = "picur_event"       # guest event JWT
+
+
+def _cookie_kwargs(max_age: int) -> dict:
+    """Shared HttpOnly cookie settings.
+
+    httponly: not readable from JS — kills the XSS-exfil class.
+    secure: only sent over HTTPS in prod. Disabled in dev so localhost works.
+    samesite=strict: not sent on cross-site navigations; prevents CSRF.
+    """
+    secure = settings.environment == "production"
+    return dict(
+        max_age=max_age,
+        httponly=True,
+        secure=secure,
+        samesite="strict",
+        path="/",
+    )
+
+
+def set_session_cookie(response: Response, token: str) -> None:
+    """Attach the admin JWT as an HttpOnly cookie on the outgoing response."""
+    response.set_cookie(
+        key=SESSION_COOKIE,
+        value=token,
+        **_cookie_kwargs(max_age=settings.jwt_expiration_hours * 3600),
+    )
+
+
+def clear_session_cookie(response: Response) -> None:
+    response.delete_cookie(key=SESSION_COOKIE, path="/")
+
+
+def set_event_cookie(response: Response, token: str, max_age_seconds: int) -> None:
+    """Attach the guest event JWT as an HttpOnly cookie."""
+    response.set_cookie(
+        key=EVENT_COOKIE,
+        value=token,
+        **_cookie_kwargs(max_age=max_age_seconds),
+    )
+
+
+def clear_event_cookie(response: Response) -> None:
+    response.delete_cookie(key=EVENT_COOKIE, path="/")
+
+
+def _read_session_token(request: Request) -> Optional[str]:
+    """Cookie first, Authorization Bearer header as a fallback.
+
+    Production frontend code does not create Bearer tokens anymore — the
+    backend issues a picur_session HttpOnly cookie and JS can neither read
+    nor recreate it. The Authorization fallback exists so the legacy
+    pytest suite (which calls create_access_token() directly and attaches
+    a Bearer header) doesn't have to be rewritten end-to-end. It is also
+    a clean integration story if a future server-to-server API client
+    ever needs to authenticate without browser cookies.
+
+    The XSS-exfil concern that motivated the cookie migration is a
+    FRONTEND issue: an attacker can't extract a Bearer token from the
+    real app because the frontend no longer stores one anywhere reachable
+    from JS.
+    """
+    cookie_token = request.cookies.get(SESSION_COOKIE)
+    if cookie_token:
+        return cookie_token
+    auth_header = request.headers.get("authorization") or ""
+    if auth_header.lower().startswith("bearer "):
+        return auth_header[7:].strip() or None
+    return None
+
+
+def _read_event_token(request: Request) -> Optional[str]:
+    """Same cookie-first / Bearer-fallback policy as _read_session_token."""
+    cookie_token = request.cookies.get(EVENT_COOKIE)
+    if cookie_token:
+        return cookie_token
+    auth_header = request.headers.get("authorization") or ""
+    if auth_header.lower().startswith("bearer "):
+        return auth_header[7:].strip() or None
+    return None
 
 # Pydantic models
 def _normalize_email(v: str) -> str:
@@ -171,13 +251,23 @@ def decode_token(token: str) -> dict:
 
 # Dependency for getting current user from JWT
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: Session = Depends(get_db)
+    request: Request,
+    db: Session = Depends(get_db),
 ) -> User:
-    """Extract and validate JWT token, return current user"""
+    """Extract and validate JWT token from the picur_session cookie.
+
+    Token used to ride in the Authorization: Bearer header, with the
+    same JWT mirrored to localStorage by the frontend — readable by any
+    XSS payload on picur.my. The cookie variant is HttpOnly + Secure +
+    SameSite=Strict, so JS can't read it and the browser refuses to send
+    it on cross-site requests. CSRF is closed by the same SameSite=Strict
+    plus the X-Requested-With middleware check.
+    """
     from app.exceptions import InvalidTokenError, UserNotFoundError
-    
-    token = credentials.credentials
+
+    token = _read_session_token(request)
+    if not token:
+        raise InvalidTokenError()
 
     try:
         payload = decode_token(token)
@@ -213,19 +303,24 @@ async def get_current_user(
 
 # Dependency for validating event tokens
 async def get_event_from_token(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    request: Request,
     db: Session = Depends(get_db),
 ) -> EventTokenPayload:
-    """Extract and validate Event_Token. Verifies the JWT signature/expiry AND
-    looks up the GuestSession row so a deleted session or DB-side expiry takes
-    effect immediately, rather than waiting for the JWT to expire on its own.
+    """Extract and validate Event_Token from the picur_event cookie.
+
+    See get_current_user docstring for the same cookie/CSRF rationale.
+    Still verifies the JWT signature/expiry AND looks up the GuestSession
+    row so a revoked/deleted session takes effect immediately rather than
+    waiting for the JWT to expire on its own.
     """
     from app.exceptions import InvalidTokenError
     from app.models import GuestSession
     from datetime import datetime
     import uuid as _uuid
 
-    token = credentials.credentials
+    token = _read_event_token(request)
+    if not token:
+        raise InvalidTokenError()
 
     try:
         payload = decode_token(token)

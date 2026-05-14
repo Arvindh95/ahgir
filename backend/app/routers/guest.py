@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 
 from app.utils.time import to_utc_iso
 from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text, func
@@ -17,7 +17,10 @@ import queue
 import threading
 from io import BytesIO
 
-from app.auth import verify_password, create_event_token, get_event_from_token, EventTokenPayload
+from app.auth import (
+    verify_password, create_event_token, get_event_from_token, EventTokenPayload,
+    set_event_cookie, clear_event_cookie,
+)
 from app.database import get_db
 from app.models import Event, GuestSession, Face, Image
 from app.storage import storage_service, generate_signed_cover_url
@@ -141,7 +144,10 @@ class PasscodeRequest(BaseModel):
     passcode: Optional[str] = Field(default=None, max_length=256)
 
 class EventTokenResponse(BaseModel):
-    event_token: str
+    # Cookie-based: the JWT is set in the picur_event HttpOnly cookie on
+    # the response, not returned in the body. The body keeps the
+    # event_name / allow_downloads / expires_in fields so the frontend
+    # can render the event-bound pages without an extra round-trip.
     event_id: str
     event_name: str
     allow_downloads: bool
@@ -195,7 +201,8 @@ async def authenticate_guest(
     slug: str,
     passcode_data: PasscodeRequest,
     request: Request,
-    db: Session = Depends(get_db)
+    response: Response,
+    db: Session = Depends(get_db),
 ):
     """
     Authenticate a guest for an event
@@ -291,8 +298,13 @@ async def authenticate_guest(
         metadata={'event_slug': slug}
     )
     
+    # Issue the cookie. samesite=strict prevents cross-site sends; combined
+    # with the X-Requested-With CSRF middleware, no third-party page can
+    # cause the browser to do an authenticated action against /api on
+    # behalf of this guest.
+    set_event_cookie(response, event_token, max_age_seconds=3600)
+
     return EventTokenResponse(
-        event_token=event_token,
         event_id=str(event.id),
         event_name=event.name,
         allow_downloads=event.allow_downloads,

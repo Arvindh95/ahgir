@@ -8,8 +8,7 @@ import PhotoModal from '@/components/PhotoModal'
 import SelectionToolbar from '@/components/SelectionToolbar'
 import { useShare } from '@/components/ShareMenu'
 import { usePhotoActions } from '@/hooks/usePhotoActions'
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+import api from '@/lib/api'
 
 interface GalleryPhoto {
   image_id: string
@@ -37,29 +36,23 @@ export default function Gallery() {
   const { shareMenuPhoto, setShareMenuPhoto, handleShare } = useShare(eventName)
 
   const fetchGallery = async (pageNum: number, append = false) => {
-    const token = localStorage.getItem('event_token')
-    if (!token) {
-      router.push(`/e/${slug}`)
-      return
-    }
-
     try {
-      const res = await fetch(`${API_URL}/gallery?page=${pageNum}&limit=24`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
-      if (res.status === 401) {
-        localStorage.removeItem('event_token')
-        router.push(`/e/${slug}`)
-        return
-      }
-      if (!res.ok) throw new Error('Failed to load gallery')
-      const data = await res.json()
+      // Auth comes from the picur_event HttpOnly cookie via the api client.
+      const res = await api.get(`/gallery?page=${pageNum}&limit=24`)
+      const data = res.data
 
       setPhotos(prev => append ? [...prev, ...data.photos] : data.photos)
       setTotal(data.total)
       setEventName(data.event_name)
       setAllowDownloads(data.allow_downloads)
-    } catch (err) {
+    } catch (err: any) {
+      if (err.response?.status === 401) {
+        sessionStorage.removeItem('event_name')
+        sessionStorage.removeItem('event_id')
+        sessionStorage.removeItem('allow_downloads')
+        router.push(`/e/${slug}`)
+        return
+      }
       console.error('Gallery error:', err)
     } finally {
       setLoading(false)
@@ -69,8 +62,9 @@ export default function Gallery() {
 
   useEffect(() => {
     if (!slug) return
-    const token = localStorage.getItem('event_token')
-    if (!token) {
+    // Quick presence check on event_name (set by [slug].tsx after /auth).
+    // The authoritative check is the cookie, exercised by fetchGallery.
+    if (!sessionStorage.getItem('event_name')) {
       router.push(`/e/${slug}`)
       return
     }

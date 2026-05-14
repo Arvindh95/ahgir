@@ -12,16 +12,13 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
 
   useEffect(() => {
     const checkAuth = async () => {
-      if (!authService.isAuthenticated()) {
-        router.push('/admin/login')
-        return
-      }
-
+      // Source of truth is the picur_session cookie that lives server-side.
+      // Calling /auth/me both validates auth and warms the user state.
       try {
         await authService.getMe()
         setIsLoading(false)
-      } catch (error) {
-        authService.logout()
+      } catch {
+        await authService.logout()
         router.push('/admin/login')
       }
     }

@@ -1,8 +1,10 @@
 import logging
 import uuid as _uuid
 from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
+from app.auth import SESSION_COOKIE, EVENT_COOKIE
 from app.routers import admin, auth, events, guest, health, payments, photos
 from app.error_handler import register_error_handlers
 from app.config import settings, validate_production_secrets
@@ -31,6 +33,39 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
         return response
 
 
+# CSRF defense for cookie-auth: any state-changing request that arrives with
+# a session/event cookie attached MUST also carry the X-Requested-With
+# header. Browsers will never set that header on a vanilla form post or
+# <img>-style attacker-triggered request, so this rejects classic CSRF.
+# SameSite=Strict on the cookies is the primary defense; this is belt &
+# braces in case a browser ever ships with a buggier interpretation.
+_CSRF_EXEMPT_PREFIXES = ("/payments/webhook", "/stripe/webhook", "/health")
+
+
+class CsrfMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if request.method in ("GET", "HEAD", "OPTIONS"):
+            return await call_next(request)
+        path = request.url.path
+        if any(path.startswith(p) for p in _CSRF_EXEMPT_PREFIXES):
+            return await call_next(request)
+        # Only enforce on cookie-bearing requests. A pure Bearer client (e.g.
+        # an external integration that doesn't have the cookie) is not vulnerable
+        # to CSRF — the attacker can't make the browser attach a Bearer header.
+        # Today we only have first-party callers, but keeping the gate
+        # cookie-scoped means we don't break a future API-key integration.
+        has_auth_cookie = SESSION_COOKIE in request.cookies or EVENT_COOKIE in request.cookies
+        if not has_auth_cookie:
+            return await call_next(request)
+        if request.headers.get("x-requested-with") != "XMLHttpRequest":
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "CSRF check failed: missing X-Requested-With"},
+            )
+        return await call_next(request)
+
+
+app.add_middleware(CsrfMiddleware)
 app.add_middleware(RequestIdMiddleware)
 
 # CORS configuration

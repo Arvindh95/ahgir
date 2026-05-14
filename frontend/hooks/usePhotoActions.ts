@@ -53,12 +53,16 @@ export function usePhotoActions() {
     if (selectedIds.size === 0) return
     setDownloading(true)
     try {
-      const token = localStorage.getItem('event_token')
+      // Cookie auth: include credentials + the CSRF custom header that the
+      // backend's CsrfMiddleware demands on state-changing methods. We use
+      // raw fetch here (not the axios api client) because we need the
+      // response as a Blob, which fetch handles more cleanly.
       const response = await fetch(`${API_URL}/download-zip`, {
         method: 'POST',
+        credentials: 'include',
         headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest',
         },
         body: JSON.stringify({ image_ids: Array.from(selectedIds) })
       })

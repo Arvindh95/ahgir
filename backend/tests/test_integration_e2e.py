@@ -65,13 +65,14 @@ class TestAdminUploadFlow:
         user.is_verified = True
         db_session.commit()
 
-        # Step 2: Login Admin
+        # Step 2: Login Admin. Cookie-based auth: TestClient retains the
+        # picur_session cookie automatically, so no Authorization header
+        # is needed on subsequent calls in this test.
         response = client.post("/auth/login", json={"email": email, "password": _VALID_PW})
         assert response.status_code == 200, response.text
         token_data = response.json()
-        assert "access_token" in token_data
-        access_token = token_data["access_token"]
-        headers = {"Authorization": f"Bearer {access_token}"}
+        assert "user_id" in token_data
+        headers = {}
         
         # Step 3: Create Event
         event_data = {

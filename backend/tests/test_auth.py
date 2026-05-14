@@ -116,9 +116,13 @@ def test_login_success(db_session: Session):
 
     assert response.status_code == 200
     data = response.json()
-    assert "access_token" in data
-    assert data["token_type"] == "bearer"
-    assert "expires_in" in data
+    # Cookie-based auth: the JWT is set in the picur_session HttpOnly
+    # cookie, not echoed in the response body. The body now returns the
+    # user profile so the frontend can render without an extra /auth/me
+    # round-trip.
+    assert "user_id" in data
+    assert data["email"] == "login@example.com"
+    assert "picur_session" in response.cookies
 
     app.dependency_overrides.clear()
 
@@ -200,7 +204,7 @@ def test_get_me_success(db_session: Session):
 
     app.dependency_overrides[get_db] = override_get_db
 
-    # Login to get token
+    # Login — sets picur_session cookie on the test client.
     login_response = client.post(
         "/auth/login",
         json={
@@ -208,13 +212,10 @@ def test_get_me_success(db_session: Session):
             "password": VALID_PASSWORD
         }
     )
-    token = login_response.json()["access_token"]
-    
-    # Get current user
-    response = client.get(
-        "/auth/me",
-        headers={"Authorization": f"Bearer {token}"}
-    )
+    assert login_response.status_code == 200
+
+    # Cookie is automatically attached by TestClient on follow-up calls.
+    response = client.get("/auth/me")
     
     assert response.status_code == 200
     data = response.json()

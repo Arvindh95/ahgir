@@ -15,9 +15,13 @@ export default function Login() {
   const [resendSuccess, setResendSuccess] = useState(false)
 
   useEffect(() => {
-    if (authService.isAuthenticated()) {
-      router.push('/admin/events')
-    }
+    // Auth state now lives in an HttpOnly cookie; the only way to know
+    // is to ask the server. We fire-and-forget — a logged-in visitor
+    // gets bounced to /admin/events; anyone else just stays on this
+    // page (no error UI for "not logged in"; that's the whole point).
+    authService.isAuthenticated().then((authed) => {
+      if (authed) router.push('/admin/events')
+    })
   }, [router])
 
   const validateForm = (): boolean => {

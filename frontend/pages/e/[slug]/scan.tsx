@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/router'
 import Head from 'next/head'
 import axios from 'axios'
+import api from '@/lib/api'
 import { Camera, Upload, LogOut, Loader2, ScanFace, Image as ImageIcon } from 'lucide-react'
 import ScannerOnboarding from '@/components/ScannerOnboarding'
 
@@ -98,12 +99,16 @@ export default function FaceScanner() {
   }, [])
 
   useEffect(() => {
-    // Check authentication
-    const token = localStorage.getItem('event_token')
-    const storedEventName = localStorage.getItem('event_name')
-    const storedAllowDownloads = localStorage.getItem('allow_downloads')
+    // Auth state is in the picur_event HttpOnly cookie; JS can't read it.
+    // We use the presence of the event_name metadata in sessionStorage
+    // (written by [slug].tsx after a successful /auth) as a proxy for
+    // "we just authenticated for this event". If it's missing, bounce
+    // back to the entry page; the real auth check happens server-side
+    // on the next API call.
+    const storedEventName = sessionStorage.getItem('event_name')
+    const storedAllowDownloads = sessionStorage.getItem('allow_downloads')
 
-    if (!token) {
+    if (!storedEventName) {
       router.push(`/e/${slug}`)
       return
     }
@@ -423,8 +428,8 @@ export default function FaceScanner() {
         return
       }
 
-      // Send all frames to backend
-      const token = localStorage.getItem('event_token')
+      // Send all frames to backend. Auth comes from the picur_event cookie
+      // attached automatically (withCredentials: true on the api client).
       const payload: any = {
         image: primaryImage.includes(',') ? primaryImage.split(',')[1] : primaryImage,
       }
@@ -434,16 +439,7 @@ export default function FaceScanner() {
         )
       }
 
-      const response = await axios.post(
-        `${API_URL}/scan`,
-        payload,
-        {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      )
+      const response = await api.post('/scan', payload)
 
       setScanResult(response.data)
       setScanPhase(null)
@@ -479,7 +475,9 @@ export default function FaceScanner() {
         setError('Rate limit exceeded. Please wait before scanning again.')
       } else if (err.response?.status === 401) {
         setError('Session expired. Please authenticate again.')
-        localStorage.removeItem('event_token')
+        sessionStorage.removeItem('event_name')
+        sessionStorage.removeItem('event_id')
+        sessionStorage.removeItem('allow_downloads')
         router.push(`/e/${slug}`)
       } else {
         const msg = err.response?.data?.error?.message?.toLowerCase() || ''
@@ -498,10 +496,14 @@ export default function FaceScanner() {
   }
 
   const handleLogout = () => {
-    localStorage.removeItem('event_token')
-    localStorage.removeItem('event_id')
-    localStorage.removeItem('event_name')
-    localStorage.removeItem('allow_downloads')
+    sessionStorage.removeItem('event_id')
+    sessionStorage.removeItem('event_name')
+    sessionStorage.removeItem('allow_downloads')
+    // Cookie is also cleared server-side on the next /e/{slug}/auth call;
+    // for an explicit "logout" experience we'd need a /e/logout endpoint.
+    // The metadata-wipe + nav back to the entry page is enough for now:
+    // any guarded API call after this will 401 against the (still-live)
+    // cookie and bounce the user to re-auth.
 
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop())

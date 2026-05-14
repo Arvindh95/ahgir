@@ -1,10 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/router'
 import Head from 'next/head'
-import axios from 'axios'
+import api from '@/lib/api'
 import { Calendar, MapPin, Eye, Loader2, ArrowRight } from 'lucide-react'
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
 interface EventInfo {
   event_id: string
@@ -33,7 +31,7 @@ export default function GuestEventAccess() {
     const fetchEventInfo = async () => {
       try {
         setLoading(true)
-        const response = await axios.get(`${API_URL}/e/${slug}`)
+        const response = await api.get(`/e/${slug}`)
         setEventInfo(response.data)
         setError('')
       } catch (err: any) {
@@ -59,12 +57,14 @@ export default function GuestEventAccess() {
       setError('')
 
       const payload = eventInfo.requires_passcode ? { passcode } : {}
-      const response = await axios.post(`${API_URL}/e/${slug}/auth`, payload)
-
-      localStorage.setItem('event_token', response.data.event_token)
-      localStorage.setItem('event_id', response.data.event_id)
-      localStorage.setItem('event_name', response.data.event_name)
-      localStorage.setItem('allow_downloads', response.data.allow_downloads)
+      // Token comes back as an HttpOnly cookie set by the backend (picur_event),
+      // not in the response body. We can't (and don't need to) touch it from
+      // JS. The non-sensitive metadata that downstream pages render lives in
+      // sessionStorage — per-tab, cleared on close, useless to an XSS payload.
+      const response = await api.post(`/e/${slug}/auth`, payload)
+      sessionStorage.setItem('event_id', response.data.event_id)
+      sessionStorage.setItem('event_name', response.data.event_name)
+      sessionStorage.setItem('allow_downloads', String(response.data.allow_downloads))
 
       router.push(`/e/${slug}/scan`)
     } catch (err: any) {

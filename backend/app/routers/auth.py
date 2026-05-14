@@ -1,7 +1,7 @@
 import logging
 import uuid as uuid_module
 from datetime import datetime, timedelta
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
 logger = logging.getLogger(__name__)
 from pydantic import BaseModel, EmailStr, ValidationError, field_validator
@@ -9,9 +9,10 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
 from app.auth import (
-    UserRegister, UserLogin, TokenResponse, UserResponse,
+    UserRegister, UserLogin, UserResponse,
     hash_password, verify_password, create_access_token, get_current_user,
-    create_verification_token, create_password_reset_token, decode_token
+    create_verification_token, create_password_reset_token, decode_token,
+    set_session_cookie, clear_session_cookie,
 )
 from app.database import get_db
 from app.models import User, UserTier
@@ -157,15 +158,22 @@ async def register(user_data: UserRegister, request: Request, db: Session = Depe
     )
 
 
-@router.post("/login", response_model=TokenResponse)
-async def login(credentials: UserLogin, request: Request, db: Session = Depends(get_db)):
+@router.post("/login", response_model=UserResponse)
+async def login(
+    credentials: UserLogin,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+):
     """
-    Login with email and password
+    Login with email and password.
 
     - **email**: Registered email address
     - **password**: User password
 
-    Returns a JWT access token. Requires verified email.
+    On success: sets the picur_session HttpOnly cookie and returns the
+    user profile. The JWT is NOT returned in the response body — JS
+    code (and any XSS payload) cannot read it.
     """
     client_ip = request.client.host if request.client else "unknown"
     # IP-keyed limit catches a single source mashing the endpoint. The email-keyed
@@ -192,14 +200,24 @@ async def login(credentials: UserLogin, request: Request, db: Session = Depends(
     access_token_expires = timedelta(hours=settings.jwt_expiration_hours)
     access_token = create_access_token(
         data={"sub": str(user.id), "email": user.email},
-        expires_delta=access_token_expires
+        expires_delta=access_token_expires,
+    )
+    set_session_cookie(response, access_token)
+
+    return UserResponse(
+        user_id=str(user.id),
+        email=user.email,
+        is_superadmin=user.is_superadmin,
+        created_at=user.created_at,
     )
 
-    return TokenResponse(
-        access_token=access_token,
-        token_type="bearer",
-        expires_in=settings.jwt_expiration_hours * 3600
-    )
+
+@router.post("/logout", response_model=MessageResponse)
+async def logout(response: Response):
+    """Clear the picur_session cookie. Idempotent — returns 200 even if
+    no session cookie was attached (e.g., browser already cleared)."""
+    clear_session_cookie(response)
+    return MessageResponse(message="Logged out")
 
 
 @router.post("/verify", response_model=MessageResponse)
