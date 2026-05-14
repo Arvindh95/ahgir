@@ -204,13 +204,16 @@ class TestGuestScanFlow:
         assert event_info["name"] == "Test Wedding"
         assert event_info["requires_passcode"] is True
 
-        # Step 2: Authenticate with Passcode
+        # Step 2: Authenticate with Passcode. Cookie-based: picur_event lives
+        # in the response cookie and the TestClient retains it across calls,
+        # so subsequent /scan / /download-zip don't need an Authorization
+        # header. We still pull the JWT for explicit assertions below.
         response = client.post(f"/e/{event.slug}/auth", json={"passcode": "wedding123"})
         assert response.status_code == 200, response.text
         auth_result = response.json()
-        assert "event_token" in auth_result
-        event_token = auth_result["event_token"]
-        guest_headers = {"Authorization": f"Bearer {event_token}"}
+        assert "picur_event" in response.cookies
+        event_token = response.cookies["picur_event"]
+        guest_headers = {}
 
         # Step 3: Scan Face — patch the CompreFace recognizer so no real upstream
         # is needed.
@@ -266,11 +269,10 @@ class TestGuestScanFlow:
         event_info = response.json()
         assert event_info["requires_passcode"] is False
 
-        # Step 2: Authenticate without passcode
+        # Step 2: Authenticate without passcode. Cookie-based now.
         response = client.post(f"/e/{event.slug}/auth", json={})
         assert response.status_code == 200, response.text
-        auth_result = response.json()
-        assert "event_token" in auth_result
+        assert "picur_event" in response.cookies
 
 
 @pytest.mark.integration
@@ -548,11 +550,11 @@ class TestCrossFlowIntegration:
             db_session.add(face)
         db_session.commit()
 
-        # Guest authenticates to event1
+        # Guest authenticates to event1 — cookie-based, TestClient keeps it.
         response = client.post(f"/e/{event1.slug}/auth", json={})
         assert response.status_code == 200
-        token1 = response.json()["event_token"]
-        headers1 = {"Authorization": f"Bearer {token1}"}
+        token1 = response.cookies["picur_event"]
+        headers1 = {}
 
         face_img = PILImage.new("RGB", (200, 200), color="blue")
         face_bytes = io.BytesIO()

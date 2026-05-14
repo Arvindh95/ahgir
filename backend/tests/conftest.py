@@ -131,15 +131,24 @@ def test_db(db_session):
 
 @pytest.fixture
 def client(db_session):
-    """FastAPI test client with database dependency override"""
+    """FastAPI test client with database dependency override.
+
+    Always sends `X-Requested-With: XMLHttpRequest`. The production
+    CsrfMiddleware requires this header on any state-changing request
+    that carries an auth cookie; the real browser axios client sets it
+    automatically. Doing the same here means the existing test suite
+    doesn't have to add it on every client.post() call.
+    """
     def override_get_db():
         try:
             yield db_session
         finally:
             pass
-    
+
     app.dependency_overrides[get_db] = override_get_db
-    yield TestClient(app)
+    tc = TestClient(app)
+    tc.headers.update({"X-Requested-With": "XMLHttpRequest"})
+    yield tc
     app.dependency_overrides.clear()
 
 @pytest.fixture(scope="session")

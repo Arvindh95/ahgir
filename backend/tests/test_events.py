@@ -14,6 +14,14 @@ from app.auth import hash_password, create_access_token
 from app.routers.events import normalize_public_slug
 
 client = TestClient(app)
+client.headers.update({"X-Requested-With": "XMLHttpRequest"})
+
+@pytest.fixture(autouse=True)
+def _clear_module_client_cookies():
+    """Reset cookies between tests so a stale picur_session/picur_event
+    from a prior test does not poison auth on the next test."""
+    client.cookies.clear()
+    yield
 
 
 def test_normalize_public_slug_rejects_route_breaking_values():
@@ -218,7 +226,10 @@ def test_create_event_no_auth(db_session: Session):
         json={"name": "Unauthorized Event"}
     )
     
-    assert response.status_code == 403  # No credentials provided
+    # Cookie-auth dependency raises InvalidTokenError(401) for missing creds.
+    # Previously HTTPBearer's auto-error returned 403; this is the correct
+    # HTTP semantic.
+    assert response.status_code == 401
     
     app.dependency_overrides.clear()
 

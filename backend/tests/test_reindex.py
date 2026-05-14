@@ -173,9 +173,10 @@ class TestReindexEndpoint:
         """Test reindex without authentication."""
         fake_event_id = str(uuid.uuid4())
         response = client.post(f"/events/{fake_event_id}/reindex")
-        
-        # Verify error response (403 because HTTPBearer returns 403 for missing credentials)
-        assert response.status_code == 403
+
+        # 401 from the cookie-auth dependency (used to be 403 from HTTPBearer's
+        # auto-error). InvalidTokenError uniformly returns 401.
+        assert response.status_code == 401
     
     def test_reindex_event_invalid_id(self, client, test_db):
         """Test reindex with invalid event ID format."""

@@ -10,6 +10,14 @@ from fastapi.testclient import TestClient
 from app.main import app
 
 client = TestClient(app)
+client.headers.update({"X-Requested-With": "XMLHttpRequest"})
+
+@pytest.fixture(autouse=True)
+def _clear_module_client_cookies():
+    """Reset cookies between tests so a stale picur_session/picur_event
+    from a prior test does not poison auth on the next test."""
+    client.cookies.clear()
+    yield
 
 
 def _build_s3_error() -> S3Error:

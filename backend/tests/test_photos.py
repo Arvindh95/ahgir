@@ -16,6 +16,14 @@ from app.auth import hash_password, create_access_token
 from app.storage import storage_service
 
 client = TestClient(app)
+client.headers.update({"X-Requested-With": "XMLHttpRequest"})
+
+@pytest.fixture(autouse=True)
+def _clear_module_client_cookies():
+    """Reset cookies between tests so a stale picur_session/picur_event
+    from a prior test does not poison auth on the next test."""
+    client.cookies.clear()
+    yield
 
 
 def create_test_image(width: int = 100, height: int = 100, color: tuple = (255, 0, 0)) -> bytes:
@@ -305,8 +313,10 @@ def test_upload_without_authentication(setup_admin_and_event):
         f"/events/{event.id}/photos",
         files=files
     )
-    
-    assert response.status_code == 403
+
+    # 401 (not 403) since cookie-auth dependency raises InvalidTokenError
+    # uniformly on missing creds. Previous HTTPBearer auto-error returned 403.
+    assert response.status_code == 401
 
 
 def test_upload_to_nonexistent_event(setup_admin_and_event):

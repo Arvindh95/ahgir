@@ -12,6 +12,14 @@ from app.models import User, Event
 from app.auth import hash_password, decode_token
 
 client = TestClient(app)
+client.headers.update({"X-Requested-With": "XMLHttpRequest"})
+
+@pytest.fixture(autouse=True)
+def _clear_module_client_cookies():
+    """Reset cookies between tests so a stale picur_session/picur_event
+    from a prior test does not poison auth on the next test."""
+    client.cookies.clear()
+    yield
 
 
 def test_get_event_by_valid_slug(db_session: Session):
@@ -138,14 +146,16 @@ def test_passcode_verification_success(db_session: Session):
         
         assert response.status_code == 200
         data = response.json()
-        assert "event_token" in data
+        # Cookie-based: JWT lives in picur_event cookie, not response body
+        assert "picur_event" in response.cookies
+        event_token = response.cookies["picur_event"]
         assert data["event_id"] == str(event.id)
         assert data["event_name"] == "Protected Wedding"
         assert data["allow_downloads"] is True
         assert data["expires_in"] == 3600
-        
+
         # Verify token is valid
-        payload = decode_token(data["event_token"])
+        payload = decode_token(event_token)
         assert payload["event_id"] == str(event.id)
         assert "session_id" in payload
     
@@ -259,16 +269,17 @@ def test_event_token_generation(db_session: Session):
         
         assert response.status_code == 200
         data = response.json()
-        
-        # Verify token structure
-        assert "event_token" in data
+
+        # Cookie-based: JWT lives in picur_event cookie
+        assert "picur_event" in response.cookies
+        event_token = response.cookies["picur_event"]
         assert data["event_id"] == str(event.id)
         assert data["event_name"] == "Open Wedding"
         assert data["allow_downloads"] is False
         assert data["expires_in"] == 3600
-        
+
         # Decode and verify token payload
-        payload = decode_token(data["event_token"])
+        payload = decode_token(event_token)
         assert payload["event_id"] == str(event.id)
         assert "session_id" in payload
         assert "exp" in payload

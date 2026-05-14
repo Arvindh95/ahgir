@@ -12,6 +12,14 @@ from app.models import User
 from app.auth import hash_password
 
 client = TestClient(app)
+client.headers.update({"X-Requested-With": "XMLHttpRequest"})
+
+@pytest.fixture(autouse=True)
+def _clear_module_client_cookies():
+    """Reset cookies between tests so a stale picur_session/picur_event
+    from a prior test does not poison auth on the next test."""
+    client.cookies.clear()
+    yield
 
 # Password that satisfies the UserRegister validator:
 # >=8 chars, upper, lower, digit, special.
@@ -237,8 +245,11 @@ def test_get_me_no_token(db_session: Session):
     app.dependency_overrides[get_db] = override_get_db
     
     response = client.get("/auth/me")
-    
-    assert response.status_code == 403  # FastAPI returns 403 for missing credentials
+
+    # InvalidTokenError → 401 (cookie + Bearer both missing). Used to be 403
+    # when HTTPBearer's auto-error fired; the cookie-auth dependency raises
+    # consistently as 401 for any missing/invalid credential.
+    assert response.status_code == 401
     
     app.dependency_overrides.clear()
 

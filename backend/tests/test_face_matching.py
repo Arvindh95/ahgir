@@ -20,6 +20,14 @@ from app.rate_limiter import rate_limiter
 from app.storage import storage_service
 
 client = TestClient(app)
+client.headers.update({"X-Requested-With": "XMLHttpRequest"})
+
+@pytest.fixture(autouse=True)
+def _clear_module_client_cookies():
+    """Reset cookies between tests so a stale picur_session/picur_event
+    from a prior test does not poison auth on the next test."""
+    client.cookies.clear()
+    yield
 
 
 @pytest.fixture(autouse=True)
@@ -355,12 +363,13 @@ def test_face_scan_with_invalid_token(db_session: Session):
         image_bytes = create_dummy_image_bytes()
         image_b64 = base64.b64encode(image_bytes).decode('utf-8')
         
-        # Test without token
+        # Test without token. 401 (not 403) since the cookie-auth dependency
+        # raises InvalidTokenError uniformly on missing creds.
         response = client.post(
             "/scan",
             json={"image": image_b64}
         )
-        assert response.status_code == 403  # Forbidden without auth
+        assert response.status_code == 401
         
         # Test with invalid token
         response = client.post(

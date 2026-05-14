@@ -63,40 +63,41 @@ def clear_event_cookie(response: Response) -> None:
     response.delete_cookie(key=EVENT_COOKIE, path="/")
 
 
-def _read_session_token(request: Request) -> Optional[str]:
-    """Cookie first, Authorization Bearer header as a fallback.
+def _bearer_from_header(request: Request) -> Optional[str]:
+    auth_header = request.headers.get("authorization") or ""
+    if auth_header.lower().startswith("bearer "):
+        return auth_header[7:].strip() or None
+    return None
 
-    Production frontend code does not create Bearer tokens anymore — the
-    backend issues a picur_session HttpOnly cookie and JS can neither read
-    nor recreate it. The Authorization fallback exists so the legacy
-    pytest suite (which calls create_access_token() directly and attaches
-    a Bearer header) doesn't have to be rewritten end-to-end. It is also
-    a clean integration story if a future server-to-server API client
-    ever needs to authenticate without browser cookies.
+
+def _read_session_token(request: Request) -> Optional[str]:
+    """Cookie is the production auth. Authorization Bearer header is a
+    test/integration fallback — kept so the existing pytest suite (and
+    future server-to-server clients) keep working without rewrite.
+
+    Bearer is checked FIRST when present so a test can override a stale
+    cookie left over from a previous test on the same module-level
+    TestClient. In production the frontend never sets a Bearer header,
+    so the cookie path is what runs.
 
     The XSS-exfil concern that motivated the cookie migration is a
     FRONTEND issue: an attacker can't extract a Bearer token from the
     real app because the frontend no longer stores one anywhere reachable
-    from JS.
+    from JS. Whether the backend additionally accepts Bearer or not is
+    independent of that property.
     """
-    cookie_token = request.cookies.get(SESSION_COOKIE)
-    if cookie_token:
-        return cookie_token
-    auth_header = request.headers.get("authorization") or ""
-    if auth_header.lower().startswith("bearer "):
-        return auth_header[7:].strip() or None
-    return None
+    bearer = _bearer_from_header(request)
+    if bearer is not None:
+        return bearer
+    return request.cookies.get(SESSION_COOKIE)
 
 
 def _read_event_token(request: Request) -> Optional[str]:
-    """Same cookie-first / Bearer-fallback policy as _read_session_token."""
-    cookie_token = request.cookies.get(EVENT_COOKIE)
-    if cookie_token:
-        return cookie_token
-    auth_header = request.headers.get("authorization") or ""
-    if auth_header.lower().startswith("bearer "):
-        return auth_header[7:].strip() or None
-    return None
+    """Bearer-first / cookie-fallback. Same rationale as _read_session_token."""
+    bearer = _bearer_from_header(request)
+    if bearer is not None:
+        return bearer
+    return request.cookies.get(EVENT_COOKIE)
 
 # Pydantic models
 def _normalize_email(v: str) -> str:
