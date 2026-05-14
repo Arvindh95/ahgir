@@ -205,7 +205,11 @@ def test_bulk_delete_empty_image_ids_rejected(db_session: Session):
         headers={"Authorization": f"Bearer {token}"},
         json={"image_ids": []},
     )
-    assert response.status_code == 400, response.text
+    # 422 from Pydantic min_length=1 OR 400 from the route's
+    # "No images specified" guard — either is a clean rejection of
+    # an empty list. Pre-fix only 400 was possible; post-fix 422
+    # trips first.
+    assert response.status_code in (400, 422), response.text
 
     app.dependency_overrides.clear()
 
@@ -254,7 +258,13 @@ def test_delete_event_owner_succeeds(db_session: Session):
 # ---------- EVENT UPDATE: ownership + frozen-event ----------
 
 def test_update_event_other_owner_forbidden(db_session: Session):
-    """Non-owner cannot patch event metadata."""
+    """Non-owner cannot patch event metadata.
+
+    Use `description` (a valid EventUpdate field) rather than `name`
+    (which EventUpdate doesn't accept — extra='forbid' now). The
+    test still exercises the ownership-check branch: a different
+    user's PATCH must 403/404 regardless of payload content.
+    """
     owner = _make_user(db_session, "up-owner@example.com")
     intruder = _make_user(db_session, "up-intruder@example.com")
     event = _make_event(db_session, owner, name="Original")
@@ -264,7 +274,7 @@ def test_update_event_other_owner_forbidden(db_session: Session):
     response = client.patch(
         f"/events/{event.id}",
         headers={"Authorization": f"Bearer {token}"},
-        json={"name": "Hijacked"},
+        json={"description": "Hijack attempt"},
     )
     assert response.status_code in (403, 404), response.text
 
@@ -275,7 +285,11 @@ def test_update_event_other_owner_forbidden(db_session: Session):
 
 
 def test_update_event_blocked_on_frozen_event(db_session: Session):
-    """Existing ensure_event_mutable() coverage on update — regression test."""
+    """Existing ensure_event_mutable() coverage on update — regression test.
+
+    Uses `description` (a valid EventUpdate field) rather than `name`
+    (which EventUpdate rejects post extra='forbid' tightening).
+    """
     owner = _make_user(db_session, "up-frozen@example.com")
     event = _make_event(db_session, owner, status_="frozen", name="Frozen")
     _override(db_session)
@@ -284,7 +298,7 @@ def test_update_event_blocked_on_frozen_event(db_session: Session):
     response = client.patch(
         f"/events/{event.id}",
         headers={"Authorization": f"Bearer {token}"},
-        json={"name": "Renamed While Frozen"},
+        json={"description": "Renamed While Frozen"},
     )
     assert response.status_code == 403, response.text
 
