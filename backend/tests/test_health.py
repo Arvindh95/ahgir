@@ -33,10 +33,21 @@ def health_mocks():
     settings.environment is forced to 'test' so the production error-string
     stripper in health.py does not remove the fields tests assert on.
     """
+    # Build a fake RQ worker that reports a fresh heartbeat. Conftest
+    # now flushes the app Redis (DB 0) at session start, so any
+    # leftover real worker heartbeat from prior runs is gone — without
+    # the worker mock, /health reports worker=unhealthy (alive_count=0)
+    # and the test's overall "healthy" assertion flips.
+    from datetime import datetime as _dt, timezone as _tz
+
+    _fake_worker = MagicMock()
+    _fake_worker.last_heartbeat = _dt.now(_tz.utc)
+
     with patch('app.routers.health.engine.connect') as mock_db, \
          patch('app.routers.health.storage_service.client.bucket_exists') as mock_minio, \
          patch('app.routers.health.redis_client.ping') as mock_redis, \
          patch('app.routers.health.CompreFaceClient') as mock_cf_cls, \
+         patch('rq.Worker.all', return_value=[_fake_worker]), \
          patch('app.routers.health.settings.environment', 'test'):
         # Default: every service healthy.
         mock_db.return_value.__enter__ = MagicMock()
