@@ -8,7 +8,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile, File
 from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, or_, and_
 from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 import uuid
@@ -2094,14 +2094,32 @@ async def get_event_analytics(
         AuditLog.event_id == event_uuid, AuditLog.actor_type == 'guest'
     ).scalar() or 0
 
+    # Operator-facing actions on this event (superadmin cross-tenant
+    # reads, abuse-review downloads, etc.) all land in the same audit
+    # table with actor_type='admin'. Distinguish: only the EVENT OWNER
+    # is "admin" from this event's perspective; any other admin row is
+    # operator activity that the customer shouldn't see in their own
+    # analytics. The filter below is reused across counters + the
+    # recent_activity feed for a consistent answer.
+    OWNER_OR_GUEST = or_(
+        AuditLog.actor_type == 'guest',
+        AuditLog.actor_type == 'system',
+        and_(AuditLog.actor_type == 'admin',
+             AuditLog.actor_id == event.owner_user_id),
+    )
+
     # Total downloads
     total_downloads = db.query(func.count(AuditLog.id)).filter(
-        AuditLog.event_id == event_uuid, AuditLog.action == 'bulk_download'
+        AuditLog.event_id == event_uuid,
+        AuditLog.action == 'bulk_download',
+        OWNER_OR_GUEST,
     ).scalar() or 0
 
     # Total gallery views
     total_gallery_views = db.query(func.count(AuditLog.id)).filter(
-        AuditLog.event_id == event_uuid, AuditLog.action == 'gallery_view'
+        AuditLog.event_id == event_uuid,
+        AuditLog.action == 'gallery_view',
+        OWNER_OR_GUEST,
     ).scalar() or 0
 
     # Scans by day for the last 30 days. The timestamp cutoff is what
@@ -2135,9 +2153,13 @@ async def get_event_analytics(
         func.extract('hour', AuditLog.timestamp)
     ).all()
 
-    # Recent activity (last 10)
+    # Recent activity (last 10) — owner + guest + system only. Superadmin
+    # reads on someone else's event were previously surfacing in the
+    # customer-facing feed (logged as actor_type='admin' but with a
+    # different actor_id than the event owner). Filter those out.
     recent = db.query(AuditLog).filter(
-        AuditLog.event_id == event_uuid
+        AuditLog.event_id == event_uuid,
+        OWNER_OR_GUEST,
     ).order_by(AuditLog.timestamp.desc()).limit(10).all()
 
     return {

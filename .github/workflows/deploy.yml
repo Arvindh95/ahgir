@@ -58,7 +58,28 @@ jobs:
             # Recreate services. Data services (postgres, minio, redis,
             # compreface-*) intentionally NOT restarted — they're stateful
             # and don't change between deploys.
+            #
+            # Frontend is intentionally split into two passes for rolling
+            # zero-downtime: recreate `frontend` first while `frontend-2`
+            # continues serving the previous build on port 3002, then
+            # recreate `frontend-2` once `frontend` is back. Doing them in
+            # one shot used to mean BOTH replicas restart together, and
+            # in some past deploys only `frontend` was listed at all —
+            # which left `frontend-2` permanently pinned to a stale
+            # image until someone noticed customers seeing old code (the
+            # "RM 9 / RM 39 still shows in superadmin" incident on
+            # 2026-05-14). Both must be force-recreated every deploy.
             docker compose $COMPOSE_FILES up -d --force-recreate backend worker frontend retention-scheduler
+
+            # Wait for `frontend` to be reachable on its loopback port
+            # before flipping `frontend-2` — otherwise both replicas
+            # could be mid-restart at the same instant.
+            for i in $(seq 1 30); do
+              if curl -fsS -o /dev/null http://127.0.0.1:3001; then break; fi
+              sleep 1
+            done
+
+            docker compose $COMPOSE_FILES up -d --force-recreate frontend-2
 
             # Reclaim disk
             docker image prune -f
