@@ -20,6 +20,30 @@ def upgrade() -> None:
     op.drop_index('unique_hash_per_event', table_name='images')
     op.drop_index('idx_event_hash', table_name='images')
 
+    # Pre-flight: the original schema allowed (event_id, filename)
+    # duplicates as long as the SHA-256 hashes differed. Two distinct
+    # photos named IMG_0001.jpg in the same event was therefore valid.
+    # Without this cleanup the unique index below blocks alembic
+    # upgrade on any DB with such pairs. We keep the oldest row (by id)
+    # in each group untouched and rename the rest by appending
+    # `.dup.<id_prefix>` so they remain unique without losing the
+    # underlying file reference. The renamed images stay viewable;
+    # admins can rename / delete them via the regular UI afterwards.
+    op.execute("""
+        UPDATE images
+        SET filename = filename || '.dup.' || substring(id::text FROM 1 FOR 8)
+        WHERE id IN (
+            SELECT id FROM (
+                SELECT id, row_number() OVER (
+                    PARTITION BY event_id, filename
+                    ORDER BY uploaded_at, id
+                ) AS rn
+                FROM images
+            ) t
+            WHERE rn > 1
+        );
+    """)
+
     # Create filename-based unique index
     op.create_index('unique_filename_per_event', 'images', ['event_id', 'filename'], unique=True)
 

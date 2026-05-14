@@ -28,15 +28,26 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Drop any straggler duplicates first. Keep the oldest row per
-    # subject_id (lowest created_at) — that's the one most likely to be
-    # the row CompreFace's recognizer associates with the embedding.
+    # Drop any straggler duplicates first. Use row_number() with an
+    # ORDER BY (created_at, id) so rows that share the exact same
+    # created_at still get a deterministic ordering — the original
+    # `a.created_at > b.created_at` self-join skipped tied-timestamp
+    # duplicates and left them in place, which then blocked the
+    # unique-index creation below. id as the secondary key gives every
+    # row a unique position in the partition.
     op.execute("""
-        DELETE FROM faces a
-        USING faces b
-        WHERE a.compreface_subject_id IS NOT NULL
-          AND a.compreface_subject_id = b.compreface_subject_id
-          AND a.created_at > b.created_at;
+        DELETE FROM faces
+        WHERE id IN (
+            SELECT id FROM (
+                SELECT id, row_number() OVER (
+                    PARTITION BY compreface_subject_id
+                    ORDER BY created_at, id
+                ) AS rn
+                FROM faces
+                WHERE compreface_subject_id IS NOT NULL
+            ) t
+            WHERE rn > 1
+        );
     """)
 
     op.create_index(

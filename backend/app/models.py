@@ -1,3 +1,4 @@
+import sqlalchemy as sa
 from sqlalchemy import Column, String, Integer, BigInteger, Boolean, Date, Float, ForeignKey, Index, TIMESTAMP, ARRAY, CheckConstraint
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
@@ -13,7 +14,11 @@ class User(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email = Column(String(255), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
-    is_verified = Column(Boolean, default=False, nullable=False)
+    # Default=False at both Python AND DB level (migration d7f8g9h0i1
+    # corrects the original migration that left the DB default as
+    # 'true'). Aligned defaults stop raw INSERT paths from
+    # accidentally creating already-verified accounts.
+    is_verified = Column(Boolean, default=False, nullable=False, server_default=sa.text('false'))
     is_superadmin = Column(Boolean, default=False, nullable=False)
     is_disabled = Column(Boolean, default=False, nullable=False)
     # Set to NOW() whenever the user's password is reset or changed. Tokens
