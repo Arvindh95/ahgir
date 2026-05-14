@@ -151,18 +151,21 @@ class AuditLog(Base):
     # retried jobs) aren't tied to a specific event. FK is SET NULL so audit
     # trail survives event deletion.
     event_id = Column(UUID(as_uuid=True), ForeignKey("events.id", ondelete="SET NULL"), nullable=True, index=True)
-    actor_type = Column(String(20), nullable=False)  # admin, guest
-    actor_id = Column(UUID(as_uuid=True))  # user_id or session_id
+    actor_type = Column(String(20), nullable=False)  # admin, guest, system
+    actor_id = Column(UUID(as_uuid=True))  # user_id, session_id, or NULL for system actions
     action = Column(String(50), nullable=False)  # access, scan, upload, reindex, delete
     metadata_ = Column("metadata", JSONB)  # Use metadata_ as attribute name, metadata as column name
     timestamp = Column(TIMESTAMP, server_default=func.now(), nullable=False, index=True)
-    
+
     # Relationships
     event = relationship("Event", back_populates="audit_logs")
-    
+
     # Constraints
     __table_args__ = (
-        CheckConstraint("actor_type IN ('admin', 'guest')", name="valid_actor_type"),
+        # 'system' covers automated jobs (retention sweep, scheduled
+        # downgrades) so they're not attributed to a human admin in the
+        # audit viewer. Migration c6e7f8g9h0 brings the prod DB in line.
+        CheckConstraint("actor_type IN ('admin', 'guest', 'system')", name="valid_actor_type"),
         {"schema": None}
     )
 

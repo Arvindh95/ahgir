@@ -60,11 +60,13 @@ export default function EventMonitoring({ eventId }: EventMonitoringProps) {
       // which meant admin actions on page 2+ vanished and the total stayed
       // at the unfiltered page count — both misleading to ops.
       let action: string | undefined = undefined
-      let actorType: 'admin' | 'guest' | undefined = undefined
+      let actorType: 'admin' | 'guest' | 'system' | undefined = undefined
       if (actionFilter === 'admin_only') {
         actorType = 'admin'
       } else if (actionFilter === 'guest_only') {
         actorType = 'guest'
+      } else if (actionFilter === 'system_only') {
+        actorType = 'system'
       } else if (actionFilter) {
         action = actionFilter
       }
@@ -236,6 +238,7 @@ export default function EventMonitoring({ eventId }: EventMonitoringProps) {
               <option value="admin_only" className="bg-black">Admin Only</option>
               <option value="" className="bg-black">All Activity</option>
               <option value="guest_only" className="bg-black">Guest Only</option>
+              <option value="system_only" className="bg-black">System (automated)</option>
               <option value="access" className="bg-black">Access</option>
               <option value="scan" className="bg-black">Scan</option>
               <option value="upload" className="bg-black">Upload</option>
@@ -273,7 +276,11 @@ export default function EventMonitoring({ eventId }: EventMonitoringProps) {
                       </td>
                       <td className="py-3">
                         <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                           log.actor_type === 'admin' ? 'bg-purple-500/20 text-purple-300' : 'bg-gray-500/20 text-gray-300'
+                           log.actor_type === 'admin'
+                             ? 'bg-purple-500/20 text-purple-300'
+                             : log.actor_type === 'system'
+                               ? 'bg-amber-500/20 text-amber-300'
+                               : 'bg-gray-500/20 text-gray-300'
                         }`}>
                           {log.actor_type}
                         </span>

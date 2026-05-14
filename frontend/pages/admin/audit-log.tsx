@@ -9,7 +9,7 @@ import { Search, Filter, ChevronLeft, ChevronRight, Loader2, ShieldCheck, User a
 interface AuditEntry {
   id: string
   timestamp: string
-  actor_type: 'admin' | 'guest'
+  actor_type: 'admin' | 'guest' | 'system'
   actor_id: string | null
   actor_email: string | null
   action: string
@@ -165,6 +165,7 @@ export default function AuditLogPage() {
                 <option value="">All actor types</option>
                 <option value="admin">Admin</option>
                 <option value="guest">Guest</option>
+                <option value="system">System (automated)</option>
               </select>
               <input
                 type="text"
@@ -243,8 +244,18 @@ export default function AuditLogPage() {
                               <div className="text-[10px] text-gray-500">{formatTimestamp(e.timestamp)}</div>
                             </td>
                             <td className="py-3 align-top">
-                              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${e.actor_type === 'admin' ? 'bg-purple-500/15 text-purple-300' : 'bg-gray-500/15 text-gray-300'}`}>
-                                {e.actor_type === 'admin' ? <ShieldCheck className="w-3 h-3" /> : <UserIcon className="w-3 h-3" />}
+                              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${
+                                e.actor_type === 'admin'
+                                  ? 'bg-purple-500/15 text-purple-300'
+                                  : e.actor_type === 'system'
+                                    ? 'bg-amber-500/15 text-amber-300'
+                                    : 'bg-gray-500/15 text-gray-300'
+                              }`}>
+                                {e.actor_type === 'admin'
+                                  ? <ShieldCheck className="w-3 h-3" />
+                                  : e.actor_type === 'system'
+                                    ? <Clock className="w-3 h-3" />
+                                    : <UserIcon className="w-3 h-3" />}
                                 {e.actor_type}
                               </span>
                             </td>

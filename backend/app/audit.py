@@ -45,9 +45,13 @@ def log_action(
         populated and it is safe to reference, but it will be rolled
         back if the caller's transaction fails.
     """
-    # Validate actor_type
-    if actor_type not in ['admin', 'guest']:
-        raise ValueError(f"Invalid actor_type: {actor_type}. Must be 'admin' or 'guest'")
+    # Validate actor_type. 'system' is for automated jobs (retention
+    # sweep, scheduled downgrades) so they don't get misattributed to a
+    # human admin in the audit viewer.
+    if actor_type not in ('admin', 'guest', 'system'):
+        raise ValueError(
+            f"Invalid actor_type: {actor_type}. Must be 'admin', 'guest', or 'system'"
+        )
 
     # Create audit log entry
     audit_log = AuditLog(

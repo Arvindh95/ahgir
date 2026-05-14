@@ -190,28 +190,61 @@ async def load_metrics(_superadmin=Depends(get_superadmin_user)):
     except Exception as e:
         out["queues"]["error"] = str(e)
 
-    # 2. Image indexing backlog (pending + how stale)
+    # 2. Image indexing backlog (pending + how stale + recent failures).
+    # Recent-failed is folded into the score so a fast-failing CompreFace
+    # outage — where images are marked 'failed' quickly and never sit
+    # 'pending' long enough to trigger the oldest_age branch — still
+    # degrades the verdict. Without this, the score could stay green
+    # while every upload was actually failing.
     try:
         with engine.connect() as conn:
             row = conn.execute(text("""
                 SELECT
                     COUNT(*) FILTER (WHERE status = 'pending') AS pending,
-                    COUNT(*) FILTER (WHERE status = 'failed')  AS failed,
+                    COUNT(*) FILTER (WHERE status = 'failed')  AS failed_total,
+                    COUNT(*) FILTER (
+                        WHERE status = 'failed' AND uploaded_at > NOW() - INTERVAL '1 hour'
+                    ) AS failed_last_hour,
+                    COUNT(*) FILTER (
+                        WHERE uploaded_at > NOW() - INTERVAL '1 hour'
+                    ) AS uploaded_last_hour,
                     EXTRACT(EPOCH FROM (NOW() - MIN(uploaded_at) FILTER (WHERE status = 'pending'))) AS oldest_pending_age_seconds
                 FROM images
             """)).fetchone()
             pending = int(row.pending or 0)
-            failed = int(row.failed or 0)
+            failed_total = int(row.failed_total or 0)
+            failed_last_hour = int(row.failed_last_hour or 0)
+            uploaded_last_hour = int(row.uploaded_last_hour or 0)
             oldest_age = float(row.oldest_pending_age_seconds or 0)
+            failure_ratio_last_hour = (
+                failed_last_hour / uploaded_last_hour if uploaded_last_hour else 0.0
+            )
             out["indexing_backlog"] = {
                 "pending": pending,
-                "failed": failed,
+                "failed": failed_total,
+                "failed_last_hour": failed_last_hour,
+                "uploaded_last_hour": uploaded_last_hour,
+                "failure_ratio_last_hour": round(failure_ratio_last_hour, 3),
                 "oldest_pending_age_minutes": round(oldest_age / 60, 1),
             }
             if oldest_age > 600:  # 10 min
                 score += 25
             elif oldest_age > 300:  # 5 min
                 score += 12
+            # Failure-rate signal. Thresholds are conservative: needs
+            # at least 5 uploads in the window to trigger so a single
+            # failure on a low-volume day doesn't flip the verdict.
+            if uploaded_last_hour >= 5:
+                if failure_ratio_last_hour >= 0.5:
+                    score += 30
+                elif failure_ratio_last_hour >= 0.2:
+                    score += 15
+            # Absolute failure burst signal (catches steady drip even
+            # when failure ratio looks moderate due to high volume).
+            if failed_last_hour >= 20:
+                score += 20
+            elif failed_last_hour >= 10:
+                score += 10
     except Exception as e:
         out["indexing_backlog"]["error"] = str(e)
 

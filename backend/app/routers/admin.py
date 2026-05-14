@@ -1,7 +1,7 @@
 """Superadmin management router."""
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 
@@ -430,31 +430,41 @@ async def get_global_analytics(
         AuditLog.action == 'gallery_view'
     ).scalar() or 0
 
+    # Group by event id AND name. Pre-fix two events with the same
+    # display name ("Wedding", "Annual Dinner") collapsed into one
+    # leaderboard row and reported combined scan/guest counts. We
+    # include Event.id in the group key and surface it on the
+    # response so the frontend can deep-link to the per-event view.
     top_events_raw = db.query(
+        Event.id,
         Event.name,
         func.count(AuditLog.id).label('scan_count'),
         func.count(func.distinct(AuditLog.actor_id)).label('guest_count')
     ).join(AuditLog, AuditLog.event_id == Event.id).filter(
         AuditLog.action == 'scan'
-    ).group_by(Event.name).order_by(
+    ).group_by(Event.id, Event.name).order_by(
         func.count(AuditLog.id).desc()
     ).limit(5).all()
 
     top_events = [
-        {"name": row[0], "scans": row[1], "guests": row[2]}
+        {"event_id": str(row[0]), "name": row[1], "scans": row[2], "guests": row[3]}
         for row in top_events_raw
     ]
 
+    # Same fix as per-event scans_by_day: filter by timestamp cutoff so
+    # the dashboard shows ACTUAL last-30-days, not just the oldest 30
+    # days that happen to appear first under asc-order.
     scans_by_day_raw = db.query(
         func.date_trunc('day', AuditLog.timestamp).label('date'),
         func.count(AuditLog.id).label('count')
     ).filter(
-        AuditLog.action == 'scan'
+        AuditLog.action == 'scan',
+        AuditLog.timestamp >= datetime.utcnow() - timedelta(days=30),
     ).group_by(
         func.date_trunc('day', AuditLog.timestamp)
     ).order_by(
         func.date_trunc('day', AuditLog.timestamp)
-    ).limit(30).all()
+    ).limit(31).all()
 
     scans_by_day = [
         {"date": row[0].isoformat() if row[0] else None, "count": row[1]}
@@ -742,7 +752,7 @@ async def admin_list_audit_log(
     """List audit log entries (superadmin only).
 
     Filters:
-    - actor_type: 'admin' | 'guest'
+    - actor_type: 'admin' | 'guest' | 'system' (system = automated jobs)
     - action: substring match (e.g. 'admin_user' matches all admin user actions)
     - actor_id: UUID of acting user
     - event_id: UUID of target event
@@ -758,7 +768,7 @@ async def admin_list_audit_log(
         .outerjoin(User, AuditLog.actor_id == User.id)
     )
 
-    if actor_type in ("admin", "guest"):
+    if actor_type in ("admin", "guest", "system"):
         query = query.filter(AuditLog.actor_type == actor_type)
     if action:
         query = query.filter(AuditLog.action.ilike(f"%{action}%"))

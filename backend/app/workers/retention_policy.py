@@ -62,17 +62,22 @@ def check_and_delete_expired_events(db: Session = None):
                 # Stage the audit row inside the same transaction (commit=
                 # False). FK SET NULL preserves the row past the event
                 # delete; rollback on cleanup failure discards it.
+                # actor_type='system' so the row reads as an automated
+                # retention sweep, not as the event owner manually
+                # deleting their own event. We still record the owner
+                # via metadata.owner_user_id for forensic traceability.
                 log_action(
                     db=db,
                     event_id=event.id,
-                    actor_type='admin',
-                    actor_id=event.owner_user_id,
+                    actor_type='system',
+                    actor_id=None,
                     action='delete_event_retention',
                     metadata={
                         'event_name': event.name,
                         'photo_count': photo_count,
                         'retention_days': event.retention_days,
-                        'reason': 'retention_policy'
+                        'reason': 'retention_policy',
+                        'owner_user_id': str(event.owner_user_id) if event.owner_user_id else None,
                     },
                     commit=False,
                 )

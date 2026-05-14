@@ -1,7 +1,7 @@
 """
 Event management router
 """
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile, File
 from fastapi.responses import Response, StreamingResponse
@@ -1744,7 +1744,7 @@ async def get_audit_logs(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200),
     action: Optional[str] = None,
-    actor_type: Optional[str] = Query(None, pattern="^(admin|guest)$"),
+    actor_type: Optional[str] = Query(None, pattern="^(admin|guest|system)$"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -1963,18 +1963,23 @@ async def get_event_analytics(
         AuditLog.event_id == event_uuid, AuditLog.action == 'gallery_view'
     ).scalar() or 0
 
-    # Scans by day (last 30 days)
+    # Scans by day for the last 30 days. The timestamp cutoff is what
+    # makes this "last 30 days" — without it, the original .limit(30)
+    # returned the OLDEST 30 days once an event had been live longer
+    # (asc order + limit). Keep .limit(31) as a safety cap in case of
+    # clock skew producing a same-day extra row.
     scans_by_day = db.query(
         func.date_trunc('day', AuditLog.timestamp).label('date'),
         func.count(AuditLog.id).label('count')
     ).filter(
         AuditLog.event_id == event_uuid,
-        AuditLog.action == 'scan'
+        AuditLog.action == 'scan',
+        AuditLog.timestamp >= datetime.utcnow() - timedelta(days=30),
     ).group_by(
         func.date_trunc('day', AuditLog.timestamp)
     ).order_by(
         func.date_trunc('day', AuditLog.timestamp)
-    ).limit(30).all()
+    ).limit(31).all()
 
     # Peak hours
     peak_hours = db.query(
