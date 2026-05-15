@@ -1014,13 +1014,37 @@ async def delete_photo_for_report(
     # MinIO original + thumb — tombstone on failure.
     safe_delete_image_photo(db, snap_event_id, image.id, commit=False)
 
-    # Mark the report removed BEFORE the image delete. The FK is now
+    # Mark the loaded report removed BEFORE the image delete. The FK is
     # ON DELETE SET NULL so the report row survives; image_id flips to
     # NULL automatically as part of the same transaction. Face rows
     # cascade-delete with the image normally.
     report.status = "removed"
     report.action_taken = "remove"
     _stamp_reviewer_if_empty(report, current_user)
+
+    # Sibling reports against the same image must also close — otherwise
+    # they linger as pending/reviewing/quarantined with image_id NULL'd
+    # after the FK fires, leaving the operator with rows that cannot be
+    # revealed or actioned (no image to act on). Mark them removed with
+    # action_taken='sibling_delete' so the audit trail distinguishes
+    # them from the operator's explicit /delete-photo target. Done in
+    # the same transaction as the image delete; queried by image_id
+    # before db.delete(image) runs so autoflush doesn't NULL the FK out
+    # from under the filter.
+    sibling_reports = (
+        db.query(AbuseReport)
+        .filter(AbuseReport.image_id == image.id)
+        .filter(AbuseReport.id != report.id)
+        .filter(AbuseReport.status.in_(("pending", "reviewing", "quarantined")))
+        .all()
+    )
+    sibling_snaps = []
+    for sib in sibling_reports:
+        sib.status = "removed"
+        sib.action_taken = "sibling_delete"
+        _stamp_reviewer_if_empty(sib, current_user)
+        sibling_snaps.append((str(sib.id), sib.category))
+
     db.delete(image)
     db.commit()
 
@@ -1038,8 +1062,21 @@ async def delete_photo_for_report(
             "image_id": snap_image_id,
             "original_filename": snap_filename,
             "category": snap_category,
+            "sibling_reports_closed": len(sibling_snaps),
         },
     )
+    for sib_report_id, sib_category in sibling_snaps:
+        log_action(
+            db=db, event_id=snap_event_id, actor_type="admin",
+            actor_id=current_user.id, action="abuse_review_sibling_close",
+            metadata={
+                "report_id": sib_report_id,
+                "image_id": snap_image_id,
+                "category": sib_category,
+                "triggered_by_report_id": snap_report_id,
+                "reason": "operator_delete_photo",
+            },
+        )
     return ActionResponse(message="Photo permanently removed.", status="removed")
 
 

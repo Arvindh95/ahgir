@@ -2153,14 +2153,17 @@ async def delete_event(
 
     # Block deletion while the event has unresolved abuse reports. The
     # AbuseReport.event_id FK still cascades on delete (terminal reports
-    # tied to a deleted event are audit-logged elsewhere and can be
-    # collected); but pending/reviewing reports MUST be resolved by a
-    # superadmin first — otherwise an event owner could effectively
+    # — dismissed / removed — tied to a deleted event are audit-logged
+    # elsewhere). But pending / reviewing / quarantined reports MUST be
+    # resolved by a superadmin first — otherwise an event owner could
     # erase an active CSAM report by deleting the event around it.
+    # Quarantined is included because the image is still under
+    # moderation: the report is closed-ish but the operator may still
+    # need to dismiss-or-delete it, which requires the event to exist.
     open_reports = (
         db.query(func.count(AbuseReport.id))
         .filter(AbuseReport.event_id == event_uuid)
-        .filter(AbuseReport.status.in_(("pending", "reviewing")))
+        .filter(AbuseReport.status.in_(("pending", "reviewing", "quarantined")))
         .scalar()
     ) or 0
     if open_reports > 0:

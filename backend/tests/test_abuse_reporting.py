@@ -275,6 +275,83 @@ def test_delete_photo_preserves_report_row_with_null_image_id(setup_world):
     assert surviving.action_taken == "remove"
 
 
+def test_event_delete_blocked_by_quarantined_report(setup_world):
+    """Regression: event-delete blocker MUST treat quarantined as non-
+    terminal. Otherwise an owner deletes the event, the cascade wipes
+    the quarantined report, and the moderation history is lost."""
+    world = setup_world
+    db = world["db"]
+    _flush_abuse_rate_keys()
+
+    report = AbuseReport(
+        image_id=world["image"].id,
+        event_id=world["event"].id,
+        category="violence", reporter_ip="11.11.11.11",
+        status="quarantined", action_taken="quarantine",
+    )
+    db.add(report)
+    db.commit()
+
+    resp = client.delete(
+        f"/events/{world['event'].id}",
+        headers={"Authorization": f"Bearer {world['admin_token']}"},
+    )
+    assert resp.status_code == 409
+    assert "unresolved abuse report" in resp.json()["detail"].lower()
+
+
+def test_delete_photo_closes_sibling_reports(setup_world):
+    """Regression: admin /delete-photo on one report must also close
+    every other pending/reviewing/quarantined report against the same
+    image. Without this, sibling rows survive with image_id=NULL and
+    no transition path — operator sees stuck rows in the queue."""
+    world = setup_world
+    db = world["db"]
+    _flush_abuse_rate_keys()
+
+    target = AbuseReport(
+        image_id=world["image"].id, event_id=world["event"].id,
+        category="csam", reporter_ip="12.12.12.1", status="pending",
+    )
+    sibling_pending = AbuseReport(
+        image_id=world["image"].id, event_id=world["event"].id,
+        category="nudity", reporter_ip="12.12.12.2", status="pending",
+    )
+    sibling_reviewing = AbuseReport(
+        image_id=world["image"].id, event_id=world["event"].id,
+        category="harassment", reporter_ip="12.12.12.3",
+        status="reviewing",
+    )
+    sibling_quarantined = AbuseReport(
+        image_id=world["image"].id, event_id=world["event"].id,
+        category="other", reporter_ip="12.12.12.4",
+        status="quarantined", action_taken="quarantine",
+    )
+    db.add_all([target, sibling_pending, sibling_reviewing, sibling_quarantined])
+    db.commit()
+    target_id = target.id
+    sib_ids = (sibling_pending.id, sibling_reviewing.id, sibling_quarantined.id)
+
+    resp = client.post(
+        f"/admin/abuse-reports/{target_id}/delete-photo",
+        headers={"Authorization": f"Bearer {world['super_token']}"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    db.expire_all()
+    target_row = db.query(AbuseReport).filter(AbuseReport.id == target_id).first()
+    assert target_row.status == "removed"
+    assert target_row.action_taken == "remove"
+
+    for sid in sib_ids:
+        sib_row = db.query(AbuseReport).filter(AbuseReport.id == sid).first()
+        assert sib_row is not None
+        assert sib_row.status == "removed"
+        assert sib_row.action_taken == "sibling_delete"
+        assert sib_row.reviewed_at is not None
+        assert sib_row.reviewed_by == world["superadmin"].id
+
+
 def test_event_delete_blocked_while_open_abuse_reports(setup_world):
     """Regression: event delete must refuse while pending/reviewing
     abuse reports exist for that event. Otherwise an event owner could

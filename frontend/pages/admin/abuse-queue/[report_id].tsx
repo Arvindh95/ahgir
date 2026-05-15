@@ -54,6 +54,16 @@ export default function AbuseReviewScreen() {
           const revealData = await abuseService.reveal(report_id)
           if (cancelled) return
           setReveal(revealData)
+          // /reveal flips pending → reviewing AND stamps reviewed_at /
+          // reviewed_by on the first call. Without merging that into the
+          // local row, the right-hand panel keeps showing "pending" with
+          // a blank reviewer until the operator navigates away and back.
+          setReport((prev) => prev ? {
+            ...prev,
+            status: revealData.status,
+            reviewed_at: revealData.reviewed_at ?? prev.reviewed_at,
+            reviewed_by_email: revealData.reviewed_by_email ?? prev.reviewed_by_email,
+          } : prev)
         }
       } catch (err: any) {
         if (cancelled) return

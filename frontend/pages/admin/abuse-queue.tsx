@@ -284,7 +284,10 @@ export default function AbuseQueuePage() {
                             >
                               Review <ArrowRight className="w-3 h-3" />
                             </button>
-                            {(r.reporter_ip || r.reporter_email) && r.status !== 'dismissed' && r.status !== 'removed' && (
+                            {/* Dismiss-all only targets pending/reviewing on the
+                                backend; hide it for quarantined/dismissed/removed
+                                so operators don't click into a no-op. */}
+                            {(r.reporter_ip || r.reporter_email) && (r.status === 'pending' || r.status === 'reviewing') && (
                               <button
                                 onClick={() => handleDismissBySource(r)}
                                 disabled={bulkLoading === r.id}
