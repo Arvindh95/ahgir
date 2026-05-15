@@ -35,7 +35,23 @@ export interface AbuseRevealResponse {
   reviewed_by_email?: string | null
 }
 
+export interface ReportFilePayload {
+  image_id: string
+  category: 'csam' | 'nudity' | 'harassment' | 'copyright' | 'violence' | 'other'
+  description?: string
+  reporter_email?: string
+}
+
 export const abuseService = {
+  async fileReport(payload: ReportFilePayload): Promise<{ message: string }> {
+    // Honeypot field. Hidden in the modal via CSS so legit users never fill
+    // it. Bots filling every field will populate it and the backend silently
+    // drops the row.
+    const body = { ...payload, website: '' }
+    const res = await api.post('/report', body)
+    return res.data
+  },
+
   async getPendingCount(): Promise<number> {
     const res = await api.get('/admin/abuse-reports/pending-count')
     return res.data.pending ?? 0

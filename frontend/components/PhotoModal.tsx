@@ -1,6 +1,7 @@
-import { useEffect, useRef, useCallback } from 'react'
+import { useEffect, useRef, useCallback, useState } from 'react'
 import Image from 'next/image'
-import { Download, Share2, X, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Download, Share2, X, ChevronLeft, ChevronRight, Flag } from 'lucide-react'
+import ReportPhotoModal from '@/components/ReportPhotoModal'
 
 interface Photo {
   original_url: string
@@ -29,6 +30,7 @@ export default function PhotoModal({
   allowDownloads,
 }: PhotoModalProps) {
   const touchStartX = useRef<number | null>(null)
+  const [reportOpen, setReportOpen] = useState(false)
   const photo = photos[currentIndex]
   const hasPrev = currentIndex > 0
   const hasNext = currentIndex < photos.length - 1
@@ -156,8 +158,22 @@ export default function PhotoModal({
               <Download className="w-5 h-5" />
             </button>
           )}
+
+          <button
+            onClick={() => setReportOpen(true)}
+            className="p-2.5 bg-white/5 text-gray-400 hover:text-orange-400 hover:bg-orange-500/10 rounded-lg transition-colors"
+            title="Report this photo"
+          >
+            <Flag className="w-5 h-5" />
+          </button>
         </div>
       </div>
+
+      <ReportPhotoModal
+        open={reportOpen}
+        imageId={photo.image_id}
+        onClose={() => setReportOpen(false)}
+      />
     </div>
   )
 }

@@ -1,8 +1,10 @@
 import { useRouter } from 'next/router'
 import Head from 'next/head'
 import Image from 'next/image'
-import { Camera } from 'lucide-react'
+import { Camera, Flag } from 'lucide-react'
 import { GetServerSideProps } from 'next'
+import { useState } from 'react'
+import ReportPhotoModal from '@/components/ReportPhotoModal'
 
 interface ShareInfo {
   event_name: string
@@ -36,6 +38,7 @@ export const getServerSideProps: GetServerSideProps<SharedPhotoProps> = async (c
 
 export default function SharedPhoto({ shareInfo, error }: SharedPhotoProps) {
   const router = useRouter()
+  const [reportOpen, setReportOpen] = useState(false)
 
   if (error || !shareInfo) {
     return (
@@ -98,8 +101,24 @@ export default function SharedPhoto({ shareInfo, error }: SharedPhotoProps) {
               Find Your Photos
             </button>
           </div>
+
+          <button
+            onClick={() => setReportOpen(true)}
+            className="mt-6 flex items-center gap-1 text-xs text-gray-500 hover:text-orange-400 transition-colors"
+          >
+            <Flag className="w-3 h-3" />
+            Report this photo
+          </button>
         </div>
       </div>
+
+      {typeof router.query.image_id === 'string' && (
+        <ReportPhotoModal
+          open={reportOpen}
+          imageId={router.query.image_id}
+          onClose={() => setReportOpen(false)}
+        />
+      )}
     </>
   )
 }
