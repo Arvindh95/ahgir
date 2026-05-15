@@ -36,8 +36,41 @@ from app.rate_limiter import (
 from app.audit import log_action
 from app.config import settings, get_compreface_url
 from app.cache import cache_get, cache_set
+from app.utils.image_safety import safe_open as safe_open_image
+from PIL import Image as PILImage, ImageOps
 import httpx
 import asyncio
+
+
+def _sanitize_scan_frame(frame_bytes: bytes) -> bytes:
+    """Re-validate + re-encode a guest scan frame before forwarding upstream.
+
+    Guarantees:
+    - Header-checked via ``safe_open_image`` so a decompression bomb cannot
+      reach CompreFace.
+    - Downsized to ``scan_frame_max_side_px`` so the bytes we forward are
+      bounded regardless of source resolution.
+    - EXIF + colour profile stripped; transparency flattened to white.
+    - Re-encoded as JPEG so the ``image/jpeg`` content-type label on the
+      multipart upload is honest (raw client bytes could have been WebP,
+      HEIC, malformed JPEG, etc.).
+
+    Raises ``HTTPException(413)`` via ``safe_open_image`` on bombs.
+    """
+    img = safe_open_image(frame_bytes)
+    img = ImageOps.exif_transpose(img)
+    if img.mode in ("RGBA", "LA"):
+        background = PILImage.new("RGB", img.size, (255, 255, 255))
+        alpha = img.split()[-1]
+        background.paste(img.convert("RGB"), mask=alpha)
+        img = background
+    elif img.mode not in ("RGB", "L"):
+        img = img.convert("RGB")
+    max_side = settings.scan_frame_max_side_px
+    img.thumbnail((max_side, max_side), PILImage.Resampling.LANCZOS)
+    out = BytesIO()
+    img.save(out, format="JPEG", quality=90, optimize=True)
+    return out.getvalue()
 
 logger = logging.getLogger(__name__)
 
@@ -765,22 +798,31 @@ async def scan_face(
         return decoded
 
     try:
-        all_frames = [_decode_frame(scan_request.image)]
-        running_total = len(all_frames[0])
+        primary = _sanitize_scan_frame(_decode_frame(scan_request.image))
+        all_frames = [primary]
+        running_total = len(primary)
         if scan_request.additional_frames:
             for frame_data in scan_request.additional_frames[:4]:  # Max 5 total frames
                 try:
                     decoded = _decode_frame(frame_data)
+                    sanitized = _sanitize_scan_frame(decoded)
+                except HTTPException:
+                    # Bomb / invalid image — skip the frame, keep the rest.
+                    continue
                 except Exception:
                     continue  # Skip invalid frames
-                if running_total + len(decoded) > max_total:
+                if running_total + len(sanitized) > max_total:
                     logger.warning("Scan request truncated: total frame size exceeds cap")
                     break
-                all_frames.append(decoded)
-                running_total += len(decoded)
-        logger.info(f"Received {len(all_frames)} scan frames, {running_total} bytes")
+                all_frames.append(sanitized)
+                running_total += len(sanitized)
+        logger.info(f"Received {len(all_frames)} scan frames, {running_total} bytes (sanitized)")
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=str(e))
+    except HTTPException:
+        # safe_open_image raised — bomb on the primary frame. Re-raise so
+        # the guest gets the 413 rather than a generic 400.
+        raise
     except Exception as e:
         logger.error(f"Failed to decode image: {e}")
         raise HTTPException(

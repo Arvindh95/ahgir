@@ -111,10 +111,19 @@ class Settings(BaseSettings):
     bulk_download_max_bytes: int = 500 * 1024 * 1024  # 500 MB
     # Per-file upload cap (matches Caddy request_body max_size in prod).
     max_upload_bytes: int = 25 * 1024 * 1024  # 25 MB
+    # Per-file upload chunk size used by the streaming reader. Reading in
+    # chunks (rather than one big .read()) lets us abort once max_upload_bytes
+    # is exceeded without buffering an oversized payload into RAM first.
+    upload_chunk_bytes: int = 1 * 1024 * 1024  # 1 MB
     # Per-frame cap on guest face-scan submissions (decoded bytes).
     max_scan_frame_bytes: int = 8 * 1024 * 1024  # 8 MB
     # Total cap across all frames in one scan request.
     max_scan_total_bytes: int = 25 * 1024 * 1024  # 25 MB
+    # Maximum side length (px) sent to CompreFace per scan frame. Sanitised
+    # selfies bigger than this are downsized before upload — CompreFace
+    # doesn't need 4K input to match a face, and capping the side bounds the
+    # bytes we forward upstream regardless of what the guest submitted.
+    scan_frame_max_side_px: int = 1024
     
     class Config:
         env_file = ".env"

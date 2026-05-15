@@ -965,6 +965,7 @@ async def upload_photos(
     failed: List[PhotoUploadFailure] = []
 
     max_bytes = settings.max_upload_bytes
+    chunk_bytes = settings.upload_chunk_bytes
     for file in files:
         try:
             # Reject oversized uploads before reading entire payload into memory.
@@ -978,15 +979,29 @@ async def upload_photos(
                 ))
                 continue
 
-            # Read file data
-            file_data = await file.read()
-            if len(file_data) > max_bytes:
+            # Stream-read the upload with a hard cap. Stop and reject as soon
+            # as we exceed max_bytes; never buffer the full payload first.
+            # Caddy enforces a request body cap in prod, but the backend is
+            # reachable directly in dev / VPS-internal mode and dev clients
+            # bypass any proxy — so the per-file cap MUST be enforced here.
+            buffer = bytearray()
+            oversized = False
+            while True:
+                chunk = await file.read(chunk_bytes)
+                if not chunk:
+                    break
+                buffer.extend(chunk)
+                if len(buffer) > max_bytes:
+                    oversized = True
+                    break
+            if oversized:
                 failed.append(PhotoUploadFailure(
                     filename=file.filename,
                     reason=f"File exceeds {max_bytes // (1024*1024)}MB upload limit",
                     category="oversize",
                 ))
                 continue
+            file_data = bytes(buffer)
 
             # Validate image format (incl. decompression-bomb guard)
             if not validate_image_format(file_data, file.filename):
@@ -1001,14 +1016,21 @@ async def upload_photos(
             # Compute hash (stored for reference)
             file_hash = compute_file_hash(file_data)
 
-            # Check for duplicate filename within this event
+            # Storage normalizes all originals to JPEG (strip_exif_bytes
+            # converts PNG/MPO). The on-disk file ends in .jpg, served with
+            # image/jpeg, so the DB row's filename matches what guests
+            # actually download. Duplicate-check on the normalized name so
+            # "photo.png" + "photo.jpg" collide as expected.
+            stem, _, _ = file.filename.rpartition(".")
+            stored_filename = f"{stem or file.filename}.jpg"
+
             existing = db.query(Image).filter(
                 Image.event_id == event_uuid,
-                Image.filename == file.filename
+                Image.filename == stored_filename
             ).first()
 
             if existing:
-                logger.warning(f"Upload rejected - duplicate filename: {file.filename} (existing image_id={existing.id})")
+                logger.warning(f"Upload rejected - duplicate filename: {file.filename} → {stored_filename} (existing image_id={existing.id})")
                 failed.append(PhotoUploadFailure(
                     filename=file.filename,
                     reason="File with this name already exists in event",
@@ -1055,7 +1077,7 @@ async def upload_photos(
             new_image = Image(
                 id=image_id,
                 event_id=event_uuid,
-                filename=file.filename,
+                filename=stored_filename,
                 file_hash=file_hash,
                 size_bytes=len(original_bytes),
                 width=width,
