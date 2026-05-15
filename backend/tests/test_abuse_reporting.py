@@ -311,6 +311,155 @@ def test_event_delete_blocked_while_open_abuse_reports(setup_world):
     assert resp.status_code == 200
 
 
+def test_bulk_owner_delete_auto_closes_active_reports(setup_world):
+    """Regression: bulk delete used to call _close_active_reports
+    AFTER per-image db.delete(image), letting SQLAlchemy autoflush fire
+    FK SET NULL before the helper's IN-clause filter ran — closing zero
+    reports. The reorder ensures pending/reviewing reports for every
+    image in the batch get auto-closed with action_taken='owner_delete'."""
+    world = setup_world
+    db = world["db"]
+    _flush_abuse_rate_keys()
+
+    # Add a second image in the same event so the bulk path has > 1 target.
+    second_image = Image(
+        event_id=world["event"].id,
+        filename="photo2.jpg",
+        file_hash="y" * 64,
+        size_bytes=2048,
+        status="indexed",
+    )
+    db.add(second_image)
+    db.commit()
+    db.refresh(second_image)
+
+    r1 = AbuseReport(
+        image_id=world["image"].id, event_id=world["event"].id,
+        category="nudity", reporter_ip="7.7.7.7", status="pending",
+    )
+    r2 = AbuseReport(
+        image_id=second_image.id, event_id=world["event"].id,
+        category="harassment", reporter_ip="7.7.7.7", status="reviewing",
+    )
+    db.add_all([r1, r2])
+    db.commit()
+    r1_id, r2_id = r1.id, r2.id
+
+    resp = client.post(
+        f"/events/{world['event'].id}/photos/bulk-delete",
+        headers={"Authorization": f"Bearer {world['admin_token']}"},
+        json={"image_ids": [str(world["image"].id), str(second_image.id)]},
+    )
+    assert resp.status_code == 200, resp.text
+
+    db.expire_all()
+    for rid in (r1_id, r2_id):
+        surviving = db.query(AbuseReport).filter(AbuseReport.id == rid).first()
+        assert surviving is not None
+        assert surviving.status == "removed"
+        assert surviving.action_taken == "owner_delete"
+        assert surviving.reviewed_at is not None
+
+
+def test_owner_delete_closes_quarantined_report(setup_world):
+    """Regression: a quarantined report whose image is then owner-deleted
+    must be flipped to 'removed' / 'owner_delete'. Without this the
+    report stays quarantined with image_id=NULL — no valid transition
+    out (restore 404s on missing image, delete-photo 404s likewise)."""
+    world = setup_world
+    db = world["db"]
+    _flush_abuse_rate_keys()
+
+    world["image"].status = "quarantined"
+    report = AbuseReport(
+        image_id=world["image"].id, event_id=world["event"].id,
+        category="violence", reporter_ip="8.8.8.8", status="quarantined",
+        action_taken="quarantine",
+    )
+    db.add(report)
+    db.commit()
+    db.refresh(report)
+    report_id = report.id
+
+    resp = client.delete(
+        f"/events/{world['event'].id}/photos/{world['image'].id}",
+        headers={"Authorization": f"Bearer {world['admin_token']}"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    db.expire_all()
+    surviving = db.query(AbuseReport).filter(AbuseReport.id == report_id).first()
+    assert surviving is not None
+    assert surviving.status == "removed"
+    assert surviving.action_taken == "owner_delete"
+
+
+def test_silent_drop_duplicates_surface_in_count(setup_world):
+    """Regression: when /report is silent-dropped by the per-image
+    dedupe rate limiter (4th+ on same image in window), no DB row is
+    written — but the operator MUST still see the silent drops folded
+    into duplicate_count, otherwise mass-reporting just past the cap
+    is invisible."""
+    world = setup_world
+    db = world["db"]
+    _flush_abuse_rate_keys()
+
+    # Hit /report from N different IPs to bypass per-IP cap but trip
+    # the per-image dedup. dedupe limit defaults to 3, so 5 attempts
+    # should write 3 rows and silent-drop 2.
+    import os
+    real_drops = 0
+    for i in range(5):
+        resp = client.post(
+            "/report",
+            headers={"x-forwarded-for": f"10.0.0.{i+1}"},
+            json={
+                "image_id": str(world["image"].id),
+                "category": "harassment",
+            },
+        )
+        assert resp.status_code == 200
+
+    rows = db.query(AbuseReport).filter(
+        AbuseReport.image_id == world["image"].id
+    ).all()
+    # DB has at most the dedupe limit
+    assert 1 <= len(rows) <= settings_dedupe_limit()
+    # Silent-drop counter is non-zero
+    silent = redis_client.get(f"abuse:image_silent_drops:{world['image'].id}")
+    assert silent is not None
+    assert int(silent) >= 1
+
+    # GET single report surfaces the silent drops in duplicate_count.
+    target_report = rows[0]
+    resp = client.get(
+        f"/admin/abuse-reports/{target_report.id}",
+        headers={"Authorization": f"Bearer {world['super_token']}"},
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    # duplicate_count should be at least the silent-drop count.
+    assert payload["duplicate_count"] >= int(silent)
+
+
+def settings_dedupe_limit():
+    from app.config import settings as _s
+    return _s.abuse_report_image_dedupe_limit
+
+
+def test_report_image_id_length_capped(setup_world):
+    """Regression: ReportCreateRequest.image_id must be max_length=64.
+    Without the cap, an attacker could ship a multi-MB string in
+    image_id, forcing UUID parsing on garbage before the handler's
+    constant-time guard kicks in."""
+    world = setup_world
+    resp = client.post("/report", json={
+        "image_id": "x" * 65,
+        "category": "other",
+    })
+    assert resp.status_code == 422
+
+
 def test_owner_photo_delete_auto_closes_active_reports(setup_world):
     """Regression: when an event owner deletes a photo via the normal
     /events/{event_id}/photos/{image_id} route, any pending/reviewing

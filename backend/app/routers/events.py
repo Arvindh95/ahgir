@@ -1375,15 +1375,22 @@ def _close_active_reports_on_owner_delete(
     actor_id: uuid.UUID,
     event_uuid: uuid.UUID,
 ) -> list:
-    """Auto-close any pending/reviewing AbuseReport rows for images that
-    the owner is about to delete.
+    """Auto-close any pending/reviewing/quarantined AbuseReport rows for
+    images that the owner is about to delete.
 
     Without this, owner photo-delete (single or bulk) left active report
     rows in the queue with image_id later flipped to NULL via the FK SET
-    NULL — the operator would see an unrevealable "pending" row with no
-    way to action it. Each closed report gets action_taken='owner_delete',
-    a reviewed_at stamp, and an abuse_review_owner_close audit row so the
+    NULL — the operator would see an unrevealable row with no way to
+    action it. Each closed report gets action_taken='owner_delete', a
+    reviewed_at stamp, and an abuse_review_owner_close audit row so the
     audit trail records why it closed without an operator decision.
+
+    Quarantined is included so the report and the image cleanup stay in
+    sync — without it, deleting an owner-quarantined image would leave
+    the report stuck at status='quarantined' with image_id=NULL, where
+    /restore would 404 and /delete-photo would 409 (no valid transition
+    from quarantined except dismissed/removed via an operator action
+    that itself requires an image to act on).
 
     Returns the list of closed reports (caller may emit per-row audit
     rows after the surrounding db.commit()).
@@ -1393,7 +1400,7 @@ def _close_active_reports_on_owner_delete(
     open_reports = (
         db.query(AbuseReport)
         .filter(AbuseReport.image_id.in_(image_ids))
-        .filter(AbuseReport.status.in_(("pending", "reviewing")))
+        .filter(AbuseReport.status.in_(("pending", "reviewing", "quarantined")))
         .all()
     )
     now = datetime.now(timezone.utc)
@@ -1580,6 +1587,23 @@ async def bulk_delete_photos(
         )
 
     images = db.query(Image).filter(Image.event_id == event_uuid, Image.id.in_(image_uuids)).all()
+    matched_image_ids = [image.id for image in images]
+
+    # Close active abuse reports FIRST, before any db.delete(image) call.
+    # SQLAlchemy autoflush fires pending deletes ahead of any subsequent
+    # query, so if we ran the helper after the loop the FK SET NULL would
+    # have already cleared AbuseReport.image_id and the IN-clause filter
+    # would match nothing — leaving the reports unrevealable in the queue.
+    # Snapshot per-report ids now so the post-commit audit log can still
+    # reference the original image_id.
+    closed_reports = _close_active_reports_on_owner_delete(
+        db, matched_image_ids, current_user.id, event_uuid
+    )
+    closed_report_snaps = [
+        (str(r.id), str(r.image_id) if r.image_id else None, r.category)
+        for r in closed_reports
+    ]
+
     deleted = 0
     deleted_image_ids = []
     for image in images:
@@ -1599,13 +1623,6 @@ async def bulk_delete_photos(
         deleted += 1
         deleted_image_ids.append(image.id)
 
-    # Close any pending/reviewing abuse reports for the batch before commit
-    # (single transaction). Same rationale as the single-image delete: FK
-    # SET NULL would otherwise leave unrevealable rows in the queue.
-    closed_reports = _close_active_reports_on_owner_delete(
-        db, deleted_image_ids, current_user.id, event_uuid
-    )
-
     db.commit()
 
     log_action(
@@ -1616,14 +1633,14 @@ async def bulk_delete_photos(
         action='delete',
         metadata={'bulk_delete': True, 'count': deleted}
     )
-    for r in closed_reports:
+    for snap_report_id, snap_image_id, snap_category in closed_report_snaps:
         log_action(
             db=db, event_id=event_uuid, actor_type='admin',
             actor_id=current_user.id, action='abuse_review_owner_close',
             metadata={
-                'report_id': str(r.id),
-                'image_id': str(r.image_id) if r.image_id else None,
-                'category': r.category,
+                'report_id': snap_report_id,
+                'image_id': snap_image_id,
+                'category': snap_category,
                 'reason': 'bulk_owner_delete',
             },
         )

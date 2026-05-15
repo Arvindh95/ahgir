@@ -72,6 +72,43 @@ _PERMABAN_KEY = "abuse:permaban:{ip}"
 _SOFTBAN_KEY = "abuse:softban:{ip}"
 _SOFTBAN_TTL_SECONDS = 7 * 24 * 3600
 
+# Per-image counter for reports dropped by the dedupe rate limiter
+# (the 4th+ silent-drop on the same image inside the dedupe window).
+# Surfaced via duplicate_count on the queue row so operators see
+# coordinated mass-reports influencing priority even though no extra DB
+# row was written. TTL renews on every drop so the counter reflects the
+# current spam window; the key naturally rolls off once the spam stops.
+_IMAGE_SILENT_DROPS_KEY = "abuse:image_silent_drops:{image_id}"
+
+
+def _bump_image_silent_drop_counter(image_id) -> None:
+    """Increment the silent-drop counter for a given image. Best-effort
+    — a Redis blip must not cause /report to 500. The counter is purely
+    informational (operator priority signal); losing a bump just leaves
+    one drop uncounted."""
+    try:
+        ttl = settings.abuse_report_image_dedupe_window_hours * 3600
+        key = _IMAGE_SILENT_DROPS_KEY.format(image_id=str(image_id))
+        pipe = redis_client.pipeline()
+        pipe.incr(key)
+        pipe.expire(key, ttl)
+        pipe.execute()
+    except Exception:
+        pass
+
+
+def _read_image_silent_drop_counts(image_ids) -> dict:
+    """Bulk-read the silent-drop counter for a set of image ids. Returns
+    {image_id: int}. Missing keys map to 0. Best-effort."""
+    if not image_ids:
+        return {}
+    try:
+        keys = [_IMAGE_SILENT_DROPS_KEY.format(image_id=str(i)) for i in image_ids]
+        raw = redis_client.mget(keys)
+        return {iid: int(v or 0) for iid, v in zip(image_ids, raw)}
+    except Exception:
+        return {iid: 0 for iid in image_ids}
+
 
 def _subnet_key(ip: str) -> str:
     """Derive a /24 (IPv4) or /64 (IPv6) network key for subnet rate limiting.
@@ -152,7 +189,12 @@ def _check_reputation_ban(db: Session, reporter_ip: str) -> Optional[str]:
 
 
 class ReportCreateRequest(BaseModel):
-    image_id: str
+    # UUID strings are 36 chars with dashes / 32 without. 64 leaves
+    # headroom for any future encoding but still bounds the request
+    # body — without this an attacker could ship a megabyte of garbage
+    # in image_id and force the handler to do regex/UUID parsing on it
+    # before the constant-time enumeration guard kicks in.
+    image_id: str = Field(..., max_length=64)
     category: str = Field(..., max_length=32)
     description: Optional[str] = Field(default=None, max_length=2000)
     reporter_email: Optional[EmailStr] = None
@@ -389,6 +431,11 @@ async def file_abuse_report(
         str(image.id), action="abuse_report_image_dedupe"
     )
     if not allowed:
+        # Bump the surfaceable silent-drop counter so the operator's
+        # queue row reflects total reporter pressure on the image —
+        # mass-reports still influence priority even though no extra
+        # DB row gets created.
+        _bump_image_silent_drop_counter(image.id)
         logger.info(
             "abuse-report dedup silent-drop image_id=%s reporter_ip=%s",
             image.id, reporter_ip,
@@ -544,6 +591,14 @@ async def list_abuse_reports(
             .all()
         )
         dup_counts = {iid: max(0, n - 1) for iid, n in dup_rows}
+        # Fold in the Redis silent-drop counter so duplicates that were
+        # rejected at the dedupe rate-limiter (no DB row) still surface
+        # in the operator's "+N duplicate" indicator. Without this the
+        # caller only sees the 3 rows we actually persisted and is blind
+        # to coordinated mass-reporting.
+        silent_drops = _read_image_silent_drop_counts(image_ids)
+        for iid, drops in silent_drops.items():
+            dup_counts[iid] = dup_counts.get(iid, 0) + drops
 
     # Self-report flag intentionally disabled — see ReportRow comment.
     # The previous heuristic compared owner-activity timestamps only,
@@ -637,6 +692,12 @@ async def get_abuse_report(
         .scalar() or 0
     )
     duplicate_count = max(0, duplicate_count - 1)
+    # Fold in silent-dropped duplicates from the dedupe limiter. Same
+    # rationale as the list endpoint: rate-limited extras have no DB
+    # row, so a pure DB count misses them entirely.
+    if report.image_id:
+        silent_drops = _read_image_silent_drop_counts([report.image_id])
+        duplicate_count += silent_drops.get(report.image_id, 0)
 
     sr_flag = False  # disabled — see ReportRow.is_possible_self_report
 
