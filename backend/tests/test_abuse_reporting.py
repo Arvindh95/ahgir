@@ -234,6 +234,47 @@ def test_list_returns_null_image_id_for_removed_report(setup_world):
     assert removed_row["image_id"] is None
 
 
+def test_delete_photo_preserves_report_row_with_null_image_id(setup_world):
+    """Regression: ORM Image.abuse_reports MUST NOT cascade-delete the
+    AbuseReport row when db.delete(image) runs. The DB FK is ON DELETE
+    SET NULL — and the relationship is configured passive_deletes=True
+    so SQLAlchemy lets the FK action fire. Without passive_deletes the
+    cascade fires *before* the DB-level SET NULL, wiping the audit row."""
+    world = setup_world
+    db = world["db"]
+    _flush_abuse_rate_keys()
+
+    # File a real pending report on the test image.
+    report = AbuseReport(
+        image_id=world["image"].id,
+        event_id=world["event"].id,
+        category="nudity", reporter_ip="2.2.2.2", status="pending",
+    )
+    db.add(report)
+    db.commit()
+    db.refresh(report)
+    report_id = report.id
+
+    # Operator hits /delete-photo.
+    resp = client.post(
+        f"/admin/abuse-reports/{report_id}/delete-photo",
+        headers={"Authorization": f"Bearer {world['super_token']}"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    # Image row gone.
+    assert db.query(Image).filter(Image.id == world["image"].id).count() == 0
+
+    # Report row STILL EXISTS — image_id NULL'd via FK SET NULL,
+    # status flipped to 'removed' by the endpoint.
+    db.expire_all()
+    surviving = db.query(AbuseReport).filter(AbuseReport.id == report_id).first()
+    assert surviving is not None
+    assert surviving.image_id is None
+    assert surviving.status == "removed"
+    assert surviving.action_taken == "remove"
+
+
 def test_report_invalid_category_returns_422(setup_world):
     world = setup_world
     resp = client.post("/report", json={

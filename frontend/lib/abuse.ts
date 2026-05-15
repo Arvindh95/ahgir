@@ -2,7 +2,11 @@ import api from './api'
 
 export interface AbuseReportRow {
   id: string
-  image_id: string
+  // NULL after the underlying image was permanently deleted via
+  // /delete-photo. FK is ON DELETE SET NULL so the report row survives
+  // for queue history; callers must treat missing image_id as
+  // "image no longer exists" (skip reveal, render placeholder).
+  image_id: string | null
   event_id: string
   event_name?: string | null
   event_slug?: string | null

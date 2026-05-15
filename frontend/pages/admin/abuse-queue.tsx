@@ -45,7 +45,6 @@ export default function AbuseQueuePage() {
   const [error, setError] = useState('')
   const [bulkLoading, setBulkLoading] = useState<string | null>(null)
 
-  const reload = () => setOffset((o) => o)
   const refreshAfterAction = async () => {
     const data = await abuseService.list({
       status: statusFilter,
@@ -56,6 +55,24 @@ export default function AbuseQueuePage() {
     })
     setItems(data.items)
     setTotal(data.total)
+  }
+  // Refresh button: re-fetch the current page. Previously this called
+  // setOffset(0) which only triggered the load-effect when offset was
+  // already non-zero — on page 1 it was a no-op. Resetting to page 1
+  // AND issuing a fresh fetch covers both cases.
+  const handleRefresh = async () => {
+    if (offset !== 0) {
+      setOffset(0)
+      return
+    }
+    try {
+      setLoading(true)
+      await refreshAfterAction()
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Failed to load reports')
+    } finally {
+      setLoading(false)
+    }
   }
 
   const handleDismissBySource = async (row: AbuseReportRow) => {
@@ -142,7 +159,7 @@ export default function AbuseQueuePage() {
               )}
             </h1>
             <button
-              onClick={() => setOffset(0)}
+              onClick={handleRefresh}
               disabled={loading}
               className="px-3 py-1.5 text-sm bg-white/10 hover:bg-white/20 rounded-lg transition-colors disabled:opacity-50"
             >

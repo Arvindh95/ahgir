@@ -92,7 +92,14 @@ class Image(Base):
     # Relationships
     event = relationship("Event", back_populates="images")
     faces = relationship("Face", back_populates="image", cascade="all, delete-orphan")
-    abuse_reports = relationship("AbuseReport", back_populates="image", cascade="all, delete-orphan")
+    # AbuseReport rows DELIBERATELY survive image deletion via the FK's
+    # ON DELETE SET NULL (see migration e7h8i9j0k1). passive_deletes=True
+    # tells SQLAlchemy NOT to preemptively delete report rows when
+    # db.delete(image) runs, so the DB-level FK action actually fires and
+    # report_id stays in the queue with image_id=NULL for audit history.
+    # Adding cascade="all, delete-orphan" here would silently override the
+    # FK and wipe the report trail, defeating the migration's intent.
+    abuse_reports = relationship("AbuseReport", back_populates="image", passive_deletes=True)
 
     # Indexes and constraints
     __table_args__ = (

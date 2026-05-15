@@ -83,8 +83,15 @@ export default function AbuseReviewScreen() {
       if (kind === 'quarantine') await abuseService.quarantine(report_id)
       if (kind === 'delete') await abuseService.deletePhoto(report_id)
       if (kind === 'restore') await abuseService.restoreImage(report_id)
-      const verb = kind === 'restore' ? 'restored' : `${kind}ed`
-      toast(`Report ${verb}.`, 'success')
+      // Explicit verb map — naive `${kind}ed` produced "deleteed" and
+      // "quarantineed" for the two kinds whose stem already ends in 'e'.
+      const verbs: Record<typeof kind, string> = {
+        dismiss: 'dismissed',
+        quarantine: 'quarantined',
+        delete: 'deleted',
+        restore: 'restored',
+      }
+      toast(`Report ${verbs[kind]}.`, 'success')
       router.push('/admin/abuse-queue')
     } catch (err: any) {
       toast(err.response?.data?.detail || `Failed to ${kind}`, 'error')
