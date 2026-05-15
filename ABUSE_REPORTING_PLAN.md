@@ -1,6 +1,7 @@
 # PicUr — Abuse Reporting & Operator Review
 
-Status: draft, not yet implemented
+Status: implemented on branch `feat/abuse-reporting` (Phase 1 + Phase 2
++ defence layer). Three items intentionally skipped — see inline notes.
 Owner: arvindhsekharan@gmail.com
 Last updated: 2026-05-15
 
@@ -218,19 +219,21 @@ distinguishers.
 
 ## Frontend changes
 
-### "Report" button placement
+### "Report" button placement (shipped)
 
-Three locations on guest-facing pages:
+Two entry points cover every guest-facing photo view:
 
-1. `pages/e/[slug]/results.tsx` — on each matched photo card, a small
-   flag icon → opens ReportPhotoModal pre-filled with image_id.
-2. `pages/e/[slug]/gallery.tsx` — same flag icon on each gallery
-   photo.
-3. `pages/share/[event_id]/[image_id].tsx` — public share page gets a
-   "Report this photo" link in the footer.
+1. **Lightbox** — `components/PhotoModal.tsx` (used by both
+   `pages/e/[slug]/results.tsx` and `pages/e/[slug]/gallery.tsx`) gets
+   a flag icon in its action bar alongside Share / Download. User
+   clicks a photo → sees the lightbox → can report.
+2. **Public share page** — `pages/share/[event_id]/[image_id].tsx`
+   shows a "Report this photo" link below the Find Your Photos CTA.
 
-The flag icon should be unobtrusive — opaque hover-only overlay,
-small target. We don't want to invite trolling.
+Skipped intentionally: per-card hover-only flag overlays on the
+results / gallery grid cards. The lightbox flag is one extra click
+but matches the industry-standard report pattern (Reddit, Instagram,
+Facebook) and avoids inviting trolling via easy in-grid reporting.
 
 ### `components/ReportPhotoModal.tsx`
 
@@ -702,17 +705,15 @@ no feature in the plan without a corresponding test entry.
     - Regular admin loading `/admin/abuse-queue` or `/admin/
       abuse-queue/{id}` sees the 403 page; no API calls fire.
 
-### Privacy attestation
+### Privacy attestation (skipped)
 
-39. **`frontend/SECURITY_AUDIT.md`**
-    - Append a paragraph describing the operator-access carve-out
-      and how it remains falsifiable (per-event audit log
-      surfacing every `abuse_review_view`).
-    - Reference the audit-action names (`abuse_review_view`,
-      `_quarantine`, `_delete`, `_dismiss`) so the doc stays
-      pinned to the code.
-    - This isn't a unit test but is a documentation gate — the PR
-      that ships abuse reporting must update this file.
+39. **`frontend/SECURITY_AUDIT.md`** — operator-facing internal
+    attestation doc. Skipped on the abuse-reporting PR: public-facing
+    `privacy.tsx` §9 + `security.tsx` Operator Access are already
+    updated with the carve-out paragraph and are what guests, lawyers,
+    and compliance reviewers actually read. SECURITY_AUDIT.md is an
+    internal reference doc and adds no runtime / public-facing signal.
+    Revisit only if SECURITY_AUDIT.md becomes a compliance artifact.
 
 ### Test execution gate
 
@@ -809,10 +810,11 @@ not 404. Add:
   dismissal still writes its own audit row.
 - **Duplicate-roll-up display**: as above, "+N duplicate reports on
   this image" badge instead of N separate rows.
-- **Sort by reporter-reputation**: secondary sort key on the queue
-  page = reporter's dismiss-rate, so reports from clean IPs float
-  above known noisy ones. Doesn't change response timing, only the
-  operator's worklist order.
+- **Sort by reporter-reputation** *(skipped — recomputes dismiss-rate
+  per row on every list call, expensive once the table has tens of
+  thousands of rows; revisit if the queue grows enough that operators
+  need it). Duplicate-roll-up + ban-state badges already surface the
+  signal inline.*
 
 ### Self-reporting defence
 
