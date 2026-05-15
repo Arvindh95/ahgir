@@ -21,9 +21,27 @@ router = APIRouter(tags=["health"])
 
 
 @router.get("/health", status_code=status.HTTP_200_OK)
-async def health_check():
+async def liveness_probe():
+    """Process-only liveness check. Public, unauthenticated, cheap.
+
+    Returns 200 if the FastAPI process is up and reachable. Does NOT poll DB
+    / MinIO / Redis / CompreFace — those are in /health/deep and gated to
+    superadmins. Pre-split, every public /health hit walked five upstream
+    services + a CompreFace detection probe, giving unauthenticated callers
+    a free dependency-mapping tool and a free upstream-DoS amplifier.
+
+    Returns "healthy" (not "ok") to preserve wire-compat with
+    scripts/picur-monitor.sh which alerts on JSON.status != 'healthy'.
+    Operators wanting the full dependency check hit /health/deep with a
+    superadmin token.
     """
-    Comprehensive health check endpoint.
+    return {"status": "healthy"}
+
+
+@router.get("/health/deep", status_code=status.HTTP_200_OK)
+async def health_check_deep(_superadmin=Depends(get_superadmin_user)):
+    """
+    Comprehensive health check endpoint. Superadmin-only.
 
     Checks connectivity to:
     - PostgreSQL database

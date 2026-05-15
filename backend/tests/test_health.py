@@ -8,9 +8,21 @@ import redis
 
 from fastapi.testclient import TestClient
 from app.main import app
+from app.routers.admin import get_superadmin_user
 
 client = TestClient(app)
 client.headers.update({"X-Requested-With": "XMLHttpRequest"})
+
+# /health/deep now requires a superadmin user. Tests verify the deep-probe
+# logic, not the auth boundary, so override the dependency for the whole
+# module with a stub user. The real superadmin gate is covered separately
+# in test_security_regressions.py.
+class _StubSuperadmin:
+    id = "test-superadmin"
+    is_superadmin = True
+
+app.dependency_overrides[get_superadmin_user] = lambda: _StubSuperadmin()
+
 
 @pytest.fixture(autouse=True)
 def _clear_module_client_cookies():
@@ -72,8 +84,19 @@ def health_mocks():
         }
 
 
-def test_health_check_all_services_healthy(health_mocks):
+def test_liveness_probe_is_cheap_and_public():
+    """/health is the public liveness probe: returns {"status": "healthy"}
+    and must NOT poll DB / MinIO / Redis / CompreFace. Test confirms a hit
+    works even when those dependencies are NOT mocked — proof that the
+    handler never touches them. "healthy" string preserves wire-compat
+    with scripts/picur-monitor.sh."""
     response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "healthy"}
+
+
+def test_health_check_all_services_healthy(health_mocks):
+    response = client.get("/health/deep")
     assert response.status_code == 200
     data = response.json()
 
@@ -87,7 +110,7 @@ def test_health_check_all_services_healthy(health_mocks):
 def test_health_check_database_unhealthy(health_mocks):
     health_mocks["db"].side_effect = OperationalError("Connection failed", None, None)
 
-    response = client.get("/health")
+    response = client.get("/health/deep")
     assert response.status_code == 200
     data = response.json()
 
@@ -101,7 +124,7 @@ def test_health_check_database_unhealthy(health_mocks):
 def test_health_check_minio_unhealthy(health_mocks):
     health_mocks["minio"].side_effect = _build_s3_error()
 
-    response = client.get("/health")
+    response = client.get("/health/deep")
     assert response.status_code == 200
     data = response.json()
 
@@ -115,7 +138,7 @@ def test_health_check_minio_unhealthy(health_mocks):
 def test_health_check_redis_unhealthy(health_mocks):
     health_mocks["redis"].side_effect = redis.RedisError("Connection refused")
 
-    response = client.get("/health")
+    response = client.get("/health/deep")
     assert response.status_code == 200
     data = response.json()
 
@@ -131,7 +154,7 @@ def test_health_check_multiple_services_unhealthy(health_mocks):
     health_mocks["minio"].side_effect = _build_s3_error()
     health_mocks["redis"].side_effect = redis.RedisError("Connection refused")
 
-    response = client.get("/health")
+    response = client.get("/health/deep")
     assert response.status_code == 200
     data = response.json()
 
@@ -148,7 +171,7 @@ def test_health_check_generic_exception_handling(health_mocks):
     health_mocks["minio"].side_effect = Exception("Unexpected error")
     health_mocks["redis"].side_effect = Exception("Unexpected error")
 
-    response = client.get("/health")
+    response = client.get("/health/deep")
     assert response.status_code == 200
     data = response.json()
 

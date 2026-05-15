@@ -15,7 +15,18 @@ validate_production_secrets()
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="PicUr API", version="1.0.0")
+# Disable interactive docs + OpenAPI schema in production. The whole app is
+# proxied at /api/* by Caddy, so /api/docs and /api/openapi.json would
+# otherwise be reachable from the public internet — leaking the full route
+# inventory + payload shapes + auth requirements to scanners.
+_is_prod = settings.environment.lower() == "production"
+app = FastAPI(
+    title="PicUr API",
+    version="1.0.0",
+    docs_url=None if _is_prod else "/docs",
+    redoc_url=None if _is_prod else "/redoc",
+    openapi_url=None if _is_prod else "/openapi.json",
+)
 
 # Register error handlers
 register_error_handlers(app)
