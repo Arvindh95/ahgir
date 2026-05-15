@@ -13,7 +13,7 @@ Each row tracks how many attempts have been made, the last error
 message, and a `next_attempt_at` we back-off exponentially.
 
 Revision ID: b4e5f6g7h8
-Revises: a3d4e5f6g7
+Revises: f9j2k3l4m5
 Create Date: 2026-05-15 04:00:00.000000
 """
 from alembic import op
@@ -22,7 +22,7 @@ from sqlalchemy.dialects import postgresql
 
 
 revision = 'b4e5f6g7h8'
-down_revision = 'a3d4e5f6g7'
+down_revision = 'f9j2k3l4m5'
 branch_labels = None
 depends_on = None
 
