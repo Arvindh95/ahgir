@@ -60,12 +60,25 @@ services:
     volumes: !reset []
     environment:
       ENVIRONMENT: production
+    command: >
+      /bin/sh -c "python scripts/preflight.py &&
+      rq worker --url redis://redis:6379/0 face_indexing retention default"
     restart: unless-stopped
 
   retention-scheduler:
     volumes: !reset []
     environment:
       ENVIRONMENT: production
+    command: >
+      /bin/sh -c "sleep 60;
+      while true; do
+        if PYTHONPATH=/app python scripts/preflight.py && PYTHONPATH=/app python scripts/run_retention.py; then
+          sleep 86400;
+        else
+          echo 'retention preflight or enqueue failed (exit non-zero); retrying in 1h';
+          sleep 3600;
+        fi;
+      done"
     restart: unless-stopped
 
   frontend:

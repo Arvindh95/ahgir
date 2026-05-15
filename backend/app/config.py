@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     minio_bucket: str = "photos"
     minio_secure: bool = False
     minio_external_secure: bool = False  # True in production (URLs served via HTTPS reverse proxy)
+    # KMS master key set on the MinIO container (format: <name>:<base64-32B>).
+    # The backend never *uses* this value (MinIO does), but mirroring it into
+    # the backend env lets validate_production_secrets() fail fast at startup
+    # instead of waiting for every upload to 400. Empty in dev.
+    minio_kms_secret_key: str = ""
     
     # Redis
     redis_url: str = "redis://redis:6379/0"
@@ -53,6 +58,10 @@ class Settings(BaseSettings):
     compreface_api_url: str = "http://compreface-api:8080"
     compreface_api_key: str = ""  # Recognition service API key
     compreface_detection_api_key: str = ""  # Detection service API key
+    # Mirror of COMPREFACE_DB_PASSWORD (set on the CompreFace postgres + API
+    # containers). Backend doesn't connect to that DB, but mirroring lets
+    # validate_production_secrets() refuse the upstream default "postgres".
+    compreface_db_password: str = ""
     
     # Frontend URL (used for guest links and QR codes)
     frontend_url: str = "http://localhost:3000"
@@ -121,6 +130,17 @@ def _looks_like_placeholder(value: str) -> bool:
         return False
     lowered = value.lower()
     return any(token in lowered for token in _PLACEHOLDER_TOKENS)
+
+
+def _password_from_url(url: str) -> str:
+    """Pull the password out of a sqlalchemy/postgres URL. Returns '' on parse
+    failure or when the URL has no password — caller treats both as 'missing'."""
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        return parsed.password or ""
+    except Exception:
+        return ""
 
 
 def _looks_like_production() -> bool:
@@ -216,6 +236,27 @@ def validate_production_secrets():
         errors.append("MINIO_SECRET_KEY is unset or using dev default")
     elif _looks_like_placeholder(settings.minio_secret_key):
         errors.append("MINIO_SECRET_KEY still contains a placeholder (e.g. CHANGE_ME_*)")
+    # KMS key mirror — storage.py uses sse=SseS3() so MinIO MUST have been
+    # started with MINIO_KMS_SECRET_KEY or every upload 400s. Fail fast.
+    if not settings.minio_kms_secret_key:
+        errors.append("MINIO_KMS_SECRET_KEY is unset (required for SSE-S3 uploads)")
+    elif _looks_like_placeholder(settings.minio_kms_secret_key):
+        errors.append("MINIO_KMS_SECRET_KEY still contains a placeholder (e.g. CHANGE_ME_*)")
+    elif ":" not in settings.minio_kms_secret_key:
+        errors.append("MINIO_KMS_SECRET_KEY must be in '<name>:<base64-key>' format")
+    # App Postgres password — parse from DATABASE_URL since that's what the
+    # process actually connects with. Catches the silent dev-default leak
+    # where docker-compose.yml defaults POSTGRES_PASSWORD to picur_dev_only.
+    db_pw = _password_from_url(settings.database_url)
+    if db_pw in ("", "picur", "picur_dev_only", "postgres"):
+        errors.append("DATABASE_URL password is unset or using a dev default")
+    elif _looks_like_placeholder(db_pw):
+        errors.append("DATABASE_URL password still contains a placeholder (e.g. CHANGE_ME_*)")
+    # CompreFace DB password — mirrored from COMPREFACE_DB_PASSWORD env.
+    if settings.compreface_db_password in ("", "postgres"):
+        errors.append("COMPREFACE_DB_PASSWORD is unset or using the upstream default 'postgres'")
+    elif _looks_like_placeholder(settings.compreface_db_password):
+        errors.append("COMPREFACE_DB_PASSWORD still contains a placeholder (e.g. CHANGE_ME_*)")
     if "localhost" in settings.cors_origins.lower() or "127.0.0.1" in settings.cors_origins:
         errors.append(f"CORS_ORIGINS contains localhost in production: {settings.cors_origins}")
     if _looks_like_placeholder(settings.cors_origins):
