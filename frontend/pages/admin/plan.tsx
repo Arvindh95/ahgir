@@ -6,6 +6,7 @@ import ProtectedRoute from '@/components/ProtectedRoute'
 import UpgradeModal from '@/components/UpgradeModal'
 import { paymentService, UserTierInfo } from '@/lib/payments'
 import { eventService, Event } from '@/lib/events'
+import { authService } from '@/lib/auth'
 import { Zap, Loader2 } from 'lucide-react'
 
 const TIER_BADGE: Record<string, string> = {
@@ -28,6 +29,12 @@ export default function PlanAndUsagePage() {
     const load = async () => {
       try {
         setIsLoading(true)
+        const me = await authService.getMe()
+        if (cancelled) return
+        if (me.is_superadmin) {
+          router.replace('/admin/events')
+          return
+        }
         const [tier, eventList] = await Promise.all([
           paymentService.getMyTier(),
           eventService.getEvents(),
@@ -44,7 +51,7 @@ export default function PlanAndUsagePage() {
     }
     load()
     return () => { cancelled = true }
-  }, [])
+  }, [router])
 
   const tierName = userTier?.tier_name || 'free'
   const canUpgrade = tierName !== 'pro' && tierName !== 'custom'
