@@ -1,6 +1,37 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Flag, Loader2, X } from 'lucide-react'
 import { abuseService, ReportFilePayload } from '@/lib/abuse'
+
+const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || ''
+const TURNSTILE_SCRIPT_SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'
+
+declare global {
+  interface Window {
+    turnstile?: {
+      render: (selector: string | HTMLElement, opts: any) => string
+      reset: (widgetId?: string) => void
+      remove: (widgetId: string) => void
+    }
+  }
+}
+
+function loadTurnstileScript(): Promise<void> {
+  if (typeof window === 'undefined') return Promise.resolve()
+  if (window.turnstile) return Promise.resolve()
+  return new Promise((resolve) => {
+    const existing = document.querySelector(`script[src="${TURNSTILE_SCRIPT_SRC}"]`) as HTMLScriptElement | null
+    if (existing) {
+      existing.addEventListener('load', () => resolve())
+      return
+    }
+    const s = document.createElement('script')
+    s.src = TURNSTILE_SCRIPT_SRC
+    s.async = true
+    s.defer = true
+    s.onload = () => resolve()
+    document.head.appendChild(s)
+  })
+}
 
 interface ReportPhotoModalProps {
   open: boolean
@@ -24,6 +55,9 @@ export default function ReportPhotoModal({ open, imageId, onClose }: ReportPhoto
   const [submitting, setSubmitting] = useState(false)
   const [done, setDone] = useState(false)
   const [error, setError] = useState('')
+  const [turnstileToken, setTurnstileToken] = useState('')
+  const turnstileWidgetIdRef = useRef<string | null>(null)
+  const turnstileMountRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -32,12 +66,43 @@ export default function ReportPhotoModal({ open, imageId, onClose }: ReportPhoto
     setEmail('')
     setDone(false)
     setError('')
+    setTurnstileToken('')
     const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
     document.addEventListener('keydown', handleKey)
     return () => document.removeEventListener('keydown', handleKey)
   }, [open, onClose])
 
+  // Mount the Turnstile widget when the modal opens (and a site key is
+  // configured). Reset on close so the token isn't reused on the next open.
+  useEffect(() => {
+    if (!open || !TURNSTILE_SITE_KEY) return
+    let cancelled = false
+    loadTurnstileScript().then(() => {
+      if (cancelled || !window.turnstile || !turnstileMountRef.current) return
+      // Some browsers preserve the inner DOM between mounts; clear to be safe.
+      turnstileMountRef.current.innerHTML = ''
+      const id = window.turnstile.render(turnstileMountRef.current, {
+        sitekey: TURNSTILE_SITE_KEY,
+        theme: 'dark',
+        callback: (token: string) => setTurnstileToken(token),
+        'expired-callback': () => setTurnstileToken(''),
+        'error-callback': () => setTurnstileToken(''),
+      })
+      turnstileWidgetIdRef.current = id
+    })
+    return () => {
+      cancelled = true
+      if (turnstileWidgetIdRef.current && window.turnstile) {
+        try { window.turnstile.remove(turnstileWidgetIdRef.current) } catch {}
+      }
+      turnstileWidgetIdRef.current = null
+    }
+  }, [open])
+
   if (!open) return null
+
+  const turnstileEnabled = !!TURNSTILE_SITE_KEY
+  const submitDisabled = !category || submitting || (turnstileEnabled && !turnstileToken)
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -50,11 +115,20 @@ export default function ReportPhotoModal({ open, imageId, onClose }: ReportPhoto
         category,
         description: description.trim() || undefined,
         reporter_email: email.trim() || undefined,
+        turnstile_token: turnstileEnabled ? turnstileToken : undefined,
       })
       setDone(true)
     } catch (err: any) {
-      if (err.response?.status === 429) {
+      const code = err.response?.status
+      if (code === 429) {
         setError('You have submitted too many reports recently. Please try again later.')
+      } else if (code === 403) {
+        setError('Captcha verification failed. Please try the challenge again.')
+        // Reset the widget so the user can retry.
+        if (turnstileWidgetIdRef.current && window.turnstile) {
+          try { window.turnstile.reset(turnstileWidgetIdRef.current) } catch {}
+        }
+        setTurnstileToken('')
       } else {
         setError('Could not submit report. Please try again later.')
       }
@@ -166,6 +240,12 @@ export default function ReportPhotoModal({ open, imageId, onClose }: ReportPhoto
               }}
             />
 
+            {turnstileEnabled && (
+              <div className="pt-2">
+                <div ref={turnstileMountRef} />
+              </div>
+            )}
+
             {error && (
               <div className="p-2 bg-red-500/10 border border-red-500/20 rounded text-xs text-red-400">
                 {error}
@@ -183,7 +263,7 @@ export default function ReportPhotoModal({ open, imageId, onClose }: ReportPhoto
               </button>
               <button
                 type="submit"
-                disabled={!category || submitting}
+                disabled={submitDisabled}
                 className="px-4 py-2 bg-orange-600 text-white rounded-lg text-sm font-semibold hover:bg-orange-700 transition-colors disabled:opacity-50 flex items-center gap-2"
               >
                 {submitting && <Loader2 className="w-4 h-4 animate-spin" />}

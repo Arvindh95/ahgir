@@ -18,6 +18,9 @@ export interface AbuseReportRow {
   created_at: string
   reviewed_at?: string | null
   reviewed_by_email?: string | null
+  duplicate_count?: number
+  is_possible_self_report?: boolean
+  reporter_ban_state?: 'softban' | 'permaban' | null
 }
 
 export interface AbuseReportListResponse {
@@ -40,6 +43,7 @@ export interface ReportFilePayload {
   category: 'csam' | 'nudity' | 'harassment' | 'copyright' | 'violence' | 'other'
   description?: string
   reporter_email?: string
+  turnstile_token?: string
 }
 
 export const abuseService = {
@@ -50,6 +54,15 @@ export const abuseService = {
     const body = { ...payload, website: '' }
     const res = await api.post('/report', body)
     return res.data
+  },
+
+  async dismissBySource(opts: { reporter_ip?: string; reporter_email?: string }): Promise<number> {
+    const res = await api.post('/admin/abuse-reports/dismiss-by-source', opts)
+    return res.data.dismissed ?? 0
+  },
+
+  async clearBan(reporter_ip: string): Promise<void> {
+    await api.post('/admin/abuse-reports/clear-ban', { reporter_ip })
   },
 
   async getPendingCount(): Promise<number> {

@@ -5,7 +5,8 @@ import AdminLayout from '@/components/AdminLayout'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import { abuseService, AbuseReportRow } from '@/lib/abuse'
 import { authService } from '@/lib/auth'
-import { Flag, ArrowRight, Loader2 } from 'lucide-react'
+import { useToast } from '@/hooks/useToast'
+import { Flag, ArrowRight, Loader2, Ban, ShieldOff, AlertTriangle } from 'lucide-react'
 
 const STATUSES = ['pending', 'reviewing', 'dismissed', 'quarantined', 'removed'] as const
 const CATEGORIES = ['csam', 'nudity', 'harassment', 'copyright', 'violence', 'other'] as const
@@ -33,6 +34,7 @@ function truncate(s: string | null | undefined, n: number) {
 
 export default function AbuseQueuePage() {
   const router = useRouter()
+  const { toast } = useToast()
   const [items, setItems] = useState<AbuseReportRow[]>([])
   const [total, setTotal] = useState(0)
   const [statusFilter, setStatusFilter] = useState<string>('pending')
@@ -41,6 +43,53 @@ export default function AbuseQueuePage() {
   const [offset, setOffset] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [bulkLoading, setBulkLoading] = useState<string | null>(null)
+
+  const reload = () => setOffset((o) => o)
+  const refreshAfterAction = async () => {
+    const data = await abuseService.list({
+      status: statusFilter,
+      category: categoryFilter || undefined,
+      sort,
+      limit: PAGE_SIZE,
+      offset,
+    })
+    setItems(data.items)
+    setTotal(data.total)
+  }
+
+  const handleDismissBySource = async (row: AbuseReportRow) => {
+    const source = row.reporter_ip ?? row.reporter_email ?? ''
+    if (!source) return
+    if (!window.confirm(`Dismiss every pending/reviewing report from ${source}?`)) return
+    try {
+      setBulkLoading(row.id)
+      const n = await abuseService.dismissBySource(
+        row.reporter_ip ? { reporter_ip: row.reporter_ip } : { reporter_email: row.reporter_email! }
+      )
+      toast(`Dismissed ${n} report${n === 1 ? '' : 's'}.`, 'success')
+      await refreshAfterAction()
+    } catch (err: any) {
+      toast(err.response?.data?.detail || 'Failed to bulk-dismiss', 'error')
+    } finally {
+      setBulkLoading(null)
+    }
+  }
+
+  const handleClearBan = async (row: AbuseReportRow) => {
+    if (!row.reporter_ip) return
+    if (!window.confirm(`Clear ban on ${row.reporter_ip}? They will be able to file reports again immediately.`)) return
+    try {
+      setBulkLoading(row.id)
+      await abuseService.clearBan(row.reporter_ip)
+      toast('Ban cleared.', 'success')
+      await refreshAfterAction()
+    } catch (err: any) {
+      toast(err.response?.data?.detail || 'Failed to clear ban', 'error')
+    } finally {
+      setBulkLoading(null)
+    }
+  }
 
   useEffect(() => {
     authService.getMe().then((u) => {
@@ -172,10 +221,36 @@ export default function AbuseQueuePage() {
                           <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase border ${CATEGORY_COLOR[r.category] ?? CATEGORY_COLOR.other}`}>
                             {r.category}
                           </span>
+                          {!!r.duplicate_count && r.duplicate_count > 0 && (
+                            <div className="mt-1 inline-block px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                              +{r.duplicate_count} duplicate
+                            </div>
+                          )}
+                          {r.is_possible_self_report && (
+                            <div className="mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-yellow-500/20 text-yellow-300 border border-yellow-500/30">
+                              <AlertTriangle className="w-3 h-3" /> possible self-report
+                            </div>
+                          )}
                         </td>
                         <td className="px-4 py-3 truncate max-w-xs">{r.event_name || '—'}</td>
                         <td className="px-4 py-3 font-mono text-xs text-gray-400 truncate max-w-xs">{r.filename || '—'}</td>
-                        <td className="px-4 py-3 text-gray-400 truncate max-w-[12rem]">{r.reporter_email || '—'}</td>
+                        <td className="px-4 py-3 text-gray-400 truncate max-w-[14rem]">
+                          <div className="truncate">{r.reporter_email || '—'}</div>
+                          {r.reporter_ip && (
+                            <div className="font-mono text-[10px] text-gray-500 truncate flex items-center gap-1">
+                              {r.reporter_ip}
+                              {r.reporter_ban_state && (
+                                <span className={`px-1 rounded text-[9px] font-bold ${
+                                  r.reporter_ban_state === 'permaban'
+                                    ? 'bg-red-500/30 text-red-300'
+                                    : 'bg-orange-500/30 text-orange-300'
+                                }`}>
+                                  {r.reporter_ban_state}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </td>
                         <td className="px-4 py-3 text-gray-400 max-w-md">{truncate(r.description, 80) || '—'}</td>
                         <td className="px-4 py-3 text-gray-400 whitespace-nowrap">{formatDate(r.created_at)}</td>
                         <td className="px-4 py-3">
@@ -190,12 +265,36 @@ export default function AbuseQueuePage() {
                           </span>
                         </td>
                         <td className="px-4 py-3">
-                          <button
-                            onClick={() => router.push(`/admin/abuse-queue/${r.id}`)}
-                            className="inline-flex items-center gap-1 px-3 py-1 text-xs bg-orange-500/10 text-orange-400 border border-orange-500/30 rounded hover:bg-orange-500/20 transition-colors"
-                          >
-                            Review <ArrowRight className="w-3 h-3" />
-                          </button>
+                          <div className="flex flex-col gap-1 items-end">
+                            <button
+                              onClick={() => router.push(`/admin/abuse-queue/${r.id}`)}
+                              className="inline-flex items-center gap-1 px-3 py-1 text-xs bg-orange-500/10 text-orange-400 border border-orange-500/30 rounded hover:bg-orange-500/20 transition-colors"
+                            >
+                              Review <ArrowRight className="w-3 h-3" />
+                            </button>
+                            {(r.reporter_ip || r.reporter_email) && r.status !== 'dismissed' && r.status !== 'removed' && (
+                              <button
+                                onClick={() => handleDismissBySource(r)}
+                                disabled={bulkLoading === r.id}
+                                title="Dismiss every pending/reviewing report from this reporter"
+                                className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] bg-gray-500/10 text-gray-300 border border-gray-500/30 rounded hover:bg-gray-500/20 transition-colors disabled:opacity-50"
+                              >
+                                {bulkLoading === r.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Ban className="w-3 h-3" />}
+                                Dismiss-all
+                              </button>
+                            )}
+                            {r.reporter_ban_state && r.reporter_ip && (
+                              <button
+                                onClick={() => handleClearBan(r)}
+                                disabled={bulkLoading === r.id}
+                                title="Clear the soft/permaban on this reporter IP"
+                                className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] bg-green-500/10 text-green-300 border border-green-500/30 rounded hover:bg-green-500/20 transition-colors disabled:opacity-50"
+                              >
+                                {bulkLoading === r.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <ShieldOff className="w-3 h-3" />}
+                                Clear ban
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     ))}

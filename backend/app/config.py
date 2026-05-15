@@ -122,6 +122,37 @@ class Settings(BaseSettings):
     # protection.
     abuse_report_rate_limit: int = 5
     abuse_report_rate_window_hours: int = 1
+    # Defeats trivial IP-rotation within the same provider range.
+    abuse_report_subnet_rate_limit: int = 15
+    abuse_report_subnet_rate_window_hours: int = 1
+    # Per-image dedupe: silent-drop the 4th+ report on the same image_id
+    # in a 24h window. Operators still see the dedup count via the
+    # duplicate_count field on the queue row, so coordinated mass-
+    # reports still influence priority but don't multiply queue rows.
+    abuse_report_image_dedupe_limit: int = 3
+    abuse_report_image_dedupe_window_hours: int = 24
+    # Catches mass-targeting a single photographer (vs spreading across
+    # many events from one bad actor).
+    abuse_report_event_rate_limit: int = 30
+    abuse_report_event_rate_window_hours: int = 1
+    # Per-reporter_email cap. Email is unverified so this is a soft signal
+    # — same window as per-IP.
+    abuse_report_email_rate_limit: int = 5
+    abuse_report_email_rate_window_hours: int = 1
+    # Reporter-reputation soft-ban thresholds. Computed over a rolling
+    # 30-day window. Values are 'minimum reports' / 'min dismiss rate'.
+    # First hit silent-drops for 7 days; second hit (more reports, higher
+    # dismiss rate) is permanent until an operator clears it.
+    abuse_report_softban_min_reports: int = 5
+    abuse_report_softban_dismiss_rate: float = 0.80
+    abuse_report_permaban_min_reports: int = 10
+    abuse_report_permaban_dismiss_rate: float = 0.90
+    abuse_report_reputation_window_days: int = 30
+    # Cloudflare Turnstile (bot defence for POST /report). When secret_key
+    # is non-empty, /report requires a valid Turnstile token. Site key is
+    # exposed to the frontend via NEXT_PUBLIC_TURNSTILE_SITE_KEY at build
+    # time — it's a public value, intentionally not pulled in here.
+    cloudflare_turnstile_secret_key: str = ""
     bulk_download_max_images: int = 100
     bulk_download_max_bytes: int = 500 * 1024 * 1024  # 500 MB
     # Per-file upload cap (matches Caddy request_body max_size in prod).

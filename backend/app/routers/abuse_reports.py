@@ -18,21 +18,31 @@ limits, anti-enumeration, soft-ban) — most of that is Phase 2.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, EmailStr, Field
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
 from app.audit import log_action
 from app.cache import cache_delete_pattern
+from app.config import settings
 from app.database import get_db
-from app.models import AbuseReport, Event, Face, Image, User
-from app.rate_limiter import abuse_report_rate_limiter
+from app.models import AbuseReport, AuditLog, Event, Face, Image, User
+from app.rate_limiter import (
+    abuse_report_rate_limiter,
+    abuse_report_subnet_rate_limiter,
+    abuse_report_image_dedupe_limiter,
+    abuse_report_event_rate_limiter,
+    abuse_report_email_rate_limiter,
+    redis_client,
+)
 from app.routers.admin import get_superadmin_user
 from app.storage import generate_signed_abuse_review_url
 from app.utils.storage_cleanup import safe_delete_compreface_subject, safe_delete_image_photo
@@ -52,6 +62,88 @@ _VALID_CATEGORIES = {"csam", "nudity", "harassment", "copyright", "violence", "o
 
 _FIXED_THANKS_BODY = {"message": "Thank you. We will review this report shortly."}
 
+# Redis keys for the reputation soft-ban / permaban state. Stored in Redis
+# rather than a new table — soft-ban has a TTL (rolls off naturally) and
+# permaban is a single-key flag the operator can DEL via /clear-ban.
+_PERMABAN_KEY = "abuse:permaban:{ip}"
+_SOFTBAN_KEY = "abuse:softban:{ip}"
+_SOFTBAN_TTL_SECONDS = 7 * 24 * 3600
+
+
+def _subnet_key(ip: str) -> str:
+    """Derive a /24 (IPv4) or /64 (IPv6) network key for subnet rate limiting.
+
+    Falls back to the raw string on parse failure so a malformed
+    reporter_ip still gets bucketed (one bucket per raw value).
+    """
+    try:
+        addr = ipaddress.ip_address(ip)
+        if isinstance(addr, ipaddress.IPv4Address):
+            net = ipaddress.ip_network(f"{ip}/24", strict=False)
+        else:
+            net = ipaddress.ip_network(f"{ip}/64", strict=False)
+        return str(net)
+    except (ValueError, TypeError):
+        return ip
+
+
+def _check_reputation_ban(db: Session, reporter_ip: str) -> Optional[str]:
+    """Return 'permaban' | 'softban' | None for the given reporter IP.
+
+    Permaban is a Redis flag set on threshold trip — never expires until
+    an operator clears it. Soft-ban is a 7-day TTL flag. The rolling
+    30-day dismiss-rate is recomputed each call (no view, no cache) so
+    a re-evaluation only happens when the limiter waves a request
+    through, i.e. at most ~5 reports/hour per IP.
+    """
+    try:
+        if redis_client.exists(_PERMABAN_KEY.format(ip=reporter_ip)):
+            return "permaban"
+        if redis_client.exists(_SOFTBAN_KEY.format(ip=reporter_ip)):
+            return "softban"
+    except Exception:
+        # Redis hiccup — fall through to DB-only eval rather than failing
+        # closed (which would let a queue-flood through).
+        pass
+
+    window_start = datetime.now(timezone.utc) - timedelta(
+        days=settings.abuse_report_reputation_window_days
+    )
+    counts = (
+        db.query(AbuseReport.status, func.count(AbuseReport.id))
+        .filter(AbuseReport.reporter_ip == reporter_ip)
+        .filter(AbuseReport.created_at >= window_start)
+        .group_by(AbuseReport.status)
+        .all()
+    )
+    counts_by_status = {s: n for s, n in counts}
+    total = sum(counts_by_status.values())
+    dismissed = counts_by_status.get("dismissed", 0)
+    if total < settings.abuse_report_softban_min_reports:
+        return None
+    rate = dismissed / total
+
+    if (
+        total >= settings.abuse_report_permaban_min_reports
+        and rate >= settings.abuse_report_permaban_dismiss_rate
+    ):
+        try:
+            redis_client.set(_PERMABAN_KEY.format(ip=reporter_ip), "1")
+        except Exception:
+            pass
+        return "permaban"
+
+    if rate >= settings.abuse_report_softban_dismiss_rate:
+        try:
+            redis_client.setex(
+                _SOFTBAN_KEY.format(ip=reporter_ip), _SOFTBAN_TTL_SECONDS, "1"
+            )
+        except Exception:
+            pass
+        return "softban"
+
+    return None
+
 
 # ─── Pydantic models ─────────────────────────────────────────────────
 
@@ -64,6 +156,11 @@ class ReportCreateRequest(BaseModel):
     # Honeypot field — frontend NEVER renders this; bots filling every
     # field will populate it and we silently drop the row.
     website: Optional[str] = Field(default=None, max_length=255)
+    # Cloudflare Turnstile token from the front-end widget. Required when
+    # cloudflare_turnstile_secret_key is configured; backend POSTs to
+    # /siteverify before processing. Skipped in dev when the secret is
+    # unset.
+    turnstile_token: Optional[str] = Field(default=None, max_length=4096)
 
 
 class ReportRow(BaseModel):
@@ -84,6 +181,15 @@ class ReportRow(BaseModel):
     created_at: str
     reviewed_at: Optional[str] = None
     reviewed_by_email: Optional[str] = None
+    # Count of additional pending/reviewing reports on the same image in
+    # the dedup window — surfaces the silent-deduplicated reports so
+    # operators see "+N duplicate" without N extra rows.
+    duplicate_count: int = 0
+    # True when the reporter_ip matches recent (24h) admin audit-log
+    # actor activity for the event owner — flags possible self-report.
+    is_possible_self_report: bool = False
+    # Echoes redis-resident ban state for this reporter_ip.
+    reporter_ban_state: Optional[str] = None
 
 
 class ReportListResponse(BaseModel):
@@ -131,26 +237,58 @@ async def file_abuse_report(
     """
     started = time.monotonic()
     reporter_ip = request.client.host if request.client else "unknown"
+    reporter_email = (
+        payload.reporter_email.lower() if payload.reporter_email else None
+    )
 
     # Honeypot — bots fill every field; legit clients never see this one.
+    # Silent 200 + no rate-limit consumption.
     if payload.website:
         logger.info("abuse-report honeypot hit ip=%s", reporter_ip)
         _pad_duration(started)
         return _FIXED_THANKS_BODY
 
+    # Cloudflare Turnstile verification. Only enforced in environments
+    # where the secret is configured (production). Fails closed: a missing
+    # or invalid token returns 403. Network failure to Cloudflare logs a
+    # warning and falls open (so a Cloudflare outage can't lock out real
+    # users; the per-IP/subnet rate limits still protect the queue).
+    if settings.cloudflare_turnstile_secret_key:
+        if not payload.turnstile_token:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Captcha verification required.",
+            )
+        if not _verify_turnstile(payload.turnstile_token, reporter_ip):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Captcha verification failed.",
+            )
+
     # Pydantic max_length=32 already caps the category string. Reject
     # values outside the enum here so the DB CHECK never sees garbage.
     category = (payload.category or "").lower()
     if category not in _VALID_CATEGORIES:
-        # Use a 422-like response shape, not the fixed 200 — this is a
-        # client bug, not a routine submission.
+        # 422 — client bug, not a routine submission.
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"category must be one of {sorted(_VALID_CATEGORIES)}",
         )
 
-    # Per-IP rate limit. Trips a 429 — distinct from the silent honeypot
-    # drop and the silent fake-id 200.
+    # Reputation ban check (Redis-cached, falls back to 30d dismiss-rate
+    # query). Silent-drop returns the same fixed body so a banned actor
+    # can't tell they're banned. Audit row records the drop for ops.
+    ban_state = _check_reputation_ban(db, reporter_ip)
+    if ban_state in ("permaban", "softban"):
+        log_action(
+            db=db, event_id=None, actor_type="system", actor_id=None,
+            action="abuse_report_softban_drop",
+            metadata={"reporter_ip": reporter_ip, "ban_state": ban_state},
+        )
+        _pad_duration(started)
+        return _FIXED_THANKS_BODY
+
+    # Per-IP rate limit. 429 — distinct from silent honeypot drop.
     allowed, retry_after = abuse_report_rate_limiter.check_rate_limit(
         reporter_ip, action="abuse_report"
     )
@@ -160,6 +298,31 @@ async def file_abuse_report(
             detail="Too many reports from your address. Please try again later.",
             headers={"Retry-After": str(retry_after or 3600)},
         )
+
+    # Subnet limit — defeats trivial IP rotation in the same /24 (IPv4)
+    # or /64 (IPv6) range. Same 429 wire shape.
+    subnet = _subnet_key(reporter_ip)
+    allowed, retry_after = abuse_report_subnet_rate_limiter.check_rate_limit(
+        subnet, action="abuse_report_subnet"
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many reports from your network. Please try again later.",
+            headers={"Retry-After": str(retry_after or 3600)},
+        )
+
+    # Per-email limit (soft signal — email is unverified).
+    if reporter_email:
+        allowed, retry_after = abuse_report_email_rate_limiter.check_rate_limit(
+            reporter_email, action="abuse_report_email"
+        )
+        if not allowed:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many reports from this email. Please try again later.",
+                headers={"Retry-After": str(retry_after or 3600)},
+            )
 
     # Parse image_id. Bad UUIDs get the same fixed 200 — leaking "this
     # was malformed" would let a probe enumerate the UUID space by
@@ -176,12 +339,37 @@ async def file_abuse_report(
         _pad_duration(started)
         return _FIXED_THANKS_BODY
 
+    # Per-event_id limit — catches mass-targeting a single photographer.
+    allowed, retry_after = abuse_report_event_rate_limiter.check_rate_limit(
+        str(image.event_id), action="abuse_report_event"
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many reports for this event right now. Please try again later.",
+            headers={"Retry-After": str(retry_after or 3600)},
+        )
+
+    # Per-image_id dedup. 4th+ report on the same image_id is silent-
+    # dropped (still returns 200 — operator sees duplicate_count on the
+    # queue row instead of N separate rows).
+    allowed, _retry = abuse_report_image_dedupe_limiter.check_rate_limit(
+        str(image.id), action="abuse_report_image_dedupe"
+    )
+    if not allowed:
+        logger.info(
+            "abuse-report dedup silent-drop image_id=%s reporter_ip=%s",
+            image.id, reporter_ip,
+        )
+        _pad_duration(started)
+        return _FIXED_THANKS_BODY
+
     report = AbuseReport(
         image_id=image.id,
         event_id=image.event_id,
         category=category,
         description=(payload.description or "").strip() or None,
-        reporter_email=(payload.reporter_email.lower() if payload.reporter_email else None),
+        reporter_email=reporter_email,
         reporter_ip=reporter_ip,
         status="pending",
     )
@@ -202,6 +390,42 @@ def _pad_duration(started: float) -> None:
     remaining = _REPORT_MIN_DURATION_SECONDS - elapsed
     if remaining > 0:
         time.sleep(remaining)
+
+
+_TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
+
+
+def _verify_turnstile(token: str, remote_ip: str) -> bool:
+    """POST the token to Cloudflare /siteverify. Returns True if success=true.
+
+    Network failure → True (fail-open). The per-IP / per-subnet rate
+    limits still cap the abuse rate, so a Cloudflare outage degrades
+    bot-defence without locking out legit users.
+    """
+    import httpx
+    try:
+        resp = httpx.post(
+            _TURNSTILE_VERIFY_URL,
+            data={
+                "secret": settings.cloudflare_turnstile_secret_key,
+                "response": token,
+                "remoteip": remote_ip,
+            },
+            timeout=5.0,
+        )
+        if resp.status_code != 200:
+            logger.warning("Turnstile siteverify HTTP %s", resp.status_code)
+            return True  # fail-open
+        body = resp.json()
+        if body.get("success"):
+            return True
+        logger.info(
+            "Turnstile token rejected ip=%s codes=%s", remote_ip, body.get("error-codes"),
+        )
+        return False
+    except Exception as e:
+        logger.warning("Turnstile siteverify failed (fail-open): %s", e)
+        return True
 
 
 # ─── Superadmin endpoints ────────────────────────────────────────────
@@ -267,11 +491,69 @@ async def list_abuse_reports(
         u.id: u for u in db.query(User).filter(User.id.in_(reviewer_ids)).all()
     } if reviewer_ids else {}
 
+    # Duplicate counts: how many OTHER pending/reviewing reports point at
+    # each image_id in the active dedup window. -1 (subtract self) so a
+    # solo report shows 0, not 1.
+    dup_window = datetime.now(timezone.utc) - timedelta(
+        hours=settings.abuse_report_image_dedupe_window_hours
+    )
+    dup_counts = {}
+    if image_ids:
+        dup_rows = (
+            db.query(AbuseReport.image_id, func.count(AbuseReport.id))
+            .filter(AbuseReport.image_id.in_(image_ids))
+            .filter(AbuseReport.status.in_(("pending", "reviewing")))
+            .filter(AbuseReport.created_at >= dup_window)
+            .group_by(AbuseReport.image_id)
+            .all()
+        )
+        dup_counts = {iid: max(0, n - 1) for iid, n in dup_rows}
+
+    # Self-report flag: reporter_ip matches any recent admin AuditLog
+    # actor activity for the event owner. Batched: one query per page.
+    self_report_flags = set()
+    if rows:
+        owner_id_by_event = {ev.id: ev.owner_user_id for ev in events.values()}
+        # (reporter_ip, owner_user_id) pairs to check
+        pairs = {
+            (r.reporter_ip, owner_id_by_event.get(r.event_id))
+            for r in rows if owner_id_by_event.get(r.event_id)
+        }
+        sr_window = datetime.now(timezone.utc) - timedelta(hours=24)
+        for ip, owner_uid in pairs:
+            if not ip or ip == "unknown":
+                continue
+            hit = (
+                db.query(AuditLog.id)
+                .filter(
+                    AuditLog.actor_type == "admin",
+                    AuditLog.actor_id == owner_uid,
+                    AuditLog.created_at >= sr_window,
+                )
+                .first()
+            )
+            if hit:
+                self_report_flags.add((ip, owner_uid))
+
     items: list[ReportRow] = []
     for r in rows:
         ev = events.get(r.event_id)
         img = images.get(r.image_id)
         reviewer = reviewers.get(r.reviewed_by) if r.reviewed_by else None
+
+        owner_uid = ev.owner_user_id if ev else None
+        sr_flag = bool(r.reporter_ip and owner_uid and (r.reporter_ip, owner_uid) in self_report_flags)
+
+        ban_state = None
+        if r.reporter_ip:
+            try:
+                if redis_client.exists(_PERMABAN_KEY.format(ip=r.reporter_ip)):
+                    ban_state = "permaban"
+                elif redis_client.exists(_SOFTBAN_KEY.format(ip=r.reporter_ip)):
+                    ban_state = "softban"
+            except Exception:
+                pass
+
         items.append(ReportRow(
             id=str(r.id),
             image_id=str(r.image_id),
@@ -290,6 +572,9 @@ async def list_abuse_reports(
             created_at=to_utc_iso(r.created_at),
             reviewed_at=to_utc_iso(r.reviewed_at) if r.reviewed_at else None,
             reviewed_by_email=reviewer.email if reviewer else None,
+            duplicate_count=dup_counts.get(r.image_id, 0),
+            is_possible_self_report=sr_flag,
+            reporter_ban_state=ban_state,
         ))
 
     return ReportListResponse(items=items, total=total, limit=limit, offset=offset)
@@ -479,6 +764,95 @@ async def delete_photo_for_report(
         },
     )
     return ActionResponse(message="Photo permanently removed.", status="removed")
+
+
+class DismissBySourceRequest(BaseModel):
+    reporter_ip: Optional[str] = None
+    reporter_email: Optional[str] = None
+
+
+class DismissBySourceResponse(BaseModel):
+    dismissed: int
+
+
+@router.post(
+    "/admin/abuse-reports/dismiss-by-source",
+    response_model=DismissBySourceResponse,
+)
+async def dismiss_by_source(
+    req: DismissBySourceRequest,
+    current_user: User = Depends(get_superadmin_user),
+    db: Session = Depends(get_db),
+):
+    """Bulk-dismiss every pending/reviewing report from a single source.
+
+    Takes either reporter_ip or reporter_email (or both). Each dismissed
+    row gets its own abuse_review_dismiss audit row so the per-event
+    timeline still surfaces each closure individually.
+    """
+    if not req.reporter_ip and not req.reporter_email:
+        raise HTTPException(status_code=400, detail="reporter_ip or reporter_email required")
+
+    q = db.query(AbuseReport).filter(
+        AbuseReport.status.in_(("pending", "reviewing"))
+    )
+    if req.reporter_ip:
+        q = q.filter(AbuseReport.reporter_ip == req.reporter_ip)
+    if req.reporter_email:
+        q = q.filter(AbuseReport.reporter_email == req.reporter_email.lower())
+
+    targets = q.all()
+    for r in targets:
+        r.status = "dismissed"
+        r.action_taken = "dismiss"
+    db.commit()
+
+    for r in targets:
+        log_action(
+            db=db, event_id=r.event_id, actor_type="admin",
+            actor_id=current_user.id, action="abuse_review_dismiss",
+            metadata={
+                "report_id": str(r.id),
+                "image_id": str(r.image_id),
+                "category": r.category,
+                "bulk_source_ip": req.reporter_ip,
+                "bulk_source_email": req.reporter_email,
+            },
+        )
+
+    return DismissBySourceResponse(dismissed=len(targets))
+
+
+class ClearBanRequest(BaseModel):
+    reporter_ip: str
+
+
+@router.post("/admin/abuse-reports/clear-ban", response_model=ActionResponse)
+async def clear_reporter_ban(
+    req: ClearBanRequest,
+    current_user: User = Depends(get_superadmin_user),
+    db: Session = Depends(get_db),
+):
+    """Drop the soft/permaban Redis flags for a reporter IP.
+
+    Operators clear a ban after confirming the reports were legitimate
+    misjudgments (e.g. real CSAM reports that got actioned as dismiss
+    because the reporter described the wrong category). Removes both
+    flags so the reporter can submit again immediately.
+    """
+    try:
+        redis_client.delete(_PERMABAN_KEY.format(ip=req.reporter_ip))
+        redis_client.delete(_SOFTBAN_KEY.format(ip=req.reporter_ip))
+    except Exception as e:
+        logger.error("Failed to clear reporter ban ip=%s: %s", req.reporter_ip, e)
+        raise HTTPException(status_code=503, detail="Could not reach Redis to clear ban")
+
+    log_action(
+        db=db, event_id=None, actor_type="admin", actor_id=current_user.id,
+        action="abuse_report_ban_cleared",
+        metadata={"reporter_ip": req.reporter_ip},
+    )
+    return ActionResponse(message="Ban cleared.", status="cleared")
 
 
 @router.post(

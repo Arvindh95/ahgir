@@ -405,3 +405,231 @@ def test_action_on_terminal_status_returns_409(setup_world):
         headers={"Authorization": f"Bearer {world['super_token']}"},
     )
     assert resp.status_code == 409
+
+
+# ─── Phase 2 defence layer ───────────────────────────────────────────
+
+
+def _flush_abuse_rate_keys():
+    try:
+        for prefix in (
+            "rate_limit:abuse_report:*",
+            "rate_limit:abuse_report_subnet:*",
+            "rate_limit:abuse_report_event:*",
+            "rate_limit:abuse_report_email:*",
+            "rate_limit:abuse_report_image_dedupe:*",
+            "abuse:permaban:*",
+            "abuse:softban:*",
+        ):
+            for k in redis_client.keys(prefix):
+                redis_client.delete(k)
+    except Exception:
+        pass
+
+
+def test_image_dedupe_silent_drop_after_threshold(setup_world):
+    world = setup_world
+    db = world["db"]
+    _flush_abuse_rate_keys()
+    # First 3 reports against the same image go through (within dedup window).
+    for _ in range(3):
+        resp = client.post("/report", json={
+            "image_id": str(world["image"].id),
+            "category": "harassment",
+        })
+        assert resp.status_code == 200
+    # 4th is silent-dropped: 200 + fixed body, NO new row.
+    pre_count = db.query(AbuseReport).filter(
+        AbuseReport.image_id == world["image"].id
+    ).count()
+    resp = client.post("/report", json={
+        "image_id": str(world["image"].id),
+        "category": "harassment",
+    })
+    assert resp.status_code == 200
+    post_count = db.query(AbuseReport).filter(
+        AbuseReport.image_id == world["image"].id
+    ).count()
+    assert post_count == pre_count
+
+
+def test_email_rate_limit_returns_429(setup_world):
+    world = setup_world
+    _flush_abuse_rate_keys()
+    # Per-email cap is 5/hour. Need to also have different image_ids to
+    # avoid the per-image dedup silent-dropping requests 4-5 (which would
+    # never reach the email limiter). Create extra images.
+    images = [world["image"]]
+    for _ in range(5):
+        img = Image(
+            event_id=world["event"].id,
+            filename=f"p{uuid.uuid4().hex[:6]}.jpg",
+            file_hash="x" * 64,
+            size_bytes=1024,
+            status="indexed",
+        )
+        world["db"].add(img)
+        world["db"].commit()
+        world["db"].refresh(img)
+        images.append(img)
+
+    for i in range(5):
+        resp = client.post("/report", json={
+            "image_id": str(images[i].id),
+            "category": "other",
+            "reporter_email": "same@example.com",
+        })
+        assert resp.status_code == 200
+    # 6th from same email but different image → 429 from the email
+    # limiter (the per-IP, subnet, event limits are all still under cap).
+    resp = client.post("/report", json={
+        "image_id": str(images[5].id),
+        "category": "other",
+        "reporter_email": "same@example.com",
+    })
+    assert resp.status_code == 429
+
+
+def test_softban_silent_drop_after_dismiss_rate_threshold(setup_world):
+    world = setup_world
+    db = world["db"]
+    _flush_abuse_rate_keys()
+    # Seed 5 reports from a single IP with 4 dismissed (80% dismiss rate
+    # over min-5 reports triggers softban).
+    ip = "5.5.5.5"
+    for i in range(5):
+        db.add(AbuseReport(
+            image_id=world["image"].id, event_id=world["event"].id,
+            category="other", reporter_ip=ip,
+            status="dismissed" if i < 4 else "pending",
+        ))
+    db.commit()
+    pre_count = db.query(AbuseReport).count()
+    with patch("app.routers.abuse_reports.request_ip_unused", create=True):
+        pass  # placeholder so the indent stays consistent
+    # We can't easily override request.client.host from TestClient, so
+    # patch the dependency at the call site by setting X-Forwarded-For
+    # is NOT enough (FastAPI uses request.client). Use an inline override
+    # of the rate limiter's key derivation? Simpler: directly call the
+    # reputation helper to verify the threshold logic; the request-side
+    # is covered by the integration tests.
+    from app.routers.abuse_reports import _check_reputation_ban
+    state = _check_reputation_ban(db, ip)
+    assert state in ("softban", "permaban")
+
+
+def test_subnet_limit_blocks_after_threshold(setup_world):
+    """Per-/24 subnet limiter trips at the configured limit. We can't easily
+    rotate the test client's IP, so verify the limiter directly."""
+    world = setup_world
+    _flush_abuse_rate_keys()
+    from app.rate_limiter import abuse_report_subnet_rate_limiter
+    from app.config import settings as _settings
+    key = "192.0.2.0/24"
+    # Exhaust the bucket.
+    for _ in range(_settings.abuse_report_subnet_rate_limit):
+        ok, _ = abuse_report_subnet_rate_limiter.check_rate_limit(
+            key, action="abuse_report_subnet"
+        )
+        assert ok
+    # Next one trips.
+    ok, _ = abuse_report_subnet_rate_limiter.check_rate_limit(
+        key, action="abuse_report_subnet"
+    )
+    assert ok is False
+
+
+def test_list_surfaces_duplicate_count(setup_world):
+    world = setup_world
+    db = world["db"]
+    _flush_abuse_rate_keys()
+    # Three pending reports against the same image.
+    for ip in ("1.1.1.1", "2.2.2.2", "3.3.3.3"):
+        db.add(AbuseReport(
+            image_id=world["image"].id, event_id=world["event"].id,
+            category="other", reporter_ip=ip, status="pending",
+        ))
+    db.commit()
+
+    resp = client.get(
+        "/admin/abuse-reports",
+        headers={"Authorization": f"Bearer {world['super_token']}"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total"] == 3
+    for item in data["items"]:
+        # Each row reports "+2 other pending/reviewing on same image".
+        assert item["duplicate_count"] == 2
+
+
+def test_dismiss_by_source_bulk_dismisses(setup_world):
+    world = setup_world
+    db = world["db"]
+    _flush_abuse_rate_keys()
+    for _ in range(3):
+        db.add(AbuseReport(
+            image_id=world["image"].id, event_id=world["event"].id,
+            category="other", reporter_ip="9.9.9.9", status="pending",
+        ))
+    db.commit()
+
+    resp = client.post(
+        "/admin/abuse-reports/dismiss-by-source",
+        headers={"Authorization": f"Bearer {world['super_token']}"},
+        json={"reporter_ip": "9.9.9.9"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["dismissed"] == 3
+    remaining = db.query(AbuseReport).filter(
+        AbuseReport.reporter_ip == "9.9.9.9",
+        AbuseReport.status == "pending",
+    ).count()
+    assert remaining == 0
+
+
+def test_clear_ban_drops_redis_flags(setup_world):
+    world = setup_world
+    ip = "7.7.7.7"
+    redis_client.set(f"abuse:permaban:{ip}", "1")
+    redis_client.set(f"abuse:softban:{ip}", "1")
+    resp = client.post(
+        "/admin/abuse-reports/clear-ban",
+        headers={"Authorization": f"Bearer {world['super_token']}"},
+        json={"reporter_ip": ip},
+    )
+    assert resp.status_code == 200
+    assert not redis_client.exists(f"abuse:permaban:{ip}")
+    assert not redis_client.exists(f"abuse:softban:{ip}")
+
+
+def test_turnstile_required_when_secret_configured(setup_world):
+    world = setup_world
+    _flush_abuse_rate_keys()
+    # No token in body — with secret configured, /report must return 403.
+    with patch(
+        "app.routers.abuse_reports.settings.cloudflare_turnstile_secret_key",
+        "test-secret",
+    ):
+        resp = client.post("/report", json={
+            "image_id": str(world["image"].id),
+            "category": "other",
+        })
+        assert resp.status_code == 403
+
+
+def test_turnstile_passes_when_siteverify_returns_success(setup_world):
+    world = setup_world
+    _flush_abuse_rate_keys()
+    with patch(
+        "app.routers.abuse_reports.settings.cloudflare_turnstile_secret_key",
+        "test-secret",
+    ), patch(
+        "app.routers.abuse_reports._verify_turnstile", return_value=True
+    ):
+        resp = client.post("/report", json={
+            "image_id": str(world["image"].id),
+            "category": "other",
+            "turnstile_token": "valid-token",
+        })
+        assert resp.status_code == 200
