@@ -87,9 +87,12 @@ def _baseline_prod_config(monkeypatch):
         "smtp_from_email": "noreply@picur.my",
         "compreface_api_key": "real-recognition",
         "compreface_detection_api_key": "real-detection",
+        "compreface_db_password": "real-frs-pw",
         "minio_secret_key": "real-minio-secret",
+        "minio_kms_secret_key": "picur-master:" + ("a" * 44),
         "cors_origins": "https://picur.my",
         "frontend_url": "https://picur.my",
+        "database_url": "postgresql://picur:real-strong-pw@postgres:5432/picur",
     }
     for k, v in valid.items():
         monkeypatch.setattr(config.settings, k, v)
