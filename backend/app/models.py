@@ -390,8 +390,8 @@ class AbuseReport(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     image_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("images.id", ondelete="CASCADE"),
-        nullable=False,
+        ForeignKey("images.id", ondelete="SET NULL"),
+        nullable=True,
         index=True,
     )
     event_id = Column(

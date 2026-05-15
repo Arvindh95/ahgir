@@ -58,6 +58,10 @@ export default function ReportPhotoModal({ open, imageId, onClose }: ReportPhoto
   const [turnstileToken, setTurnstileToken] = useState('')
   const turnstileWidgetIdRef = useRef<string | null>(null)
   const turnstileMountRef = useRef<HTMLDivElement | null>(null)
+  // Uncontrolled native input — bots that auto-fill every field populate
+  // it, real users never see it. Submit reads ref.current.value and only
+  // passes it through if truthy (handled in abuseService.fileReport).
+  const honeypotRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -116,6 +120,7 @@ export default function ReportPhotoModal({ open, imageId, onClose }: ReportPhoto
         description: description.trim() || undefined,
         reporter_email: email.trim() || undefined,
         turnstile_token: turnstileEnabled ? turnstileToken : undefined,
+        honeypot: honeypotRef.current?.value || undefined,
       })
       setDone(true)
     } catch (err: any) {
@@ -220,10 +225,12 @@ export default function ReportPhotoModal({ open, imageId, onClose }: ReportPhoto
               </p>
             </div>
 
-            {/* Honeypot — visually hidden + autocomplete off. Bots that fill
-                every field will populate this and the backend silently drops
-                the row. Real users never see or touch it. */}
+            {/* Honeypot — visually hidden + autocomplete off + tabIndex=-1.
+                Bots that auto-fill every field populate this; submit reads
+                the ref and forwards a non-empty value, which the backend
+                drops silently. Real users never see or touch it. */}
             <input
+              ref={honeypotRef}
               type="text"
               name="website"
               tabIndex={-1}
@@ -236,7 +243,6 @@ export default function ReportPhotoModal({ open, imageId, onClose }: ReportPhoto
                 opacity: 0,
                 height: 0,
                 width: 0,
-                pointerEvents: 'none',
               }}
             />
 

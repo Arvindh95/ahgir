@@ -18,12 +18,15 @@ limits, anti-enumeration, soft-ban) — most of that is Phase 2.
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import logging
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+
+import httpx
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, EmailStr, Field
@@ -185,11 +188,20 @@ class ReportRow(BaseModel):
     # the dedup window — surfaces the silent-deduplicated reports so
     # operators see "+N duplicate" without N extra rows.
     duplicate_count: int = 0
-    # True when the reporter_ip matches recent (24h) admin audit-log
-    # actor activity for the event owner — flags possible self-report.
+    # Always False for now — the self-report heuristic requires storing
+    # the actor IP on every admin audit row to be useful, which is a
+    # standalone migration + log_action refactor. Kept on the schema so
+    # the frontend type stays stable when the feature lands; meanwhile
+    # the badge has been removed from the queue UI to avoid leaking a
+    # misleading signal (the previous query compared owner activity
+    # timestamps only, no IP equality, producing routine false-positives).
     is_possible_self_report: bool = False
     # Echoes redis-resident ban state for this reporter_ip.
     reporter_ban_state: Optional[str] = None
+    # Live status of the underlying image — distinct from report.status.
+    # Lets the review screen render the Restore button when the image
+    # is currently quarantined regardless of what the report itself says.
+    image_status: Optional[str] = None
 
 
 class ReportListResponse(BaseModel):
@@ -245,25 +257,8 @@ async def file_abuse_report(
     # Silent 200 + no rate-limit consumption.
     if payload.website:
         logger.info("abuse-report honeypot hit ip=%s", reporter_ip)
-        _pad_duration(started)
+        await _pad_duration(started)
         return _FIXED_THANKS_BODY
-
-    # Cloudflare Turnstile verification. Only enforced in environments
-    # where the secret is configured (production). Fails closed: a missing
-    # or invalid token returns 403. Network failure to Cloudflare logs a
-    # warning and falls open (so a Cloudflare outage can't lock out real
-    # users; the per-IP/subnet rate limits still protect the queue).
-    if settings.cloudflare_turnstile_secret_key:
-        if not payload.turnstile_token:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Captcha verification required.",
-            )
-        if not _verify_turnstile(payload.turnstile_token, reporter_ip):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Captcha verification failed.",
-            )
 
     # Pydantic max_length=32 already caps the category string. Reject
     # values outside the enum here so the DB CHECK never sees garbage.
@@ -275,20 +270,9 @@ async def file_abuse_report(
             detail=f"category must be one of {sorted(_VALID_CATEGORIES)}",
         )
 
-    # Reputation ban check (Redis-cached, falls back to 30d dismiss-rate
-    # query). Silent-drop returns the same fixed body so a banned actor
-    # can't tell they're banned. Audit row records the drop for ops.
-    ban_state = _check_reputation_ban(db, reporter_ip)
-    if ban_state in ("permaban", "softban"):
-        log_action(
-            db=db, event_id=None, actor_type="system", actor_id=None,
-            action="abuse_report_softban_drop",
-            metadata={"reporter_ip": reporter_ip, "ban_state": ban_state},
-        )
-        _pad_duration(started)
-        return _FIXED_THANKS_BODY
-
-    # Per-IP rate limit. 429 — distinct from silent honeypot drop.
+    # Per-IP rate limit FIRST — cheapest check, runs before Turnstile so
+    # invalid-token floods can't tie up async workers on the upstream
+    # siteverify call. 429 — distinct from silent honeypot drop.
     allowed, retry_after = abuse_report_rate_limiter.check_rate_limit(
         reporter_ip, action="abuse_report"
     )
@@ -312,6 +296,36 @@ async def file_abuse_report(
             headers={"Retry-After": str(retry_after or 3600)},
         )
 
+    # Cloudflare Turnstile verification — runs AFTER cheap rate limits so
+    # an attacker can't burn async-worker capacity on siteverify calls.
+    # Fails closed: a missing or invalid token returns 403. Network
+    # failure to Cloudflare logs a warning and falls open (per-IP/subnet
+    # limits above still cap the abuse rate).
+    if settings.cloudflare_turnstile_secret_key:
+        if not payload.turnstile_token:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Captcha verification required.",
+            )
+        if not await _verify_turnstile(payload.turnstile_token, reporter_ip):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Captcha verification failed.",
+            )
+
+    # Reputation ban check (Redis-cached, falls back to 30d dismiss-rate
+    # query). Silent-drop returns the same fixed body so a banned actor
+    # can't tell they're banned. Audit row records the drop for ops.
+    ban_state = _check_reputation_ban(db, reporter_ip)
+    if ban_state in ("permaban", "softban"):
+        log_action(
+            db=db, event_id=None, actor_type="system", actor_id=None,
+            action="abuse_report_softban_drop",
+            metadata={"reporter_ip": reporter_ip, "ban_state": ban_state},
+        )
+        await _pad_duration(started)
+        return _FIXED_THANKS_BODY
+
     # Per-email limit (soft signal — email is unverified).
     if reporter_email:
         allowed, retry_after = abuse_report_email_rate_limiter.check_rate_limit(
@@ -330,13 +344,13 @@ async def file_abuse_report(
     try:
         image_uuid = uuid.UUID(payload.image_id)
     except (ValueError, TypeError):
-        _pad_duration(started)
+        await _pad_duration(started)
         return _FIXED_THANKS_BODY
 
     image = db.query(Image).filter(Image.id == image_uuid).first()
     if not image:
         # Anti-enumeration: same response as a successful submission.
-        _pad_duration(started)
+        await _pad_duration(started)
         return _FIXED_THANKS_BODY
 
     # Per-event_id limit — catches mass-targeting a single photographer.
@@ -361,7 +375,7 @@ async def file_abuse_report(
             "abuse-report dedup silent-drop image_id=%s reporter_ip=%s",
             image.id, reporter_ip,
         )
-        _pad_duration(started)
+        await _pad_duration(started)
         return _FIXED_THANKS_BODY
 
     report = AbuseReport(
@@ -384,35 +398,39 @@ async def file_abuse_report(
     return _FIXED_THANKS_BODY
 
 
-def _pad_duration(started: float) -> None:
-    """Hold the request open until at least _REPORT_MIN_DURATION_SECONDS."""
+async def _pad_duration(started: float) -> None:
+    """Hold the request open until at least _REPORT_MIN_DURATION_SECONDS.
+
+    asyncio.sleep so the event loop can serve other requests while we
+    pad — time.sleep would block the worker thread.
+    """
     elapsed = time.monotonic() - started
     remaining = _REPORT_MIN_DURATION_SECONDS - elapsed
     if remaining > 0:
-        time.sleep(remaining)
+        await asyncio.sleep(remaining)
 
 
 _TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 
 
-def _verify_turnstile(token: str, remote_ip: str) -> bool:
+async def _verify_turnstile(token: str, remote_ip: str) -> bool:
     """POST the token to Cloudflare /siteverify. Returns True if success=true.
 
+    Async httpx so the event loop stays free during the upstream call.
     Network failure → True (fail-open). The per-IP / per-subnet rate
-    limits still cap the abuse rate, so a Cloudflare outage degrades
-    bot-defence without locking out legit users.
+    limits in the caller still cap the abuse rate, so a Cloudflare
+    outage degrades bot-defence without locking out legit users.
     """
-    import httpx
     try:
-        resp = httpx.post(
-            _TURNSTILE_VERIFY_URL,
-            data={
-                "secret": settings.cloudflare_turnstile_secret_key,
-                "response": token,
-                "remoteip": remote_ip,
-            },
-            timeout=5.0,
-        )
+        async with httpx.AsyncClient(timeout=5.0) as client_:
+            resp = await client_.post(
+                _TURNSTILE_VERIFY_URL,
+                data={
+                    "secret": settings.cloudflare_turnstile_secret_key,
+                    "response": token,
+                    "remoteip": remote_ip,
+                },
+            )
         if resp.status_code != 200:
             logger.warning("Turnstile siteverify HTTP %s", resp.status_code)
             return True  # fail-open
@@ -509,31 +527,11 @@ async def list_abuse_reports(
         )
         dup_counts = {iid: max(0, n - 1) for iid, n in dup_rows}
 
-    # Self-report flag: reporter_ip matches any recent admin AuditLog
-    # actor activity for the event owner. Batched: one query per page.
-    self_report_flags = set()
-    if rows:
-        owner_id_by_event = {ev.id: ev.owner_user_id for ev in events.values()}
-        # (reporter_ip, owner_user_id) pairs to check
-        pairs = {
-            (r.reporter_ip, owner_id_by_event.get(r.event_id))
-            for r in rows if owner_id_by_event.get(r.event_id)
-        }
-        sr_window = datetime.now(timezone.utc) - timedelta(hours=24)
-        for ip, owner_uid in pairs:
-            if not ip or ip == "unknown":
-                continue
-            hit = (
-                db.query(AuditLog.id)
-                .filter(
-                    AuditLog.actor_type == "admin",
-                    AuditLog.actor_id == owner_uid,
-                    AuditLog.timestamp >= sr_window,
-                )
-                .first()
-            )
-            if hit:
-                self_report_flags.add((ip, owner_uid))
+    # Self-report flag intentionally disabled — see ReportRow comment.
+    # The previous heuristic compared owner-activity timestamps only,
+    # with no IP equality, so any recently-active owner caused unrelated
+    # reports to flag. Re-enable only after AuditLog gains a reporter-IP
+    # column the query can join on.
 
     items: list[ReportRow] = []
     for r in rows:
@@ -541,8 +539,7 @@ async def list_abuse_reports(
         img = images.get(r.image_id)
         reviewer = reviewers.get(r.reviewed_by) if r.reviewed_by else None
 
-        owner_uid = ev.owner_user_id if ev else None
-        sr_flag = bool(r.reporter_ip and owner_uid and (r.reporter_ip, owner_uid) in self_report_flags)
+        sr_flag = False  # disabled — see ReportRow.is_possible_self_report
 
         ban_state = None
         if r.reporter_ip:
@@ -575,6 +572,7 @@ async def list_abuse_reports(
             duplicate_count=dup_counts.get(r.image_id, 0),
             is_possible_self_report=sr_flag,
             reporter_ban_state=ban_state,
+            image_status=img.status if img else None,
         ))
 
     return ReportListResponse(items=items, total=total, limit=limit, offset=offset)
@@ -622,19 +620,7 @@ async def get_abuse_report(
     )
     duplicate_count = max(0, duplicate_count - 1)
 
-    sr_flag = False
-    if event and event.owner_user_id and report.reporter_ip and report.reporter_ip != "unknown":
-        sr_window = datetime.now(timezone.utc) - timedelta(hours=24)
-        hit = (
-            db.query(AuditLog.id)
-            .filter(
-                AuditLog.actor_type == "admin",
-                AuditLog.actor_id == event.owner_user_id,
-                AuditLog.timestamp >= sr_window,
-            )
-            .first()
-        )
-        sr_flag = bool(hit)
+    sr_flag = False  # disabled — see ReportRow.is_possible_self_report
 
     ban_state = None
     if report.reporter_ip:
@@ -667,6 +653,7 @@ async def get_abuse_report(
         duplicate_count=duplicate_count,
         is_possible_self_report=sr_flag,
         reporter_ban_state=ban_state,
+        image_status=image.status if image else None,
     )
 
 
@@ -730,10 +717,52 @@ async def reveal_report(
 
 
 def _ensure_actionable(report: AbuseReport) -> None:
+    """Block actions on reports in genuinely terminal status.
+
+    Kept for callers that don't have a specific target (still used by
+    the legacy /quarantine path which can't be re-applied to an already
+    -quarantined report). Most action endpoints now use the explicit
+    transition map below instead.
+    """
     if report.status in ("dismissed", "removed"):
         raise HTTPException(
             status_code=409,
             detail=f"Report already actioned (status={report.status}).",
+        )
+
+
+# Explicit valid transitions: keys are report.status, values are statuses
+# the report can transition INTO. 'dismissed' and 'removed' are terminal
+# in both directions — once closed, the row stays closed. 'quarantined'
+# is special: the report is closed-ish (image is hidden from guests),
+# but the operator can still:
+#   * dismiss it (close without un-quarantining; image stays hidden)
+#   * delete the underlying image (escalate to permanent removal)
+#   * call the /restore action (un-quarantines the image; the report
+#     row's own status is NOT mutated by /restore — that's an image-
+#     state action, not a report-state transition).
+_VALID_REPORT_TRANSITIONS: dict[str, set[str]] = {
+    "pending": {"reviewing", "dismissed", "quarantined", "removed"},
+    "reviewing": {"dismissed", "quarantined", "removed"},
+    "quarantined": {"dismissed", "removed"},
+    "dismissed": set(),
+    "removed": set(),
+}
+
+
+def _ensure_transition_allowed(report: AbuseReport, target: str) -> None:
+    """Raise 409 if the report can't transition from its current status
+    to ``target``. Used by the dismiss/quarantine/delete action endpoints
+    so quarantine→quarantine, dismissed→dismissed, etc. are blocked
+    consistently (and tests can pin the rules)."""
+    allowed = _VALID_REPORT_TRANSITIONS.get(report.status, set())
+    if target not in allowed:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Cannot transition report from status='{report.status}' "
+                f"to '{target}'."
+            ),
         )
 
 
@@ -755,7 +784,7 @@ async def quarantine_image(
     for that photo_type.
     """
     report = _load_report_or_404(report_id, db)
-    _ensure_actionable(report)
+    _ensure_transition_allowed(report, "quarantined")
 
     image = db.query(Image).filter(Image.id == report.image_id).first()
     if not image:
@@ -785,6 +814,60 @@ async def quarantine_image(
 
 
 @router.post(
+    "/admin/abuse-reports/{report_id}/restore",
+    response_model=ActionResponse,
+)
+async def restore_image(
+    report_id: str,
+    current_user: User = Depends(get_superadmin_user),
+    db: Session = Depends(get_db),
+):
+    """Un-quarantine the image attached to a report.
+
+    Operator quarantined and later decided the photo is fine — flip
+    Image.status back. We derive the post-restore status from face_count
+    so an image with detected faces returns to 'indexed' and a face-less
+    one returns to 'no_faces'. The report row itself is NOT mutated by
+    this action; the operator may still dismiss it separately if they
+    want to close the report. Writes an abuse_review_restore audit row.
+    """
+    report = _load_report_or_404(report_id, db)
+    image = db.query(Image).filter(Image.id == report.image_id).first()
+    if not image:
+        raise HTTPException(status_code=404, detail="image no longer exists")
+    if image.status != "quarantined":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Image is not quarantined (status={image.status}).",
+        )
+
+    restored_status = "indexed" if (image.face_count or 0) > 0 else "no_faces"
+    image.status = restored_status
+    db.commit()
+
+    cache_delete_pattern(f"gallery:{report.event_id}:*")
+    cache_delete_pattern(f"share:{report.event_id}:{report.image_id}")
+
+    log_action(
+        db=db,
+        event_id=report.event_id,
+        actor_type="admin",
+        actor_id=current_user.id,
+        action="abuse_review_restore",
+        metadata={
+            "report_id": str(report.id),
+            "image_id": str(report.image_id),
+            "restored_status": restored_status,
+            "category": report.category,
+        },
+    )
+    return ActionResponse(
+        message="Image restored.",
+        status=restored_status,
+    )
+
+
+@router.post(
     "/admin/abuse-reports/{report_id}/delete-photo",
     response_model=ActionResponse,
 )
@@ -800,14 +883,21 @@ async def delete_photo_for_report(
     of orphaning storage.
     """
     report = _load_report_or_404(report_id, db)
-    _ensure_actionable(report)
+    _ensure_transition_allowed(report, "removed")
 
     image = db.query(Image).filter(Image.id == report.image_id).first()
     if not image:
         raise HTTPException(status_code=404, detail="image no longer exists")
 
-    original_filename = image.filename
-    event_id = image.event_id
+    # Snapshot every field we'll read post-commit. FK on abuse_reports
+    # .image_id is now ON DELETE SET NULL so the report row survives the
+    # image delete with image_id=NULL — but we still want the audit
+    # metadata to carry the original image_id, so snapshot first.
+    snap_report_id = str(report.id)
+    snap_image_id = str(report.image_id)
+    snap_category = report.category
+    snap_event_id = report.event_id
+    snap_filename = image.filename
 
     # CompreFace subjects per face — tombstone on failure.
     faces = db.query(Face).filter(Face.image_id == image.id).all()
@@ -816,30 +906,31 @@ async def delete_photo_for_report(
             safe_delete_compreface_subject(db, face.compreface_subject_id, commit=False)
 
     # MinIO original + thumb — tombstone on failure.
-    safe_delete_image_photo(db, event_id, image.id, commit=False)
+    safe_delete_image_photo(db, snap_event_id, image.id, commit=False)
 
-    # DB cascade removes Face rows + the AbuseReport via FK ON DELETE
-    # CASCADE on abuse_reports.image_id. We have to update the in-memory
-    # report row BEFORE the cascade so the audit row gets the right state.
+    # Mark the report removed BEFORE the image delete. The FK is now
+    # ON DELETE SET NULL so the report row survives; image_id flips to
+    # NULL automatically as part of the same transaction. Face rows
+    # cascade-delete with the image normally.
     report.status = "removed"
     report.action_taken = "remove"
     db.delete(image)
     db.commit()
 
-    cache_delete_pattern(f"gallery:{event_id}:*")
-    cache_delete_pattern(f"share:{event_id}:{report.image_id}")
+    cache_delete_pattern(f"gallery:{snap_event_id}:*")
+    cache_delete_pattern(f"share:{snap_event_id}:{snap_image_id}")
 
     log_action(
         db=db,
-        event_id=event_id,
+        event_id=snap_event_id,
         actor_type="admin",
         actor_id=current_user.id,
         action="abuse_review_delete",
         metadata={
-            "report_id": str(report.id),
-            "image_id": str(report.image_id),
-            "original_filename": original_filename,
-            "category": report.category,
+            "report_id": snap_report_id,
+            "image_id": snap_image_id,
+            "original_filename": snap_filename,
+            "category": snap_category,
         },
     )
     return ActionResponse(message="Photo permanently removed.", status="removed")
@@ -943,9 +1034,10 @@ async def dismiss_report(
     current_user: User = Depends(get_superadmin_user),
     db: Session = Depends(get_db),
 ):
-    """Close as not-abuse. Image is untouched."""
+    """Close as not-abuse. Image is untouched (including if it's still
+    quarantined — use POST /restore separately to un-quarantine)."""
     report = _load_report_or_404(report_id, db)
-    _ensure_actionable(report)
+    _ensure_transition_allowed(report, "dismissed")
 
     report.status = "dismissed"
     report.action_taken = "dismiss"

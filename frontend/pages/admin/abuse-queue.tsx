@@ -6,7 +6,7 @@ import ProtectedRoute from '@/components/ProtectedRoute'
 import { abuseService, AbuseReportRow } from '@/lib/abuse'
 import { authService } from '@/lib/auth'
 import { useToast } from '@/hooks/useToast'
-import { Flag, ArrowRight, Loader2, Ban, ShieldOff, AlertTriangle } from 'lucide-react'
+import { Flag, ArrowRight, Loader2, Ban, ShieldOff } from 'lucide-react'
 
 const STATUSES = ['pending', 'reviewing', 'dismissed', 'quarantined', 'removed'] as const
 const CATEGORIES = ['csam', 'nudity', 'harassment', 'copyright', 'violence', 'other'] as const
@@ -224,11 +224,6 @@ export default function AbuseQueuePage() {
                           {!!r.duplicate_count && r.duplicate_count > 0 && (
                             <div className="mt-1 inline-block px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">
                               +{r.duplicate_count} duplicate
-                            </div>
-                          )}
-                          {r.is_possible_self_report && (
-                            <div className="mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-yellow-500/20 text-yellow-300 border border-yellow-500/30">
-                              <AlertTriangle className="w-3 h-3" /> possible self-report
                             </div>
                           )}
                         </td>

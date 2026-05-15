@@ -21,6 +21,7 @@ export interface AbuseReportRow {
   duplicate_count?: number
   is_possible_self_report?: boolean
   reporter_ban_state?: 'softban' | 'permaban' | null
+  image_status?: string | null
 }
 
 export interface AbuseReportListResponse {
@@ -44,14 +45,18 @@ export interface ReportFilePayload {
   description?: string
   reporter_email?: string
   turnstile_token?: string
+  // Honeypot value — the modal reads it from a hidden uncontrolled <input>
+  // via ref and passes it through here. Bots that auto-fill every field
+  // populate the input; legit users never touch it. Only included in the
+  // POST body when non-empty so the backend's "silent drop on populated"
+  // check actually fires.
+  honeypot?: string
 }
 
 export const abuseService = {
   async fileReport(payload: ReportFilePayload): Promise<{ message: string }> {
-    // Honeypot field. Hidden in the modal via CSS so legit users never fill
-    // it. Bots filling every field will populate it and the backend silently
-    // drops the row.
-    const body = { ...payload, website: '' }
+    const { honeypot, ...rest } = payload
+    const body = honeypot ? { ...rest, website: honeypot } : rest
     const res = await api.post('/report', body)
     return res.data
   },
@@ -101,5 +106,9 @@ export const abuseService = {
 
   async deletePhoto(reportId: string): Promise<void> {
     await api.post(`/admin/abuse-reports/${reportId}/delete-photo`)
+  },
+
+  async restoreImage(reportId: string): Promise<void> {
+    await api.post(`/admin/abuse-reports/${reportId}/restore`)
   },
 }

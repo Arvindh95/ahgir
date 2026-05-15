@@ -367,6 +367,55 @@ def test_quarantine_flips_image_and_writes_audit(setup_world):
     assert len(audits) == 1
 
 
+def test_restore_unquarantines_image(setup_world):
+    """Operator quarantined an image, then realized it's fine — restore
+    flips Image.status back so guests see it again. Status is derived
+    from face_count (>0 → indexed, 0 → no_faces)."""
+    world = setup_world
+    db = world["db"]
+    img = world["image"]
+    img.status = "quarantined"
+    img.face_count = 3
+    db.commit()
+    report = AbuseReport(
+        image_id=img.id, event_id=world["event"].id,
+        category="nudity", reporter_ip="1.1.1.1", status="quarantined",
+    )
+    db.add(report)
+    db.commit()
+    db.refresh(report)
+
+    resp = client.post(
+        f"/admin/abuse-reports/{report.id}/restore",
+        headers={"Authorization": f"Bearer {world['super_token']}"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "indexed"
+
+    db.refresh(img)
+    assert img.status == "indexed"
+
+
+def test_restore_409_when_image_not_quarantined(setup_world):
+    world = setup_world
+    db = world["db"]
+    # image is indexed, not quarantined
+    report = AbuseReport(
+        image_id=world["image"].id, event_id=world["event"].id,
+        category="other", reporter_ip="1.1.1.1", status="dismissed",
+    )
+    db.add(report)
+    db.commit()
+    db.refresh(report)
+
+    resp = client.post(
+        f"/admin/abuse-reports/{report.id}/restore",
+        headers={"Authorization": f"Bearer {world['super_token']}"},
+    )
+    assert resp.status_code == 409
+
+
 def test_dismiss_marks_dismissed(setup_world):
     world = setup_world
     db = world["db"]
@@ -405,6 +454,49 @@ def test_action_on_terminal_status_returns_409(setup_world):
         headers={"Authorization": f"Bearer {world['super_token']}"},
     )
     assert resp.status_code == 409
+
+
+def test_double_quarantine_returns_409(setup_world):
+    """Quarantine on an already-quarantined report → 409 per the
+    explicit transition map (quarantined → quarantined is not allowed)."""
+    world = setup_world
+    db = world["db"]
+    report = AbuseReport(
+        image_id=world["image"].id, event_id=world["event"].id,
+        category="nudity", reporter_ip="1.1.1.1", status="quarantined",
+    )
+    db.add(report)
+    db.commit()
+    db.refresh(report)
+
+    resp = client.post(
+        f"/admin/abuse-reports/{report.id}/quarantine",
+        headers={"Authorization": f"Bearer {world['super_token']}"},
+    )
+    assert resp.status_code == 409
+
+
+def test_dismiss_quarantined_report_allowed(setup_world):
+    """Quarantined report can still be dismissed (closes the report
+    while leaving the image quarantined — operator may then use the
+    /restore action separately)."""
+    world = setup_world
+    db = world["db"]
+    report = AbuseReport(
+        image_id=world["image"].id, event_id=world["event"].id,
+        category="nudity", reporter_ip="1.1.1.1", status="quarantined",
+    )
+    db.add(report)
+    db.commit()
+    db.refresh(report)
+
+    resp = client.post(
+        f"/admin/abuse-reports/{report.id}/dismiss",
+        headers={"Authorization": f"Bearer {world['super_token']}"},
+    )
+    assert resp.status_code == 200
+    db.refresh(report)
+    assert report.status == "dismissed"
 
 
 # ─── Phase 2 defence layer ───────────────────────────────────────────

@@ -6,7 +6,7 @@ import ProtectedRoute from '@/components/ProtectedRoute'
 import { abuseService, AbuseReportRow, AbuseRevealResponse } from '@/lib/abuse'
 import { authService } from '@/lib/auth'
 import { useToast } from '@/hooks/useToast'
-import { ArrowLeft, Loader2, Trash2, EyeOff, X } from 'lucide-react'
+import { ArrowLeft, Loader2, Trash2, EyeOff, Eye, X } from 'lucide-react'
 
 const CATEGORY_COLOR: Record<string, string> = {
   csam: 'bg-red-600/30 text-red-200 border-red-500/40',
@@ -68,12 +68,13 @@ export default function AbuseReviewScreen() {
 
   const isTerminal = !!(report && (report.status === 'dismissed' || report.status === 'removed'))
 
-  const doAction = async (kind: 'dismiss' | 'quarantine' | 'delete') => {
+  const doAction = async (kind: 'dismiss' | 'quarantine' | 'delete' | 'restore') => {
     if (!report || !report_id || typeof report_id !== 'string') return
-    const prompts = {
+    const prompts: Record<typeof kind, string> = {
       dismiss: 'Mark this report as not abuse?',
       quarantine: 'Hide the image from guests? Bytes stay in storage; you can still review here.',
       delete: 'Permanently remove the photo? Cannot be undone.',
+      restore: 'Restore this image to guests? It will reappear in galleries and shared links.',
     }
     if (!window.confirm(prompts[kind])) return
     try {
@@ -81,7 +82,9 @@ export default function AbuseReviewScreen() {
       if (kind === 'dismiss') await abuseService.dismiss(report_id)
       if (kind === 'quarantine') await abuseService.quarantine(report_id)
       if (kind === 'delete') await abuseService.deletePhoto(report_id)
-      toast(`Report ${kind}ed.`, 'success')
+      if (kind === 'restore') await abuseService.restoreImage(report_id)
+      const verb = kind === 'restore' ? 'restored' : `${kind}ed`
+      toast(`Report ${verb}.`, 'success')
       router.push('/admin/abuse-queue')
     } catch (err: any) {
       toast(err.response?.data?.detail || `Failed to ${kind}`, 'error')
@@ -195,14 +198,25 @@ export default function AbuseReviewScreen() {
                       {actionLoading === 'dismiss' ? <Loader2 className="w-4 h-4 animate-spin" /> : <X className="w-4 h-4" />}
                       Dismiss
                     </button>
-                    <button
-                      onClick={() => doAction('quarantine')}
-                      disabled={!!actionLoading || isTerminal}
-                      className="w-full flex items-center justify-center gap-2 bg-yellow-500/10 text-yellow-400 border border-yellow-500/30 px-4 py-2 rounded-lg font-semibold hover:bg-yellow-500/20 transition-colors disabled:opacity-50"
-                    >
-                      {actionLoading === 'quarantine' ? <Loader2 className="w-4 h-4 animate-spin" /> : <EyeOff className="w-4 h-4" />}
-                      Quarantine
-                    </button>
+                    {report.image_status === 'quarantined' ? (
+                      <button
+                        onClick={() => doAction('restore')}
+                        disabled={!!actionLoading}
+                        className="w-full flex items-center justify-center gap-2 bg-green-500/10 text-green-400 border border-green-500/30 px-4 py-2 rounded-lg font-semibold hover:bg-green-500/20 transition-colors disabled:opacity-50"
+                      >
+                        {actionLoading === 'restore' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />}
+                        Restore image
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => doAction('quarantine')}
+                        disabled={!!actionLoading || isTerminal}
+                        className="w-full flex items-center justify-center gap-2 bg-yellow-500/10 text-yellow-400 border border-yellow-500/30 px-4 py-2 rounded-lg font-semibold hover:bg-yellow-500/20 transition-colors disabled:opacity-50"
+                      >
+                        {actionLoading === 'quarantine' ? <Loader2 className="w-4 h-4 animate-spin" /> : <EyeOff className="w-4 h-4" />}
+                        Quarantine
+                      </button>
+                    )}
                     <button
                       onClick={() => doAction('delete')}
                       disabled={!!actionLoading || isTerminal}
