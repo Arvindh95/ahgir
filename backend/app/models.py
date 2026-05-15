@@ -312,15 +312,60 @@ Index(
 
 class RateLimit(Base):
     __tablename__ = "rate_limits"
-    
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     session_id = Column(UUID(as_uuid=True), nullable=False)
     action = Column(String(50), nullable=False)  # scan
     count = Column(Integer, default=1, nullable=False)
     window_start = Column(TIMESTAMP, nullable=False)
-    
+
     # Indexes
     __table_args__ = (
         Index("idx_session_action_window", "session_id", "action", "window_start"),
         {"schema": None}
+    )
+
+
+class StorageCleanupTask(Base):
+    """Tombstone for asynchronous, retried storage / CompreFace cleanups.
+
+    When an in-line cleanup attempt fails (MinIO unavailable, CompreFace 5xx,
+    network blip), we used to swallow the error and continue — the DB row
+    deletion succeeded, but the original photo bytes / face embeddings
+    remained. This table is the durable record so a background drainer can
+    keep retrying until storage is genuinely clean.
+    """
+    __tablename__ = "storage_cleanup_tasks"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # 'event_photos' — delete all MinIO objects for an event_id
+    # 'compreface_event' — delete all CompreFace subjects for an event_id
+    # 'image_photo' — delete a single image's MinIO objects (event_id + image_id)
+    # 'compreface_subject' — delete a single CompreFace subject id
+    kind = Column(String(32), nullable=False)
+    # Polymorphic payload: keys depend on `kind`.
+    payload = Column(JSONB, nullable=False)
+    # 'pending' | 'running' | 'failed' (still retryable) | 'done'
+    status = Column(String(16), nullable=False, default="pending")
+    attempts = Column(Integer, nullable=False, default=0)
+    max_attempts = Column(Integer, nullable=False, default=10)
+    last_error = Column(sa.Text(), nullable=True)
+    last_attempt_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    next_attempt_at = Column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    created_at = Column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    completed_at = Column(TIMESTAMP(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('event_photos', 'compreface_event', 'image_photo', 'compreface_subject')",
+            name="valid_cleanup_kind",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'running', 'failed', 'done')",
+            name="valid_cleanup_status",
+        ),
     )

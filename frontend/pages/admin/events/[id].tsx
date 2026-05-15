@@ -226,25 +226,38 @@ export default function EventDetailsPage() {
               </div>
             </div>
           )}
+          {event.is_cross_tenant_superadmin_view && (
+            <div className="bg-purple-500/10 border border-purple-500/30 text-purple-200 rounded-xl px-4 py-3 mb-6 text-sm">
+              <strong>Superadmin cross-tenant view.</strong> You are not the
+              owner of this event. Edit / cover / photo controls are hidden
+              for read-only safety. Mutations are still possible via the API
+              with <code>?break_glass=true&amp;reason=...</code> and are
+              audit-logged to the event.
+            </div>
+          )}
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
             <h1 className="text-3xl font-bold">{event.name}</h1>
 
             <div className="flex gap-3">
-              <button
-                onClick={() => router.push(`/admin/events/${event.event_id}/photos`)}
-                className="flex items-center gap-2 bg-white text-black px-4 py-2 rounded-lg font-semibold hover:bg-gray-200 transition-colors"
-              >
-                <ImageIcon className="w-4 h-4" />
-                Manage Photos
-              </button>
-              <button
-                onClick={() => setShowDeleteConfirm(true)}
-                disabled={isDeleting}
-                className="flex items-center gap-2 bg-red-500/10 text-red-500 border border-red-500/20 px-4 py-2 rounded-lg font-semibold hover:bg-red-500/20 transition-colors disabled:opacity-50"
-              >
-                 {isDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
-                {isDeleting ? 'Deleting...' : 'Delete Event'}
-              </button>
+              {event.viewer_can_edit !== false && (
+                <button
+                  onClick={() => router.push(`/admin/events/${event.event_id}/photos`)}
+                  className="flex items-center gap-2 bg-white text-black px-4 py-2 rounded-lg font-semibold hover:bg-gray-200 transition-colors"
+                >
+                  <ImageIcon className="w-4 h-4" />
+                  Manage Photos
+                </button>
+              )}
+              {event.viewer_can_edit !== false && (
+                <button
+                  onClick={() => setShowDeleteConfirm(true)}
+                  disabled={isDeleting}
+                  className="flex items-center gap-2 bg-red-500/10 text-red-500 border border-red-500/20 px-4 py-2 rounded-lg font-semibold hover:bg-red-500/20 transition-colors disabled:opacity-50"
+                >
+                   {isDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                  {isDeleting ? 'Deleting...' : 'Delete Event'}
+                </button>
+              )}
             </div>
           </div>
 
@@ -285,13 +298,15 @@ export default function EventDetailsPage() {
                         </>
                       ) : (
                         <>
-                          <button
-                            onClick={() => setEditingLink(true)}
-                            className="flex items-center gap-1 px-2 py-1 text-xs bg-white/10 hover:bg-white/20 rounded transition-colors"
-                          >
-                            <Pencil className="w-3 h-3" />
-                            Edit
-                          </button>
+                          {event.viewer_can_edit !== false && (
+                            <button
+                              onClick={() => setEditingLink(true)}
+                              className="flex items-center gap-1 px-2 py-1 text-xs bg-white/10 hover:bg-white/20 rounded transition-colors"
+                            >
+                              <Pencil className="w-3 h-3" />
+                              Edit
+                            </button>
+                          )}
                           <button
                             onClick={handleCopyLink}
                             className="flex items-center gap-1 px-2 py-1 text-xs bg-white/10 hover:bg-white/20 rounded transition-colors"
@@ -330,11 +345,13 @@ export default function EventDetailsPage() {
                   <div className="mb-3">
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-sm text-gray-400 flex items-center gap-2"><ImageIcon className="w-4 h-4" /> Cover Image</span>
-                      <label className="flex items-center gap-1 px-2 py-1 text-xs bg-white/10 hover:bg-white/20 rounded transition-colors cursor-pointer">
-                        <Upload className="w-3 h-3" />
-                        {coverImageUrl ? 'Change' : 'Upload'}
-                        <input type="file" accept="image/*" ref={coverInputRef} onChange={handleUploadCover} className="hidden" />
-                      </label>
+                      {event.viewer_can_edit !== false && (
+                        <label className="flex items-center gap-1 px-2 py-1 text-xs bg-white/10 hover:bg-white/20 rounded transition-colors cursor-pointer">
+                          <Upload className="w-3 h-3" />
+                          {coverImageUrl ? 'Change' : 'Upload'}
+                          <input type="file" accept="image/*" ref={coverInputRef} onChange={handleUploadCover} className="hidden" />
+                        </label>
+                      )}
                     </div>
                     {coverImageUrl && (
                       <div className="relative w-full h-32 rounded-lg overflow-hidden">

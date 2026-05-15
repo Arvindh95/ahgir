@@ -16,7 +16,7 @@ import uuid
 from app.auth import get_current_user
 from app.audit import log_action
 from app.database import get_db
-from app.models import User, Event, Image, Face, AuditLog, EventTier, UserTier, Payment
+from app.models import User, Event, Image, Face, AuditLog, EventTier, UserTier, Payment, StorageCleanupTask
 from app.config import settings, get_compreface_url
 from app.event_status import rebalance_event_status
 from app.storage import storage_service
@@ -24,6 +24,11 @@ from app.queue import get_failed_jobs, retry_failed_job
 from app.tiers import get_effective_limits
 from app.cache import cache_delete_pattern
 from app.utils.compreface import delete_compreface_subjects_for_event
+from app.utils.storage_cleanup import (
+    safe_delete_event_photos,
+    safe_delete_compreface_subject,
+    enqueue_cleanup_task,
+)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -191,6 +196,24 @@ async def update_user(
         changes["is_disabled"] = update.is_disabled
         target_user.is_disabled = update.is_disabled
 
+    # Cascade-freeze every active event the disabled user owns. Without
+    # this step, flipping is_disabled blocks the admin's future logins but
+    # leaves their public /e/{slug}, gallery, scan, and signed photo URLs
+    # serving guests as if nothing changed. We freeze (don't delete) so the
+    # decision is reversible — a future re-enable can leave the operator to
+    # decide which events to re-activate, but in the meantime every public
+    # surface stops serving.
+    cascade_frozen: list[dict] = []
+    if update.is_disabled is True:
+        active_events = (
+            db.query(Event)
+            .filter(Event.owner_user_id == target_uuid, Event.status == "active")
+            .all()
+        )
+        for ev in active_events:
+            ev.status = "frozen"
+            cascade_frozen.append({"event_id": str(ev.id), "slug": ev.slug})
+
     db.commit()
 
     log_action(
@@ -199,14 +222,40 @@ async def update_user(
         actor_type="admin",
         actor_id=current_user.id,
         action="admin_user_update",
-        metadata={"target_user_id": str(target_uuid), "target_email": target_user.email, "changes": changes},
+        metadata={
+            "target_user_id": str(target_uuid),
+            "target_email": target_user.email,
+            "changes": changes,
+            "cascade_frozen_events": cascade_frozen,
+        },
     )
+    # Per-event audit row so each frozen event's own audit log surfaces
+    # the operator action, not just the user-update record.
+    for ev_info in cascade_frozen:
+        log_action(
+            db=db,
+            event_id=uuid.UUID(ev_info["event_id"]),
+            actor_type="admin",
+            actor_id=current_user.id,
+            action="event_frozen_owner_disabled",
+            metadata={
+                "target_user_id": str(target_uuid),
+                "target_email": target_user.email,
+            },
+        )
+    # Bust caches for every frozen event so guests don't see the cached
+    # event_info / gallery for the brief TTL after disable.
+    for ev_info in cascade_frozen:
+        cache_delete_pattern(f"event_info:{ev_info['slug']}")
+        cache_delete_pattern(f"gallery:{ev_info['event_id']}:*")
+        cache_delete_pattern(f"share:{ev_info['event_id']}:*")
 
     return {
         "user_id": str(target_user.id),
         "email": target_user.email,
         "is_superadmin": target_user.is_superadmin,
         "is_disabled": target_user.is_disabled,
+        "cascade_frozen_event_count": len(cascade_frozen),
         "message": "User updated successfully"
     }
 
@@ -374,30 +423,18 @@ async def delete_user(
     user_events = db.query(Event).filter(Event.owner_user_id == target_uuid).all()
     for event in user_events:
         if settings.compreface_api_key:
-            import httpx
             event_faces = db.query(Face).filter(Face.event_id == event.id).all()
             for face in event_faces:
                 if face.compreface_subject_id:
-                    try:
-                        httpx.delete(
-                            f"{get_compreface_url()}/api/v1/recognition/faces",
-                            headers={"x-api-key": settings.compreface_api_key},
-                            params={"subject": face.compreface_subject_id},
-                            timeout=5.0,
-                        )
-                    except Exception as e:
-                        # Orphaned faces in CompreFace eventually leak storage there.
-                        # Log so admin can run a CompreFace cleanup script later.
-                        import logging
-                        logging.getLogger(__name__).error(
-                            f"CompreFace face deletion failed for subject={face.compreface_subject_id} "
-                            f"event={event.id}: {e}"
-                        )
+                    # Tombstone-on-failure: a CompreFace outage no longer
+                    # leaks face embeddings — the drainer retries.
+                    safe_delete_compreface_subject(
+                        db, face.compreface_subject_id, commit=False
+                    )
 
-        try:
-            storage_service.delete_event_photos(event.id)
-        except Exception:
-            pass
+        # Tombstone-on-failure: a MinIO outage no longer leaves photo
+        # bytes orphaned with a deleted DB row.
+        safe_delete_event_photos(db, event.id, commit=False)
 
         cache_delete_pattern(f"event_info:{event.slug}")
         cache_delete_pattern(f"gallery:{event.id}:*")
@@ -628,11 +665,16 @@ async def admin_delete_event(
         delete_compreface_subjects_for_event(db, event_uuid)
     except Exception as e:
         logger.error(f"CompreFace cleanup failed for event {event_uuid}: {e}")
+        # Per-face tombstones so the drainer can retry each subject.
+        for face in db.query(Face).filter(Face.event_id == event_uuid).all():
+            if face.compreface_subject_id:
+                enqueue_cleanup_task(
+                    db, "compreface_subject",
+                    {"subject_id": face.compreface_subject_id},
+                    commit=False,
+                )
 
-    try:
-        storage_service.delete_event_photos(event_uuid)
-    except Exception:
-        pass
+    safe_delete_event_photos(db, event_uuid, commit=False)
 
     cache_delete_pattern(f"event_info:{event.slug}")
     cache_delete_pattern(f"gallery:{event_uuid}:*")
@@ -781,6 +823,86 @@ async def retry_job(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Job not found or cannot be retried: {str(e)}"
         )
+
+
+@router.get("/storage-cleanup-tasks")
+async def list_storage_cleanup_tasks(
+    status_filter: Optional[str] = Query(default=None, alias="status"),
+    exhausted_only: bool = Query(default=False),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    current_user: User = Depends(get_superadmin_user),
+    db: Session = Depends(get_db),
+):
+    """List storage cleanup tombstones for operator visibility.
+
+    Default: every tombstone (pending / failed / done) sorted by most
+    recent attempt. `exhausted_only=true` narrows to attempts >=
+    max_attempts — the rows that need manual intervention.
+    """
+    q = db.query(StorageCleanupTask)
+    if status_filter:
+        q = q.filter(StorageCleanupTask.status == status_filter)
+    if exhausted_only:
+        q = q.filter(
+            StorageCleanupTask.status == "failed",
+            StorageCleanupTask.attempts >= StorageCleanupTask.max_attempts,
+        )
+    total = q.count()
+    rows = (
+        q.order_by(StorageCleanupTask.last_attempt_at.desc().nullsfirst())
+        .limit(limit)
+        .offset(offset)
+        .all()
+    )
+    return {
+        "items": [
+            {
+                "id": str(t.id),
+                "kind": t.kind,
+                "payload": t.payload,
+                "status": t.status,
+                "attempts": t.attempts,
+                "max_attempts": t.max_attempts,
+                "last_error": t.last_error,
+                "last_attempt_at": to_utc_iso(t.last_attempt_at) if t.last_attempt_at else None,
+                "next_attempt_at": to_utc_iso(t.next_attempt_at),
+                "created_at": to_utc_iso(t.created_at),
+                "completed_at": to_utc_iso(t.completed_at) if t.completed_at else None,
+            }
+            for t in rows
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@router.post("/storage-cleanup-tasks/{task_id}/retry")
+async def retry_storage_cleanup_task(
+    task_id: str,
+    current_user: User = Depends(get_superadmin_user),
+    db: Session = Depends(get_db),
+):
+    """Reset a tombstone so the next drainer pass picks it up immediately."""
+    try:
+        tid = uuid.UUID(task_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid task id")
+    task = db.query(StorageCleanupTask).filter(StorageCleanupTask.id == tid).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    task.status = "pending"
+    task.attempts = 0
+    task.last_error = None
+    task.next_attempt_at = datetime.utcnow()
+    db.commit()
+    log_action(
+        db=db, event_id=None, actor_type="admin", actor_id=current_user.id,
+        action="admin_storage_cleanup_retry",
+        metadata={"task_id": task_id, "kind": task.kind, "payload": task.payload},
+    )
+    return {"message": "Task reset for retry", "task_id": task_id}
 
 
 @router.get("/payments")

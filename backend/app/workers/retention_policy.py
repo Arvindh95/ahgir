@@ -15,6 +15,11 @@ from app.audit import log_action
 from app.config import settings
 from app.tiers import TIER_CONFIG
 from app.utils.compreface import delete_compreface_subjects_for_event
+from app.utils.storage_cleanup import (
+    safe_delete_event_photos,
+    enqueue_cleanup_task,
+    drain_storage_cleanup_tasks,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -82,14 +87,21 @@ def check_and_delete_expired_events(db: Session = None):
                     commit=False,
                 )
 
-                delete_compreface_subjects_for_event(db, event.id)
-
-                # Delete all photos from MinIO
                 try:
-                    storage_service.delete_event_photos(event.id)
+                    delete_compreface_subjects_for_event(db, event.id)
                 except Exception as e:
-                    # Log error but continue with database deletion
-                    logger.error(f"Failed to delete photos from MinIO for event {event.id}: {e}")
+                    logger.error(f"CompreFace cleanup failed for event {event.id}: {e}")
+                    for face in db.query(Face).filter(Face.event_id == event.id).all():
+                        if face.compreface_subject_id:
+                            enqueue_cleanup_task(
+                                db, "compreface_subject",
+                                {"subject_id": face.compreface_subject_id},
+                                commit=False,
+                            )
+
+                # Delete all photos from MinIO — tombstone on failure so
+                # the drainer keeps retrying instead of orphaning bytes.
+                safe_delete_event_photos(db, event.id, commit=False)
 
                 invalidate_event_public_cache(event)
 
@@ -119,6 +131,26 @@ def check_and_delete_expired_events(db: Session = None):
             db.rollback()
         logger.error(f"Retention policy job failed: {e}")
         raise
+    finally:
+        if not db_provided:
+            db.close()
+
+
+def drain_storage_cleanups(db: Session = None) -> dict:
+    """Retry every due storage-cleanup tombstone.
+
+    Called from the retention cron. Each tombstone is an in-flight cleanup
+    that failed inline (MinIO unavailable, CompreFace 5xx). Idempotent — a
+    successful retry marks the tombstone done; a failed retry backs off and
+    re-tries on the next cycle.
+    """
+    db_provided = db is not None
+    if not db_provided:
+        db = SessionLocal()
+    try:
+        stats = drain_storage_cleanup_tasks(db)
+        logger.info("Storage cleanup drain: %s", stats)
+        return stats
     finally:
         if not db_provided:
             db.close()

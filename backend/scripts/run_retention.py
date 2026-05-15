@@ -12,6 +12,7 @@ from app.queue import (
     enqueue_retention_check,
     enqueue_subscription_processor,
     enqueue_stale_pending_reconciler,
+    enqueue_storage_cleanup_drain,
 )
 
 
@@ -36,6 +37,12 @@ def main() -> int:
         log.info(f"Enqueued stale-pending reconciler job {job_id}")
     except Exception as e:
         log.error(f"Failed to enqueue stale-pending reconciler: {e}", exc_info=True)
+        rc = 1
+    try:
+        job_id = enqueue_storage_cleanup_drain()
+        log.info(f"Enqueued storage cleanup drain job {job_id}")
+    except Exception as e:
+        log.error(f"Failed to enqueue storage cleanup drain: {e}", exc_info=True)
         rc = 1
     return rc
 

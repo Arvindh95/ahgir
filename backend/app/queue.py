@@ -9,7 +9,11 @@ from app.config import settings
 
 # Import worker functions at module level so RQ can serialize them properly
 from app.workers.face_indexer_compreface import index_photo_compreface
-from app.workers.retention_policy import check_and_delete_expired_events, process_overdue_subscriptions
+from app.workers.retention_policy import (
+    check_and_delete_expired_events,
+    process_overdue_subscriptions,
+    drain_storage_cleanups,
+)
 from app.email import send_verification_email, send_password_reset_email
 
 logger = logging.getLogger(__name__)
@@ -174,6 +178,23 @@ def enqueue_subscription_processor() -> str:
     """Enqueue the subscription past-due grace-period downgrade job."""
     job = retention_queue.enqueue(
         process_overdue_subscriptions,
+        job_timeout='10m',
+        failure_ttl='7d',
+        result_ttl='7d',
+    )
+    return job.id
+
+
+def enqueue_storage_cleanup_drain() -> str:
+    """Enqueue the storage-cleanup tombstone drainer.
+
+    The drainer pulls up to N due tombstones, retries each (MinIO /
+    CompreFace), and either marks them done or backs off for the next
+    cycle. Cheap to run frequently — empty tombstone table is a single
+    indexed query.
+    """
+    job = retention_queue.enqueue(
+        drain_storage_cleanups,
         job_timeout='10m',
         failure_ttl='7d',
         result_ttl='7d',

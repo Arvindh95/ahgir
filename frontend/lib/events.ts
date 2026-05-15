@@ -48,6 +48,12 @@ export interface EventDetails extends Event {
   status: EventStatus
   tier?: EventTierInfo
   user_tier?: UserTierInfo
+  // False when a superadmin is viewing someone else's event — UI hides
+  // edit / cover / photo controls. Mutations from a superadmin still
+  // require break_glass=true on the backend, so this flag is purely a
+  // UX signal, not a security boundary.
+  viewer_can_edit?: boolean
+  is_cross_tenant_superadmin_view?: boolean
 }
 
 export interface CreateEventRequest {

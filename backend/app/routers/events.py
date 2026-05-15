@@ -39,6 +39,7 @@ from app.config import settings, get_compreface_url
 from app.cache import cache_delete_pattern
 from app.tiers import get_effective_limits
 from app.utils.compreface import delete_compreface_subjects_for_event
+from app.utils.storage_cleanup import safe_delete_event_photos, enqueue_cleanup_task
 from app.utils.exif import strip_exif_bytes
 import httpx
 
@@ -149,6 +150,13 @@ class EventDetailResponse(BaseModel):
     tier: Optional[EventTierInfo] = None
     user_tier: Optional[UserTierInfo] = None
     created_at: UTCDateTime
+    # True for the owner. False for cross-tenant superadmin viewing
+    # someone else's event — frontend uses this to hide edit / cover /
+    # photo controls. Mutations from a superadmin still require explicit
+    # break_glass=true + reason on the mutating endpoint, so this flag
+    # is purely a UX signal.
+    viewer_can_edit: bool = True
+    is_cross_tenant_superadmin_view: bool = False
 
 # Helper functions
 def generate_slug(name: str, db: Session) -> str:
@@ -558,6 +566,7 @@ async def get_event(
             is_active=user_tier.is_active,
         )
 
+    is_cross_tenant = current_user.is_superadmin and event.owner_user_id != current_user.id
     return EventDetailResponse(
         event_id=str(event.id),
         slug=event.slug,
@@ -573,7 +582,9 @@ async def get_event(
         status=status_info,
         tier=tier_info,
         user_tier=user_tier_info,
-        created_at=event.created_at
+        created_at=event.created_at,
+        viewer_can_edit=not is_cross_tenant,
+        is_cross_tenant_superadmin_view=is_cross_tenant,
     )
 
 class EventUpdate(BaseModel):
@@ -603,10 +614,17 @@ class EventUpdate(BaseModel):
 async def update_event(
     event_id: str,
     update_data: EventUpdate,
+    break_glass: bool = Query(default=False),
+    reason: Optional[str] = Query(default=None, max_length=500),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Update event details (slug, location, description)"""
+    """Update event details (slug, location, description).
+
+    Cross-tenant superadmin edits require break_glass=true&reason=... so
+    operator metadata moves are always intentional and auditable. The
+    audit row captures the before/after value of every changed field.
+    """
     try:
         event_uuid = uuid.UUID(event_id)
     except ValueError:
@@ -618,7 +636,18 @@ async def update_event(
     if not current_user.is_superadmin and event.owner_user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to update this event")
 
+    is_cross_tenant = current_user.is_superadmin and event.owner_user_id != current_user.id
+    if is_cross_tenant:
+        if not break_glass or not reason or len(reason.strip()) < 10:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cross-tenant edits require break_glass=true and a reason (>= 10 chars).",
+            )
+
     ensure_event_mutable(event, current_user)
+
+    # Capture before-values for audit before mutating.
+    before = {"slug": event.slug, "location": event.location, "description": event.description}
 
     old_slug = event.slug
     if update_data.slug is not None:
@@ -631,8 +660,18 @@ async def update_event(
     if update_data.description is not None:
         event.description = update_data.description
 
+    after = {"slug": event.slug, "location": event.location, "description": event.description}
+    changes = {k: {"from": before[k], "to": after[k]} for k in before if before[k] != after[k]}
+
     db.commit()
     db.refresh(event)
+
+    if is_cross_tenant and changes:
+        log_action(
+            db=db, event_id=event.id, actor_type="admin", actor_id=current_user.id,
+            action="admin_break_glass_event_update",
+            metadata={"reason": reason, "changes": changes},
+        )
 
     # Invalidate event info cache (both old and new slug if changed)
     cache_delete_pattern(f"event_info:{event.slug}")
@@ -648,10 +687,17 @@ async def update_event(
 async def upload_cover_image(
     event_id: str,
     file: UploadFile = File(...),
+    break_glass: bool = Query(default=False),
+    reason: Optional[str] = Query(default=None, max_length=500),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Upload a cover/hero image for the event"""
+    """Upload a cover/hero image for the event.
+
+    Cross-tenant superadmin uploads require break_glass=true&reason=...
+    so operator cover changes are auditable. The audit row captures the
+    old cover_image key + new key.
+    """
     try:
         event_uuid = uuid.UUID(event_id)
     except ValueError:
@@ -663,7 +709,17 @@ async def upload_cover_image(
     if not current_user.is_superadmin and event.owner_user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
 
+    is_cross_tenant = current_user.is_superadmin and event.owner_user_id != current_user.id
+    if is_cross_tenant:
+        if not break_glass or not reason or len(reason.strip()) < 10:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cross-tenant cover uploads require break_glass=true and a reason (>= 10 chars).",
+            )
+
     ensure_event_mutable(event, current_user)
+
+    old_cover_key = event.cover_image
 
     # Validate file type
     if not file.content_type or not file.content_type.startswith('image/'):
@@ -704,6 +760,13 @@ async def upload_cover_image(
     # Update event
     event.cover_image = object_key
     db.commit()
+
+    if is_cross_tenant:
+        log_action(
+            db=db, event_id=event.id, actor_type="admin", actor_id=current_user.id,
+            action="admin_break_glass_cover_upload",
+            metadata={"reason": reason, "old_cover_key": old_cover_key, "new_cover_key": object_key},
+        )
 
     # Invalidate event info cache so guest page picks up the new cover
     cache_delete_pattern(f"event_info:{event.slug}")
@@ -2054,13 +2117,18 @@ async def delete_event(
         delete_compreface_subjects_for_event(db, event_uuid)
     except Exception as e:
         logger.error(f"CompreFace cleanup failed for event {event_uuid}: {e}")
+        # Per-face tombstones so the cleanup drainer retries each subject.
+        for face in db.query(Face).filter(Face.event_id == event_uuid).all():
+            if face.compreface_subject_id:
+                enqueue_cleanup_task(
+                    db, "compreface_subject",
+                    {"subject_id": face.compreface_subject_id},
+                    commit=False,
+                )
 
-    # Delete all photos from MinIO
-    try:
-        storage_service.delete_event_photos(event_uuid)
-    except Exception as e:
-        # Log error but continue with database deletion
-        logger.error(f"Failed to delete photos from MinIO for event {event_uuid}: {e}")
+    # Delete all photos from MinIO — tombstone on failure so the bytes
+    # are still tracked for retry instead of orphaned.
+    safe_delete_event_photos(db, event_uuid, commit=False)
 
     # Invalidate caches
     slug = event.slug
