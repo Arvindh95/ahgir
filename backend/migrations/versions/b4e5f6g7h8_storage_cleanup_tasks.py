@@ -12,8 +12,8 @@ we write a row here and retry asynchronously in the retention drainer.
 Each row tracks how many attempts have been made, the last error
 message, and a `next_attempt_at` we back-off exponentially.
 
-Revision ID: a3d4e5f6g7
-Revises: z2c3d4e5f6
+Revision ID: b4e5f6g7h8
+Revises: a3d4e5f6g7
 Create Date: 2026-05-15 04:00:00.000000
 """
 from alembic import op
@@ -21,8 +21,8 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 
-revision = 'a3d4e5f6g7'
-down_revision = 'z2c3d4e5f6'
+revision = 'b4e5f6g7h8'
+down_revision = 'a3d4e5f6g7'
 branch_labels = None
 depends_on = None
 
