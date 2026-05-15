@@ -82,15 +82,8 @@ export const abuseService = {
   },
 
   async get(reportId: string): Promise<AbuseReportRow> {
-    // Single-report metadata reuse: hit the list with id-filter would be
-    // cleaner, but for Phase 1 we list pending+offset and find locally.
-    // Dedicated single-get endpoint is a follow-up.
-    const res = await api.get('/admin/abuse-reports', {
-      params: { status: undefined, limit: 100 },
-    })
-    const found = (res.data.items as AbuseReportRow[]).find((r) => r.id === reportId)
-    if (!found) throw new Error('report not found')
-    return found
+    const res = await api.get(`/admin/abuse-reports/${reportId}`)
+    return res.data
   },
 
   async reveal(reportId: string): Promise<AbuseRevealResponse> {

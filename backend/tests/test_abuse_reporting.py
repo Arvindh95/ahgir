@@ -618,6 +618,37 @@ def test_turnstile_required_when_secret_configured(setup_world):
         assert resp.status_code == 403
 
 
+def test_get_single_report_after_reveal_flips_status(setup_world):
+    """Reveal transitions pending → reviewing. The single-fetch endpoint
+    must return the report regardless of status; the list endpoint
+    defaults to status='pending' so it would silently exclude this row."""
+    world = setup_world
+    db = world["db"]
+    report = AbuseReport(
+        image_id=world["image"].id, event_id=world["event"].id,
+        category="csam", reporter_ip="1.1.1.1", status="pending",
+    )
+    db.add(report)
+    db.commit()
+    db.refresh(report)
+
+    # Reveal flips to 'reviewing'.
+    client.post(
+        f"/admin/abuse-reports/{report.id}/reveal",
+        headers={"Authorization": f"Bearer {world['super_token']}"},
+    )
+
+    # Single fetch must still return the row.
+    resp = client.get(
+        f"/admin/abuse-reports/{report.id}",
+        headers={"Authorization": f"Bearer {world['super_token']}"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["id"] == str(report.id)
+    assert body["status"] == "reviewing"
+
+
 def test_turnstile_passes_when_siteverify_returns_success(setup_world):
     world = setup_world
     _flush_abuse_rate_keys()

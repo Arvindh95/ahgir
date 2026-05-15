@@ -591,6 +591,85 @@ def _load_report_or_404(report_id: str, db: Session) -> AbuseReport:
     return report
 
 
+@router.get("/admin/abuse-reports/{report_id}", response_model=ReportRow)
+async def get_abuse_report(
+    report_id: str,
+    _superadmin: User = Depends(get_superadmin_user),
+    db: Session = Depends(get_db),
+):
+    """Single-report fetch with the same enrichment shape as the list rows.
+
+    The review screen reads this AFTER calling /reveal (which flips the
+    report to 'reviewing'), so the list endpoint's default status='pending'
+    filter would silently exclude the row. Fetch by primary key instead.
+    """
+    report = _load_report_or_404(report_id, db)
+    image = db.query(Image).filter(Image.id == report.image_id).first()
+    event = db.query(Event).filter(Event.id == report.event_id).first()
+    reviewer = None
+    if report.reviewed_by:
+        reviewer = db.query(User).filter(User.id == report.reviewed_by).first()
+
+    dup_window = datetime.now(timezone.utc) - timedelta(
+        hours=settings.abuse_report_image_dedupe_window_hours
+    )
+    duplicate_count = (
+        db.query(func.count(AbuseReport.id))
+        .filter(AbuseReport.image_id == report.image_id)
+        .filter(AbuseReport.status.in_(("pending", "reviewing")))
+        .filter(AbuseReport.created_at >= dup_window)
+        .scalar() or 0
+    )
+    duplicate_count = max(0, duplicate_count - 1)
+
+    sr_flag = False
+    if event and event.owner_user_id and report.reporter_ip and report.reporter_ip != "unknown":
+        sr_window = datetime.now(timezone.utc) - timedelta(hours=24)
+        hit = (
+            db.query(AuditLog.id)
+            .filter(
+                AuditLog.actor_type == "admin",
+                AuditLog.actor_id == event.owner_user_id,
+                AuditLog.timestamp >= sr_window,
+            )
+            .first()
+        )
+        sr_flag = bool(hit)
+
+    ban_state = None
+    if report.reporter_ip:
+        try:
+            if redis_client.exists(_PERMABAN_KEY.format(ip=report.reporter_ip)):
+                ban_state = "permaban"
+            elif redis_client.exists(_SOFTBAN_KEY.format(ip=report.reporter_ip)):
+                ban_state = "softban"
+        except Exception:
+            pass
+
+    return ReportRow(
+        id=str(report.id),
+        image_id=str(report.image_id),
+        event_id=str(report.event_id),
+        event_name=event.name if event else None,
+        event_slug=event.slug if event else None,
+        filename=image.filename if image else None,
+        uploaded_at=to_utc_iso(image.uploaded_at) if image and image.uploaded_at else None,
+        category=report.category,
+        description=report.description,
+        reporter_email=report.reporter_email,
+        reporter_ip=report.reporter_ip,
+        status=report.status,
+        action_taken=report.action_taken,
+        notes=report.notes,
+        created_at=to_utc_iso(report.created_at),
+        reviewed_at=to_utc_iso(report.reviewed_at) if report.reviewed_at else None,
+        reviewed_by_email=reviewer.email if reviewer else None,
+        duplicate_count=duplicate_count,
+        is_possible_self_report=sr_flag,
+        reporter_ban_state=ban_state,
+    )
+
+
 @router.post(
     "/admin/abuse-reports/{report_id}/reveal",
     response_model=RevealResponse,
