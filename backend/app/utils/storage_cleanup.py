@@ -34,6 +34,12 @@ logger = logging.getLogger(__name__)
 # Initial backoff = 30 s, doubles each attempt, capped at 6 h.
 _INITIAL_BACKOFF_SECONDS = 30
 _MAX_BACKOFF_SECONDS = 6 * 60 * 60
+# Lease window: if a row sits in status='running' longer than this without
+# transitioning to done/failed, assume the worker that claimed it crashed
+# mid-attempt and reset the row so the next drainer picks it up. Has to be
+# longer than any realistic single-task duration (storage/CompreFace calls
+# with timeout=5s + retries) — 30 minutes is generous.
+_RUNNING_LEASE_SECONDS = 30 * 60
 
 
 def _backoff_seconds(attempts: int) -> int:
@@ -119,6 +125,28 @@ def drain_storage_cleanup_tasks(db: Session, *, batch_size: int = 25) -> dict:
     independent.
     """
     now = datetime.now(timezone.utc)
+
+    # Lease recovery: reset rows stuck in 'running' beyond the lease window.
+    # A worker that claimed a row (status='running' commit) then crashed
+    # before marking it done/failed would otherwise leave the task orphaned
+    # forever, because the original drainer query only matched pending/failed.
+    lease_cutoff = now - timedelta(seconds=_RUNNING_LEASE_SECONDS)
+    stuck = (
+        db.query(StorageCleanupTask)
+        .filter(StorageCleanupTask.status == "running")
+        .filter(StorageCleanupTask.last_attempt_at < lease_cutoff)
+        .all()
+    )
+    for task in stuck:
+        logger.warning(
+            "Resetting stuck running tombstone id=%s kind=%s last_attempt_at=%s",
+            task.id, task.kind, task.last_attempt_at,
+        )
+        task.status = "failed"
+        task.last_error = (task.last_error or "") + " | lease expired; worker assumed crashed"
+    if stuck:
+        db.commit()
+
     due = (
         db.query(StorageCleanupTask)
         .filter(StorageCleanupTask.status.in_(("pending", "failed")))
@@ -174,6 +202,27 @@ def safe_delete_event_photos(db: Session, event_id, *, commit: bool = True) -> N
         logger.error("Inline event-photos delete failed event_id=%s: %s", event_id, e)
         enqueue_cleanup_task(
             db, "event_photos", {"event_id": str(event_id)}, commit=commit
+        )
+
+
+def safe_delete_image_photo(db: Session, event_id, image_id, *, commit: bool = True) -> None:
+    """Call storage_service.delete_photo with tombstone fallback.
+
+    Wipes BOTH photo_types (original + thumb) for the image — same
+    behaviour as the underlying storage_service.delete_photo. Used by
+    single-photo delete, bulk delete, and upload rollback paths.
+    """
+    try:
+        storage_service.delete_photo(event_id=event_id, image_id=image_id)
+    except Exception as e:
+        logger.error(
+            "Inline image-photo delete failed event_id=%s image_id=%s: %s",
+            event_id, image_id, e,
+        )
+        enqueue_cleanup_task(
+            db, "image_photo",
+            {"event_id": str(event_id), "image_id": str(image_id)},
+            commit=commit,
         )
 
 

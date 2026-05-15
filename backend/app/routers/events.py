@@ -39,7 +39,12 @@ from app.config import settings, get_compreface_url
 from app.cache import cache_delete_pattern
 from app.tiers import get_effective_limits
 from app.utils.compreface import delete_compreface_subjects_for_event
-from app.utils.storage_cleanup import safe_delete_event_photos, enqueue_cleanup_task
+from app.utils.storage_cleanup import (
+    safe_delete_event_photos,
+    safe_delete_image_photo,
+    safe_delete_compreface_subject,
+    enqueue_cleanup_task,
+)
 from app.utils.exif import strip_exif_bytes
 import httpx
 
@@ -1234,19 +1239,13 @@ async def upload_photos(
             db.rollback()
             # Best-effort cleanup of any MinIO objects we wrote before the
             # exception. Pre-fix, an exception between original-upload and
-            # commit would leak the original file in MinIO forever.
-            # storage_service.delete_photo wipes ALL photo_types for the
-            # given image_id in one call, so we only need to invoke it once.
-            try:
-                if 'image_id' in locals() and 'uploaded_photo_types' in locals() and uploaded_photo_types:
-                    storage_service.delete_photo(
-                        event_id=event_uuid,
-                        image_id=image_id,
-                    )
-            except Exception as cleanup_err:
-                logger.warning(
-                    f"MinIO cleanup failed for image_id {locals().get('image_id', '?')}: {cleanup_err}"
-                )
+            # commit would leak the original file in MinIO forever. Now
+            # uses safe_delete_image_photo so a transient MinIO outage
+            # records a tombstone instead of orphaning bytes silently.
+            # commit=True is safe here because the surrounding upload
+            # transaction has already been rolled back.
+            if 'image_id' in locals() and 'uploaded_photo_types' in locals() and uploaded_photo_types:
+                safe_delete_image_photo(db, event_uuid, image_id, commit=True)
             failed.append(PhotoUploadFailure(
                 filename=file.filename,
                 reason=f"Upload failed: {str(e)}",
@@ -1432,42 +1431,16 @@ async def delete_photo(
     # Delete face subjects from CompreFace
     from app.models import Face
     faces = db.query(Face).filter(Face.image_id == image_uuid).all()
+    # Delete CompreFace subjects via tombstone fallback. (The duplicate
+    # CompreFace cleanup block that used to live below this MinIO call has
+    # been collapsed — `faces` is already the per-image face list, the
+    # second pass was redundant.)
     for face in faces:
         if face.compreface_subject_id:
-            try:
-                import httpx
-                httpx.delete(
-                    f"{get_compreface_url()}/api/v1/recognition/faces",
-                    params={"subject": face.compreface_subject_id},
-                    headers={"x-api-key": settings.compreface_api_key},
-                    timeout=5.0
-                )
-            except Exception:
-                pass
+            safe_delete_compreface_subject(db, face.compreface_subject_id, commit=False)
 
-    # Delete from MinIO (both original and thumbnail)
-    try:
-        storage_service.delete_photo(
-            event_id=event_uuid,
-            image_id=image_uuid
-        )
-    except Exception as e:
-        logger.warning(f"Failed to delete MinIO objects for image {image_uuid}: {e}")
-
-    # Delete CompreFace subjects for this image's faces
-    if settings.compreface_api_key:
-        image_faces = db.query(Face).filter(Face.image_id == image_uuid).all()
-        for face in image_faces:
-            if face.compreface_subject_id:
-                try:
-                    httpx.delete(
-                        f"{get_compreface_url()}/api/v1/recognition/faces",
-                        headers={"x-api-key": settings.compreface_api_key},
-                        params={"subject": face.compreface_subject_id},
-                        timeout=10.0,
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to delete CompreFace subject {face.compreface_subject_id}: {e}")
+    # Delete from MinIO (both original and thumbnail) via tombstone fallback.
+    safe_delete_image_photo(db, event_uuid, image_uuid, commit=False)
 
     # Delete from database (cascades to faces)
     db.delete(image)
@@ -1553,26 +1526,17 @@ async def bulk_delete_photos(
     deleted = 0
     deleted_image_ids = []
     for image in images:
-        # Clean up CompreFace subjects
+        # Clean up CompreFace subjects via tombstone fallback.
         if settings.compreface_api_key:
             faces = db.query(Face).filter(Face.image_id == image.id).all()
             for face in faces:
                 if face.compreface_subject_id:
-                    try:
-                        httpx.delete(
-                            f"{get_compreface_url()}/api/v1/recognition/faces",
-                            headers={"x-api-key": settings.compreface_api_key},
-                            params={"subject": face.compreface_subject_id},
-                            timeout=5.0,
-                        )
-                    except Exception:
-                        pass
+                    safe_delete_compreface_subject(
+                        db, face.compreface_subject_id, commit=False
+                    )
 
-        # Delete from MinIO
-        try:
-            storage_service.delete_photo(event_id=event_uuid, image_id=image.id)
-        except Exception as e:
-            logger.warning(f"Failed to delete MinIO objects for image {image.id}: {e}")
+        # Delete from MinIO via tombstone fallback.
+        safe_delete_image_photo(db, event_uuid, image.id, commit=False)
 
         db.delete(image)
         deleted += 1

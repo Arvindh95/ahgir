@@ -55,6 +55,20 @@ interface EventItem {
   created_at: string
 }
 
+interface CleanupTaskItem {
+  id: string
+  kind: string
+  payload: Record<string, any>
+  status: string
+  attempts: number
+  max_attempts: number
+  last_error: string | null
+  last_attempt_at: string | null
+  next_attempt_at: string
+  created_at: string
+  completed_at: string | null
+}
+
 interface UserTierEditState {
   userId: string
   email: string
@@ -93,6 +107,11 @@ export default function SuperadminPage() {
   const [savingTier, setSavingTier] = useState(false)
   const [overrideEdit, setOverrideEdit] = useState<EventOverrideState | null>(null)
   const [savingOverride, setSavingOverride] = useState(false)
+  const [cleanupTasks, setCleanupTasks] = useState<CleanupTaskItem[]>([])
+  const [cleanupTotal, setCleanupTotal] = useState(0)
+  const [cleanupExhaustedOnly, setCleanupExhaustedOnly] = useState(true)
+  const [cleanupLoading, setCleanupLoading] = useState(false)
+  const [retryingCleanupId, setRetryingCleanupId] = useState<string | null>(null)
   const eventsSectionRef = useRef<HTMLDivElement>(null)
 
   const viewEventsForOwner = (email: string) => {
@@ -116,7 +135,7 @@ export default function SuperadminPage() {
         router.push('/admin/events')
         return
       }
-      await Promise.all([loadUsers(), loadStats(), loadPayments(), loadEvents()])
+      await Promise.all([loadUsers(), loadStats(), loadPayments(), loadEvents(), loadCleanupTasks()])
     } catch {
       router.push('/admin/login')
     } finally {
@@ -150,6 +169,32 @@ export default function SuperadminPage() {
       const response = await api.get('/admin/events?limit=200')
       setEvents(response.data.events || [])
     } catch { }
+  }
+
+  const loadCleanupTasks = async (exhaustedOnly = cleanupExhaustedOnly) => {
+    try {
+      setCleanupLoading(true)
+      const response = await api.get(
+        `/admin/storage-cleanup-tasks?limit=50&exhausted_only=${exhaustedOnly}`,
+      )
+      setCleanupTasks(response.data.items || [])
+      setCleanupTotal(response.data.total ?? 0)
+    } catch { } finally {
+      setCleanupLoading(false)
+    }
+  }
+
+  const retryCleanupTask = async (taskId: string) => {
+    try {
+      setRetryingCleanupId(taskId)
+      await api.post(`/admin/storage-cleanup-tasks/${taskId}/retry`)
+      toast('Cleanup task reset; next drainer will pick it up.', 'success')
+      await loadCleanupTasks()
+    } catch (e: any) {
+      toast(e.response?.data?.detail || 'Failed to retry cleanup task', 'error')
+    } finally {
+      setRetryingCleanupId(null)
+    }
   }
 
   const handleTierSave = async () => {
@@ -751,6 +796,110 @@ export default function SuperadminPage() {
                           </span>
                         </td>
                         <td className="py-3 text-gray-400">{formatDate(payment.created_at)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <div className="glass-card rounded-2xl p-6 mb-8">
+            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+              <h2 className="text-xl font-bold flex items-center gap-2">
+                <Database className="w-5 h-5" /> Storage Cleanup Tasks
+                {cleanupTotal > 0 && cleanupExhaustedOnly && (
+                  <span className="ml-2 px-2 py-0.5 rounded-full text-xs font-bold bg-red-500/20 text-red-400">
+                    {cleanupTotal} exhausted
+                  </span>
+                )}
+              </h2>
+              <div className="flex items-center gap-2 text-sm">
+                <label className="flex items-center gap-1 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={cleanupExhaustedOnly}
+                    onChange={(e) => {
+                      const v = e.target.checked
+                      setCleanupExhaustedOnly(v)
+                      loadCleanupTasks(v)
+                    }}
+                    className="accent-red-500"
+                  />
+                  <span className="text-gray-400">Exhausted only</span>
+                </label>
+                <button
+                  onClick={() => loadCleanupTasks()}
+                  disabled={cleanupLoading}
+                  className="px-3 py-1 text-xs bg-white/10 hover:bg-white/20 rounded transition-colors disabled:opacity-50"
+                >
+                  {cleanupLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Refresh'}
+                </button>
+              </div>
+            </div>
+            <p className="text-xs text-gray-500 mb-4">
+              MinIO + CompreFace deletes that failed inline. Drainer retries
+              with backoff up to <code>max_attempts</code>; exhausted rows
+              need manual intervention.
+            </p>
+            {cleanupTasks.length === 0 ? (
+              <p className="text-gray-500 text-sm text-center py-8">
+                {cleanupExhaustedOnly ? 'No exhausted cleanup tasks. 🎉' : 'No cleanup tasks recorded.'}
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-white/10 text-gray-400">
+                      <th className="pb-3 pl-2 font-medium">Kind</th>
+                      <th className="pb-3 font-medium">Payload</th>
+                      <th className="pb-3 font-medium">Status</th>
+                      <th className="pb-3 font-medium">Attempts</th>
+                      <th className="pb-3 font-medium">Last error</th>
+                      <th className="pb-3 font-medium">Last try</th>
+                      <th className="pb-3 font-medium">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {cleanupTasks.map((task) => (
+                      <tr key={task.id} className="hover:bg-white/5 transition-colors">
+                        <td className="py-3 pl-2 font-mono text-xs">{task.kind}</td>
+                        <td className="py-3 font-mono text-xs text-gray-400 max-w-xs truncate">
+                          {JSON.stringify(task.payload)}
+                        </td>
+                        <td className="py-3">
+                          <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                            task.status === 'done' ? 'bg-green-500/20 text-green-400' :
+                            task.status === 'failed' && task.attempts >= task.max_attempts ? 'bg-red-500/20 text-red-400' :
+                            task.status === 'failed' ? 'bg-orange-500/20 text-orange-400' :
+                            task.status === 'running' ? 'bg-blue-500/20 text-blue-400' :
+                            'bg-gray-500/20 text-gray-400'
+                          }`}>
+                            {task.status}
+                          </span>
+                        </td>
+                        <td className="py-3">{task.attempts} / {task.max_attempts}</td>
+                        <td className="py-3 text-gray-400 max-w-xs truncate" title={task.last_error || ''}>
+                          {task.last_error || '—'}
+                        </td>
+                        <td className="py-3 text-gray-400">
+                          {task.last_attempt_at ? formatDate(task.last_attempt_at) : '—'}
+                        </td>
+                        <td className="py-3">
+                          {task.status !== 'done' && (
+                            <button
+                              onClick={() => retryCleanupTask(task.id)}
+                              disabled={retryingCleanupId === task.id}
+                              className="px-2 py-1 text-xs bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 border border-blue-500/20 rounded transition-colors disabled:opacity-50"
+                            >
+                              {retryingCleanupId === task.id ? (
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                              ) : (
+                                'Retry now'
+                              )}
+                            </button>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
