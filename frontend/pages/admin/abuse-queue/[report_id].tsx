@@ -44,17 +44,17 @@ export default function AbuseReviewScreen() {
     const load = async () => {
       try {
         setLoading(true)
-        // Reveal fires first — it sets reviewing state and mints the signed
-        // URL. The reveal endpoint also returns the current report status.
-        const revealData = await abuseService.reveal(report_id)
-        if (cancelled) return
-        setReveal(revealData)
-        // Then fetch row metadata. The Phase-1 service hits /list and
-        // finds locally; follow-up will add a dedicated single-get
-        // endpoint.
+        // Fetch metadata FIRST so we know whether the image still exists.
+        // After /delete-photo the row survives with image_id=NULL; calling
+        // /reveal in that state returns 409. Skip reveal for those rows.
         const row = await abuseService.get(report_id)
         if (cancelled) return
         setReport(row)
+        if (row.image_id) {
+          const revealData = await abuseService.reveal(report_id)
+          if (cancelled) return
+          setReveal(revealData)
+        }
       } catch (err: any) {
         if (cancelled) return
         setError(err.response?.data?.detail || 'Failed to load report')
@@ -126,13 +126,18 @@ export default function AbuseReviewScreen() {
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 {/* Image viewer */}
                 <div className="lg:col-span-2 glass-card rounded-2xl p-4">
-                  {reveal && (
+                  {reveal ? (
                     <img
                       src={reveal.review_url}
                       alt="reported"
                       className="w-full max-h-[80vh] object-contain rounded bg-black"
                     />
-                  )}
+                  ) : !report.image_id ? (
+                    <div className="flex flex-col items-center justify-center bg-black/50 border border-white/10 rounded h-64 text-gray-500 text-sm">
+                      <Trash2 className="w-8 h-8 mb-2 opacity-50" />
+                      Image was permanently deleted in an earlier action.
+                    </div>
+                  ) : null}
                   <div className="mt-3 text-xs text-gray-500 font-mono">
                     {report.filename || '—'} · uploaded {formatDate(report.uploaded_at)}
                   </div>

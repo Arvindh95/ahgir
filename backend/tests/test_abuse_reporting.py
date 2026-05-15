@@ -148,6 +148,92 @@ def test_report_honeypot_silent_drop(setup_world):
     ).count() == 0
 
 
+def test_report_silent_drops_non_guest_visible_image(setup_world):
+    """A real image_id whose status is quarantined / pending / failed —
+    or whose event is frozen — must return the same fixed 200 body as
+    a fake UUID, AND must create no row. Prevents both queue noise on
+    invisible photos and a side-channel that could distinguish 'real
+    but hidden' from 'fake'."""
+    world = setup_world
+    db = world["db"]
+    _flush_abuse_rate_keys()
+    # Flip the test image to quarantined.
+    world["image"].status = "quarantined"
+    db.commit()
+
+    pre_count = db.query(AbuseReport).count()
+    resp = client.post("/report", json={
+        "image_id": str(world["image"].id),
+        "category": "other",
+    })
+    assert resp.status_code == 200
+    assert resp.json() == {"message": "Thank you. We will review this report shortly."}
+    assert db.query(AbuseReport).count() == pre_count
+
+
+def test_report_silent_drops_frozen_event_image(setup_world):
+    world = setup_world
+    db = world["db"]
+    _flush_abuse_rate_keys()
+    world["event"].status = "frozen"
+    db.commit()
+
+    pre_count = db.query(AbuseReport).count()
+    resp = client.post("/report", json={
+        "image_id": str(world["image"].id),
+        "category": "other",
+    })
+    assert resp.status_code == 200
+    assert db.query(AbuseReport).count() == pre_count
+
+
+def test_reveal_on_removed_image_returns_409(setup_world):
+    """After /delete-photo the report row survives with image_id=NULL.
+    /reveal in that state cannot mint a signed URL — must 409."""
+    world = setup_world
+    db = world["db"]
+    report = AbuseReport(
+        image_id=None,
+        event_id=world["event"].id,
+        category="csam", reporter_ip="1.1.1.1", status="removed",
+        action_taken="remove",
+    )
+    db.add(report)
+    db.commit()
+    db.refresh(report)
+
+    resp = client.post(
+        f"/admin/abuse-reports/{report.id}/reveal",
+        headers={"Authorization": f"Bearer {world['super_token']}"},
+    )
+    assert resp.status_code == 409
+
+
+def test_list_returns_null_image_id_for_removed_report(setup_world):
+    """Removed reports surface in the list with image_id=null (not the
+    string 'None'). Verifies the Pydantic schema correctly accepts None."""
+    world = setup_world
+    db = world["db"]
+    report = AbuseReport(
+        image_id=None,
+        event_id=world["event"].id,
+        category="csam", reporter_ip="1.1.1.1", status="removed",
+        action_taken="remove",
+    )
+    db.add(report)
+    db.commit()
+
+    resp = client.get(
+        "/admin/abuse-reports?status=removed",
+        headers={"Authorization": f"Bearer {world['super_token']}"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total"] >= 1
+    removed_row = next(r for r in data["items"] if r["status"] == "removed")
+    assert removed_row["image_id"] is None
+
+
 def test_report_invalid_category_returns_422(setup_world):
     world = setup_world
     resp = client.post("/report", json={
@@ -180,8 +266,12 @@ def test_report_bad_uuid_returns_same_fixed_body(setup_world):
 
 
 def test_report_anti_enum_constant_time(setup_world):
-    """Real and fake image_ids must respond in roughly the same time."""
+    """Real and fake image_ids must both meet the 50ms minimum response
+    floor AND respond in roughly the same time. The duration pad is what
+    prevents a probe from measuring DB-lookup latency to distinguish
+    real-but-rate-limited from fake."""
     world = setup_world
+    _flush_abuse_rate_keys()
 
     def time_call(image_id: str) -> float:
         t0 = time.monotonic()
@@ -192,7 +282,12 @@ def test_report_anti_enum_constant_time(setup_world):
     time_call(str(world["image"].id))
     real = time_call(str(world["image"].id))
     fake = time_call(str(uuid.uuid4()))
-    # 50ms floor + DB jitter — keep generous so the assertion isn't flaky.
+    # Minimum floor: anti-enum pad is 50ms; the await holds the request
+    # open at least that long. Assert both paths cross the floor so a
+    # missing-await regression (the P2 fix in this commit) is caught.
+    assert real >= 0.045, f"real path skipped duration pad: {real:.3f}s"
+    assert fake >= 0.045, f"fake path skipped duration pad: {fake:.3f}s"
+    # And the two should be close enough that a probe can't distinguish.
     assert abs(real - fake) < 0.2
 
 

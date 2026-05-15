@@ -168,7 +168,11 @@ class ReportCreateRequest(BaseModel):
 
 class ReportRow(BaseModel):
     id: str
-    image_id: str
+    # NULL after the underlying image is deleted via /delete-photo. The
+    # FK is ON DELETE SET NULL so the report row survives for queue
+    # history; downstream code (reveal, delete, restore, frontend) must
+    # treat missing image_id as "image no longer exists".
+    image_id: Optional[str] = None
     event_id: str
     event_name: Optional[str] = None
     event_slug: Optional[str] = None
@@ -347,7 +351,21 @@ async def file_abuse_report(
         await _pad_duration(started)
         return _FIXED_THANKS_BODY
 
-    image = db.query(Image).filter(Image.id == image_uuid).first()
+    # Only accept reports against images that a guest could ACTUALLY see —
+    # join on Event.status='active' AND Image.status IN ('indexed',
+    # 'no_faces'). Quarantined, pending, failed, or frozen-event images
+    # are silently treated as non-existent (same fixed-body 200 + no row
+    # written). Avoids accumulating queue noise on images that aren't
+    # public anyway, and dodges the anti-enumeration leak where a probe
+    # could distinguish "real but hidden" from "fake" by side-channel.
+    image = (
+        db.query(Image)
+        .join(Event, Event.id == Image.event_id)
+        .filter(Image.id == image_uuid)
+        .filter(Event.status == "active")
+        .filter(Image.status.in_(("indexed", "no_faces")))
+        .first()
+    )
     if not image:
         # Anti-enumeration: same response as a successful submission.
         await _pad_duration(started)
@@ -394,7 +412,7 @@ async def file_abuse_report(
         "abuse-report filed id=%s image_id=%s category=%s reporter_ip=%s",
         report.id, image.id, category, reporter_ip,
     )
-    _pad_duration(started)
+    await _pad_duration(started)
     return _FIXED_THANKS_BODY
 
 
@@ -553,7 +571,7 @@ async def list_abuse_reports(
 
         items.append(ReportRow(
             id=str(r.id),
-            image_id=str(r.image_id),
+            image_id=str(r.image_id) if r.image_id else None,
             event_id=str(r.event_id),
             event_name=ev.name if ev else None,
             event_slug=ev.slug if ev else None,
@@ -634,7 +652,7 @@ async def get_abuse_report(
 
     return ReportRow(
         id=str(report.id),
-        image_id=str(report.image_id),
+        image_id=str(report.image_id) if report.image_id else None,
         event_id=str(report.event_id),
         event_name=event.name if event else None,
         event_slug=event.slug if event else None,
@@ -674,6 +692,15 @@ async def reveal_report(
     row every time — re-opening a closed report is also traceable.
     """
     report = _load_report_or_404(report_id, db)
+
+    # No image to reveal — the photo was already deleted via /delete-photo.
+    # The report row survives for history (FK is ON DELETE SET NULL) but
+    # there's no underlying object to sign a URL against.
+    if report.image_id is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Image no longer exists — it was deleted in an earlier action.",
+        )
 
     first_review = report.status == "pending"
     if first_review:

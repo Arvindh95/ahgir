@@ -319,6 +319,23 @@ def validate_production_secrets():
     if _looks_like_placeholder(getattr(settings, "frontend_url", "")):
         errors.append(f"FRONTEND_URL still contains a placeholder host: {settings.frontend_url}")
 
+    # Turnstile must be configured as a PAIR. NEXT_PUBLIC_TURNSTILE_SITE_KEY
+    # is a frontend build-arg (not on `settings`), but it lives in the same
+    # .env.production so we check the env var directly. If only the secret
+    # is set, the modal won't render the widget and every submission 403s.
+    # If only the site key is set, users solve an unchecked captcha that
+    # the backend never verifies. Both empty = captcha opt-out (dev/early
+    # prod); both set = enforced. Anything else is half-configured.
+    import os
+    site_key_set = bool((os.environ.get("NEXT_PUBLIC_TURNSTILE_SITE_KEY") or "").strip())
+    secret_key_set = bool(settings.cloudflare_turnstile_secret_key.strip())
+    if site_key_set != secret_key_set:
+        errors.append(
+            "Cloudflare Turnstile is half-configured: NEXT_PUBLIC_TURNSTILE_SITE_KEY "
+            f"set={site_key_set}, CLOUDFLARE_TURNSTILE_SECRET_KEY set={secret_key_set}. "
+            "Either set both (captcha enforced) or leave both empty (captcha disabled)."
+        )
+
     if errors:
         raise RuntimeError(
             "Production startup blocked due to insecure config:\n  - " + "\n  - ".join(errors)
