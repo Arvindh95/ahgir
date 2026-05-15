@@ -82,6 +82,7 @@ export const abuseService = {
   async list(params: {
     status?: string
     category?: string
+    event_search?: string
     sort?: 'newest' | 'oldest'
     limit?: number
     offset?: number

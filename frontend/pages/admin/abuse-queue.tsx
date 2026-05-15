@@ -39,6 +39,11 @@ export default function AbuseQueuePage() {
   const [total, setTotal] = useState(0)
   const [statusFilter, setStatusFilter] = useState<string>('pending')
   const [categoryFilter, setCategoryFilter] = useState<string>('')
+  // Raw input (controlled), and the debounced value the load-effect
+  // actually queries on. Keeps the keystroke -> request stream cheap so
+  // typing "Mary's Wedding 2026" doesn't fire 17 list queries.
+  const [eventSearchInput, setEventSearchInput] = useState<string>('')
+  const [eventSearch, setEventSearch] = useState<string>('')
   const [sort, setSort] = useState<'newest' | 'oldest'>('newest')
   const [offset, setOffset] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -49,6 +54,7 @@ export default function AbuseQueuePage() {
     const data = await abuseService.list({
       status: statusFilter,
       category: categoryFilter || undefined,
+      event_search: eventSearch || undefined,
       sort,
       limit: PAGE_SIZE,
       offset,
@@ -114,6 +120,17 @@ export default function AbuseQueuePage() {
     }).catch(() => router.replace('/admin/login'))
   }, [router])
 
+  // Debounce the search box so typing doesn't fire a list query per keystroke.
+  useEffect(() => {
+    const trimmed = eventSearchInput.trim()
+    if (trimmed === eventSearch) return
+    const id = setTimeout(() => {
+      setEventSearch(trimmed)
+      setOffset(0)
+    }, 300)
+    return () => clearTimeout(id)
+  }, [eventSearchInput, eventSearch])
+
   useEffect(() => {
     let cancelled = false
     const load = async () => {
@@ -122,6 +139,7 @@ export default function AbuseQueuePage() {
         const data = await abuseService.list({
           status: statusFilter,
           category: categoryFilter || undefined,
+          event_search: eventSearch || undefined,
           sort,
           limit: PAGE_SIZE,
           offset,
@@ -138,7 +156,7 @@ export default function AbuseQueuePage() {
     }
     load()
     return () => { cancelled = true }
-  }, [statusFilter, categoryFilter, sort, offset])
+  }, [statusFilter, categoryFilter, eventSearch, sort, offset])
 
   const pageEnd = offset + items.length
   const hasNext = pageEnd < total
@@ -199,6 +217,13 @@ export default function AbuseQueuePage() {
               <option value="newest">Newest first</option>
               <option value="oldest">Oldest first</option>
             </select>
+            <input
+              type="search"
+              value={eventSearchInput}
+              onChange={(e) => setEventSearchInput(e.target.value)}
+              placeholder="Search event name or slug…"
+              className="flex-1 min-w-[12rem] max-w-sm bg-white/5 border border-white/10 text-sm rounded-lg px-3 py-1.5 placeholder:text-gray-500 focus:border-white/40 focus:outline-none"
+            />
           </div>
 
           {error && (

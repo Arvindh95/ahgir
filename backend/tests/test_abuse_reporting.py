@@ -275,6 +275,70 @@ def test_delete_photo_preserves_report_row_with_null_image_id(setup_world):
     assert surviving.action_taken == "remove"
 
 
+def test_list_event_search_matches_name_and_slug(setup_world):
+    """event_search filters the list by case-insensitive substring on
+    Event.name or Event.slug. Operators commonly know the event by name
+    so this is the primary way to locate a queue row fast."""
+    world = setup_world
+    db = world["db"]
+    _flush_abuse_rate_keys()
+
+    other_event = Event(
+        owner_user_id=world["regular_admin"].id,
+        slug="totally-different-slug-xyz",
+        name="Birthday Bash",
+        status="active",
+        retention_days=30,
+    )
+    db.add(other_event)
+    db.commit()
+    db.refresh(other_event)
+    other_image = Image(
+        event_id=other_event.id, filename="b.jpg", file_hash="z" * 64,
+        size_bytes=1, status="indexed",
+    )
+    db.add(other_image)
+    db.commit()
+    db.refresh(other_image)
+
+    r_test = AbuseReport(
+        image_id=world["image"].id, event_id=world["event"].id,
+        category="csam", reporter_ip="20.0.0.1", status="pending",
+    )
+    r_birthday = AbuseReport(
+        image_id=other_image.id, event_id=other_event.id,
+        category="nudity", reporter_ip="20.0.0.2", status="pending",
+    )
+    db.add_all([r_test, r_birthday])
+    db.commit()
+
+    # Match on name (case-insensitive).
+    resp = client.get(
+        "/admin/abuse-reports?status=pending&event_search=birthday",
+        headers={"Authorization": f"Bearer {world['super_token']}"},
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["total"] == 1
+    assert payload["items"][0]["event_name"] == "Birthday Bash"
+
+    # Match on slug.
+    resp = client.get(
+        "/admin/abuse-reports?status=pending&event_search=different-slug",
+        headers={"Authorization": f"Bearer {world['super_token']}"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["total"] == 1
+
+    # No-match returns empty.
+    resp = client.get(
+        "/admin/abuse-reports?status=pending&event_search=zzzz_nothing",
+        headers={"Authorization": f"Bearer {world['super_token']}"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["total"] == 0
+
+
 def test_event_delete_blocked_by_quarantined_report(setup_world):
     """Regression: event-delete blocker MUST treat quarantined as non-
     terminal. Otherwise an owner deletes the event, the cascade wipes

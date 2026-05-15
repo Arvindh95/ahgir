@@ -531,6 +531,7 @@ async def get_pending_count(
 async def list_abuse_reports(
     status_filter: Optional[str] = Query(default="pending", alias="status"),
     category: Optional[str] = Query(default=None),
+    event_search: Optional[str] = Query(default=None, max_length=200),
     sort: str = Query(default="newest"),
     limit: int = Query(default=25, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
@@ -549,6 +550,17 @@ async def list_abuse_reports(
         if category not in _VALID_CATEGORIES:
             raise HTTPException(status_code=422, detail="invalid category filter")
         q = q.filter(AbuseReport.category == category)
+    if event_search:
+        # Substring match on event name or slug. Owners who post-incident
+        # delete their offending image now have a way to be found in the
+        # queue without scrolling — operators commonly know the event by
+        # name. ILIKE works because event_id is FK-indexed; the JOIN
+        # constrains the report set before the LIKE scan runs over the
+        # already-filtered event row.
+        term = f"%{event_search.strip()}%"
+        q = q.join(Event, Event.id == AbuseReport.event_id).filter(
+            (Event.name.ilike(term)) | (Event.slug.ilike(term))
+        )
 
     total = q.count()
 
