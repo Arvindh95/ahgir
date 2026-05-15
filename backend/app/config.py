@@ -117,6 +117,11 @@ class Settings(BaseSettings):
     event_passcode_ip_rate_window_hours: int = 1
     share_rate_limit: int = 60
     share_rate_window_hours: int = 1
+    # Per-IP abuse report cap. Same window as scan/auth — abuse mass-reporting
+    # is rare and bursty, 5/hour per IP balances responsiveness with queue
+    # protection.
+    abuse_report_rate_limit: int = 5
+    abuse_report_rate_window_hours: int = 1
     bulk_download_max_images: int = 100
     bulk_download_max_bytes: int = 500 * 1024 * 1024  # 500 MB
     # Per-file upload cap (matches Caddy request_body max_size in prod).

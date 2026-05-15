@@ -227,3 +227,10 @@ event_passcode_ip_rate_limiter = RateLimiter(
     limit=settings.event_passcode_ip_rate_limit,
     window_hours=settings.event_passcode_ip_rate_window_hours,
 )
+# Per-IP abuse report limiter. Caps the public /report endpoint so the
+# operator queue can't be flooded by automated tooling.
+abuse_report_rate_limiter = RateLimiter(
+    redis_client,
+    limit=settings.abuse_report_rate_limit,
+    window_hours=settings.abuse_report_rate_window_hours,
+)

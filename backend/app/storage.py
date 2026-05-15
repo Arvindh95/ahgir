@@ -25,7 +25,7 @@ def _url_signing_key() -> bytes:
     ).digest()
 
 
-_VALID_PHOTO_TYPES = {"original", "thumb", "cover"}
+_VALID_PHOTO_TYPES = {"original", "thumb", "cover", "abuse_review"}
 
 
 def _build_signature_payload(event_id: str, image_id: str, photo_type: str, expires: int) -> bytes:
@@ -40,6 +40,22 @@ def generate_signed_cover_url(
     # Cover is event-scoped (one per event), so we use event_id in the image_id slot
     # as a sentinel — both signer and verifier agree on this convention.
     return generate_signed_url(event_id, event_id, "cover", expires_minutes)
+
+
+def generate_signed_abuse_review_url(
+    event_id: uuid.UUID,
+    image_id: uuid.UUID,
+    expires_minutes: int = 5,
+) -> str:
+    """Build a 5-minute signed review URL for an abuse-report image viewer.
+
+    Same signing scheme as generate_signed_url, but the photo_type is
+    'abuse_review' which the /photos route maps to the underlying
+    'original/' MinIO object while bypassing the event.status='active'
+    and image.status IN (indexed, no_faces) gates — a quarantined image
+    MUST be reviewable, a frozen event MUST be reviewable.
+    """
+    return generate_signed_url(event_id, image_id, "abuse_review", expires_minutes)
 
 
 def generate_signed_url(
@@ -209,6 +225,11 @@ class StorageService:
         """
         if photo_type == "cover":
             object_path = f"events/{event_id}/cover.jpg"
+        elif photo_type == "abuse_review":
+            # No separate MinIO object — abuse_review is a different SIGNED
+            # URL path that grants temporary review access to the underlying
+            # original bytes. Operator-only via /admin/abuse-reports/.../reveal.
+            object_path = f"events/{event_id}/original/{image_id}.jpg"
         else:
             object_path = f"events/{event_id}/{photo_type}/{image_id}.jpg"
 

@@ -240,7 +240,8 @@ export default function Security() {
               <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-500/15 text-blue-300 flex items-center justify-center"><EyeOff className="w-4 h-4" /></div>
               <div>
                 <div className="font-semibold text-white mb-0.5">No customer-photo browser in the app</div>
-                <p className="text-gray-400">The PicUr admin console only shows event metadata — event name, owner email, photo count, plan. There is no admin feature anywhere in the app that lets staff view or download photos from another organizer&apos;s event.</p>
+                <p className="text-gray-400">The PicUr admin console only shows event metadata — event name, owner email, photo count, plan. There is no admin feature anywhere in the app that lets staff browse photos from another organizer&apos;s event.</p>
+                <p className="text-gray-400 mt-2"><span className="text-white">Single exception:</span> when a user files a written abuse report against a specific photo, an operator can view that one photo to verify the report and decide whether to leave it, quarantine it, or remove it. Every such view is recorded in the event&apos;s own audit log — the audit row names the operator, the photo, the report category, and the reporter context, so an organizer can see every time the carve-out was exercised on their event.</p>
               </div>
             </div>
             <div className="flex gap-4">

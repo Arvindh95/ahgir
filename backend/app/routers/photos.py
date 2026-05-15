@@ -58,8 +58,16 @@ async def get_photo_signed(
     # Live state check: deny if the event has been frozen / expired /
     # deleted, or if the image has been deleted or moved out of the
     # guest-visible states. Cheap (PK + indexed-event_id lookup).
+    #
+    # abuse_review BYPASSES both gates by design — a quarantined image
+    # MUST be reviewable by an operator, and a frozen event MUST be
+    # reviewable. The signed URL itself (5-min HMAC) is the bearer; only
+    # the operator's /admin/abuse-reports/{id}/reveal endpoint mints it,
+    # and that endpoint requires superadmin auth + writes an audit row.
     event = db.query(Event).filter(Event.id == event_uuid).first()
-    if not event or event.status != 'active':
+    if not event:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
+    if photo_type != "abuse_review" and event.status != 'active':
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
 
     # Covers are event-scoped (one per event) and use event_id as a
@@ -68,7 +76,7 @@ async def get_photo_signed(
     # status lookup for cover requests. The event-active check above
     # is sufficient gating: as soon as the event is frozen / expired,
     # the cover stops serving too.
-    if photo_type != "cover":
+    if photo_type not in ("cover", "abuse_review"):
         image = (
             db.query(Image.id)
             .filter(
@@ -78,6 +86,14 @@ async def get_photo_signed(
             )
             .first()
         )
+        if not image:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
+    elif photo_type == "abuse_review":
+        # Image must still exist (we bypass the status enum because
+        # quarantined / pending / failed are all valid for review).
+        image = db.query(Image.id).filter(
+            Image.id == image_uuid, Image.event_id == event_uuid,
+        ).first()
         if not image:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
 
