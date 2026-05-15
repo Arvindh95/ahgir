@@ -66,7 +66,7 @@ export default function AbuseReviewScreen() {
     return () => { cancelled = true }
   }, [report_id])
 
-  const isTerminal = report && (report.status === 'dismissed' || report.status === 'removed')
+  const isTerminal = !!(report && (report.status === 'dismissed' || report.status === 'removed'))
 
   const doAction = async (kind: 'dismiss' | 'quarantine' | 'delete') => {
     if (!report || !report_id || typeof report_id !== 'string') return
