@@ -201,6 +201,12 @@ services:
       SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL}
       SUBSCRIPTION_GRACE_PERIOD_DAYS: ${SUBSCRIPTION_GRACE_PERIOD_DAYS:-3}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      # Worker doesn't make Stripe / CORS-gated calls, but the prod preflight
+      # (scripts/preflight.py → validate_production_secrets) checks them
+      # process-wide. Mirror the same values backend gets so preflight passes.
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
     volumes:
       - ./backend:/app
     depends_on:
