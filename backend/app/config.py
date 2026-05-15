@@ -77,6 +77,16 @@ class Settings(BaseSettings):
     stripe_secret_key: str = ""
     stripe_publishable_key: str = ""
     stripe_webhook_secret: str = ""
+    # Optional Stripe Billing Portal Configuration ID. If set, /payments/portal
+    # passes this as `configuration=`. Use it to pin the portal to:
+    #   subscription_cancel.mode = at_period_end
+    #   subscription_update.proration_behavior = none
+    #   subscription_update.schedule_at_period_end = true
+    # so plan changes / cancellations honor the "paid period continues" rule
+    # we promise in billing.tsx. The in-app /payments/cancel endpoint already
+    # enforces at-period-end for cancellations; this config covers the
+    # remaining portal-driven plan-change paths.
+    stripe_billing_portal_config_id: str = ""
     # Stripe Price IDs (created by scripts/setup_stripe_products.py)
     stripe_price_starter_monthly: str = ""
     stripe_price_starter_yearly: str = ""

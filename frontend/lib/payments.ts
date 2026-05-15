@@ -63,4 +63,14 @@ export const paymentService = {
     const response = await api.post('/payments/portal')
     return response.data
   },
+
+  async cancelSubscription(): Promise<UserTierInfo> {
+    const response = await api.post('/payments/cancel')
+    return response.data
+  },
+
+  async reactivateSubscription(): Promise<UserTierInfo> {
+    const response = await api.post('/payments/reactivate')
+    return response.data
+  },
 }

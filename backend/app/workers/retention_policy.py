@@ -174,6 +174,7 @@ def process_overdue_subscriptions(db: Session = None):
 
     grace = timedelta(days=settings.subscription_grace_period_days)
     cutoff = datetime.utcnow() - grace
+    now = datetime.utcnow()
     downgraded = 0
 
     try:
@@ -191,6 +192,62 @@ def process_overdue_subscriptions(db: Session = None):
             )
             .all()
         )
+
+        # Soft-cancel reconciliation: catch active subs scheduled to cancel
+        # whose current_period_end has already passed. Stripe normally fires
+        # customer.subscription.deleted on schedule, but if that webhook is
+        # missed (transient outage, signing-secret mismatch, retry exhaustion)
+        # the user keeps paid limits past the end date. We re-check Stripe
+        # directly and downgrade if the sub is no longer active.
+        scheduled_cancels = (
+            db.query(UserTier)
+            .filter(
+                UserTier.subscription_status.in_(("active", "trialing")),
+                UserTier.cancel_at_period_end.is_(True),
+                UserTier.current_period_end.isnot(None),
+                UserTier.current_period_end < now,
+                UserTier.stripe_subscription_id.isnot(None),
+            )
+            .all()
+        )
+
+        for ut in scheduled_cancels:
+            try:
+                import stripe
+                stripe.api_key = settings.stripe_secret_key
+                sub = stripe.Subscription.retrieve(ut.stripe_subscription_id)
+                stripe_status = getattr(sub, "status", None)
+                if stripe_status in ("active", "trialing"):
+                    # Stripe still considers it active (period rolled over
+                    # naturally or user reactivated). Resync local state from
+                    # Stripe rather than downgrade.
+                    cpe = getattr(sub, "current_period_end", None)
+                    if cpe:
+                        ut.current_period_end = datetime.utcfromtimestamp(cpe)
+                    ut.cancel_at_period_end = bool(getattr(sub, "cancel_at_period_end", False))
+                    if not db_provided:
+                        db.commit()
+                    else:
+                        db.flush()
+                    logger.info(
+                        "Soft-cancel reconcile: user %s still active in Stripe; resynced state",
+                        ut.user_id,
+                    )
+                    continue
+                # Stripe confirms cancellation (canceled / incomplete_expired
+                # / unpaid). Apply the downgrade we would have done from the
+                # missed webhook.
+                overdue.append(ut)
+                logger.info(
+                    "Soft-cancel reconcile: user %s confirmed canceled in Stripe (status=%s); queued for downgrade",
+                    ut.user_id, stripe_status,
+                )
+            except Exception as e:
+                logger.error(
+                    "Failed to reconcile soft-cancel for user %s: %s",
+                    ut.user_id, e,
+                )
+                continue
 
         for ut in overdue:
             try:

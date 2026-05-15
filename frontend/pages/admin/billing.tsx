@@ -5,7 +5,7 @@ import ProtectedRoute from '@/components/ProtectedRoute'
 import AdminLayout from '@/components/AdminLayout'
 import { paymentService, UserTierInfo, BillingInterval } from '@/lib/payments'
 import { useToast } from '@/hooks/useToast'
-import { CreditCard, Check, ArrowRight, Loader2, AlertCircle } from 'lucide-react'
+import { CreditCard, Check, ArrowRight, Loader2, AlertCircle, X, RotateCcw } from 'lucide-react'
 
 const TIERS = [
   {
@@ -61,6 +61,8 @@ export default function BillingPage() {
   const [interval, setInterval] = useState<BillingInterval>('month')
   const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null)
   const [portalLoading, setPortalLoading] = useState(false)
+  const [cancelLoading, setCancelLoading] = useState(false)
+  const [reactivateLoading, setReactivateLoading] = useState(false)
 
   useEffect(() => {
     loadTier()
@@ -110,6 +112,35 @@ export default function BillingPage() {
     } catch (err: any) {
       toast(err.response?.data?.detail || 'Failed to open billing portal', 'error')
       setPortalLoading(false)
+    }
+  }
+
+  const handleCancel = async () => {
+    if (!window.confirm('Cancel your subscription? You will keep paid limits until the end of the current billing period.')) {
+      return
+    }
+    try {
+      setCancelLoading(true)
+      const tier = await paymentService.cancelSubscription()
+      setUserTier(tier)
+      toast('Subscription will end at the close of this billing period.', 'success')
+    } catch (err: any) {
+      toast(err.response?.data?.detail || 'Failed to cancel subscription', 'error')
+    } finally {
+      setCancelLoading(false)
+    }
+  }
+
+  const handleReactivate = async () => {
+    try {
+      setReactivateLoading(true)
+      const tier = await paymentService.reactivateSubscription()
+      setUserTier(tier)
+      toast('Subscription reactivated. Renewal scheduled as normal.', 'success')
+    } catch (err: any) {
+      toast(err.response?.data?.detail || 'Failed to reactivate subscription', 'error')
+    } finally {
+      setReactivateLoading(false)
     }
   }
 
@@ -184,7 +215,7 @@ export default function BillingPage() {
                 )}
 
                 {isPaid && (
-                  <div className="mt-6 flex gap-3">
+                  <div className="mt-6 flex gap-3 flex-wrap">
                     <button
                       onClick={handlePortal}
                       disabled={portalLoading}
@@ -193,6 +224,25 @@ export default function BillingPage() {
                       {portalLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}
                       Manage subscription
                     </button>
+                    {userTier?.cancel_at_period_end ? (
+                      <button
+                        onClick={handleReactivate}
+                        disabled={reactivateLoading}
+                        className="flex items-center gap-2 bg-green-500/10 text-green-400 border border-green-500/20 px-4 py-2 rounded-lg font-semibold hover:bg-green-500/20 transition-colors disabled:opacity-50"
+                      >
+                        {reactivateLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />}
+                        Reactivate
+                      </button>
+                    ) : (
+                      <button
+                        onClick={handleCancel}
+                        disabled={cancelLoading}
+                        className="flex items-center gap-2 bg-red-500/10 text-red-400 border border-red-500/20 px-4 py-2 rounded-lg font-semibold hover:bg-red-500/20 transition-colors disabled:opacity-50"
+                      >
+                        {cancelLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <X className="w-4 h-4" />}
+                        Cancel subscription
+                      </button>
+                    )}
                   </div>
                 )}
               </div>

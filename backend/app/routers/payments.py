@@ -463,17 +463,143 @@ async def create_portal_session(
             detail="No billing account yet. Subscribe first to access the billing portal.",
         )
 
+    portal_kwargs = {
+        "customer": user_tier.stripe_customer_id,
+        "return_url": f"{settings.frontend_url}/admin/billing",
+    }
+    # Optional explicit portal configuration. The default Stripe portal can
+    # apply plan changes and cancellations IMMEDIATELY, which violates the
+    # "paid period continues until end-of-billing-cycle" contract surfaced
+    # in the UI. Operators should create a portal configuration with
+    # subscription_cancel.mode='at_period_end' + subscription_update.
+    # proration_behavior='none' and schedule_at_period_end=true, then point
+    # STRIPE_BILLING_PORTAL_CONFIG_ID at it. The app-owned /payments/cancel
+    # endpoint already enforces at-period-end behaviour for cancellations,
+    # but plan changes still go through the portal.
+    if settings.stripe_billing_portal_config_id:
+        portal_kwargs["configuration"] = settings.stripe_billing_portal_config_id
+
     try:
-        portal = stripe.billing_portal.Session.create(
-            customer=user_tier.stripe_customer_id,
-            return_url=f"{settings.frontend_url}/admin/billing",
-        )
+        portal = stripe.billing_portal.Session.create(**portal_kwargs)
     except stripe.StripeError as e:
         logger.error(f"Stripe portal error: {e}")
         raise HTTPException(status_code=500, detail="Failed to open billing portal")
 
     db.commit()
     return PortalResponse(portal_url=portal.url)
+
+
+@router.post("/cancel", response_model=MyTierResponse)
+async def cancel_subscription(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """App-owned cancellation — schedules cancel at period end.
+
+    Sets cancel_at_period_end=True on the live Stripe subscription so the
+    user keeps paid limits through the already-paid billing period. Stripe
+    fires customer.subscription.deleted when the period ends; the daily
+    reconciler also catches the case where that webhook is missed.
+
+    Avoids depending on Stripe Billing Portal configuration to enforce
+    at-period-end semantics (the default portal can cancel immediately
+    and forfeit the remaining paid period).
+    """
+    user_tier = _get_or_create_user_tier(current_user, db)
+    if not user_tier.stripe_subscription_id:
+        raise HTTPException(
+            status_code=400, detail="No active subscription to cancel."
+        )
+    if user_tier.subscription_status not in ("active", "trialing", "past_due"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot cancel subscription in status '{user_tier.subscription_status}'.",
+        )
+
+    try:
+        sub = stripe.Subscription.modify(
+            user_tier.stripe_subscription_id,
+            cancel_at_period_end=True,
+        )
+    except stripe.StripeError as e:
+        logger.error("Stripe cancel error: %s", e)
+        raise HTTPException(status_code=502, detail="Stripe rejected the cancellation; try again later.")
+
+    user_tier.cancel_at_period_end = True
+    if getattr(sub, "current_period_end", None):
+        user_tier.current_period_end = datetime.utcfromtimestamp(sub.current_period_end)
+    db.commit()
+    db.refresh(user_tier)
+
+    limits = get_effective_limits(user_tier)
+    active_count = get_active_event_count(db, current_user.id)
+    return MyTierResponse(
+        tier_name=limits["tier_name"],
+        max_events=limits["max_events"],
+        max_photos_per_event=limits["max_photos_per_event"],
+        retention_days=limits["retention_days"],
+        active_events=active_count,
+        is_active=user_tier.is_active,
+        subscription_status=user_tier.subscription_status,
+        billing_interval=user_tier.billing_interval,
+        current_period_end=user_tier.current_period_end.isoformat() if user_tier.current_period_end else None,
+        cancel_at_period_end=user_tier.cancel_at_period_end,
+        activated_at=user_tier.activated_at.isoformat() if user_tier.activated_at else None,
+    )
+
+
+@router.post("/reactivate", response_model=MyTierResponse)
+async def reactivate_subscription(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Undo a scheduled cancellation while the subscription is still active.
+
+    Symmetric to /cancel — flips cancel_at_period_end back to False on the
+    Stripe subscription. Only valid while the subscription has not yet
+    rolled to 'canceled' (i.e. before current_period_end).
+    """
+    user_tier = _get_or_create_user_tier(current_user, db)
+    if not user_tier.stripe_subscription_id:
+        raise HTTPException(status_code=400, detail="No active subscription.")
+    if not user_tier.cancel_at_period_end:
+        raise HTTPException(status_code=400, detail="Subscription is not scheduled for cancellation.")
+    if user_tier.subscription_status not in ("active", "trialing", "past_due"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot reactivate subscription in status '{user_tier.subscription_status}'.",
+        )
+
+    try:
+        sub = stripe.Subscription.modify(
+            user_tier.stripe_subscription_id,
+            cancel_at_period_end=False,
+        )
+    except stripe.StripeError as e:
+        logger.error("Stripe reactivate error: %s", e)
+        raise HTTPException(status_code=502, detail="Stripe rejected the reactivation; try again later.")
+
+    user_tier.cancel_at_period_end = False
+    if getattr(sub, "current_period_end", None):
+        user_tier.current_period_end = datetime.utcfromtimestamp(sub.current_period_end)
+    db.commit()
+    db.refresh(user_tier)
+
+    limits = get_effective_limits(user_tier)
+    active_count = get_active_event_count(db, current_user.id)
+    return MyTierResponse(
+        tier_name=limits["tier_name"],
+        max_events=limits["max_events"],
+        max_photos_per_event=limits["max_photos_per_event"],
+        retention_days=limits["retention_days"],
+        active_events=active_count,
+        is_active=user_tier.is_active,
+        subscription_status=user_tier.subscription_status,
+        billing_interval=user_tier.billing_interval,
+        current_period_end=user_tier.current_period_end.isoformat() if user_tier.current_period_end else None,
+        cancel_at_period_end=user_tier.cancel_at_period_end,
+        activated_at=user_tier.activated_at.isoformat() if user_tier.activated_at else None,
+    )
 
 
 # ---------- Webhook ----------
