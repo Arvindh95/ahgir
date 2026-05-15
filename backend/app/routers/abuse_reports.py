@@ -528,7 +528,7 @@ async def list_abuse_reports(
                 .filter(
                     AuditLog.actor_type == "admin",
                     AuditLog.actor_id == owner_uid,
-                    AuditLog.created_at >= sr_window,
+                    AuditLog.timestamp >= sr_window,
                 )
                 .first()
             )
