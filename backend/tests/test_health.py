@@ -14,22 +14,26 @@ client = TestClient(app)
 client.headers.update({"X-Requested-With": "XMLHttpRequest"})
 
 # /health/deep now requires a superadmin user. Tests verify the deep-probe
-# logic, not the auth boundary, so override the dependency for the whole
-# module with a stub user. The real superadmin gate is covered separately
-# in test_security_regressions.py.
+# logic, not the auth boundary, so stub the dependency. The real superadmin
+# gate is covered separately in test_security_regressions.py.
+#
+# RE-APPLY THE OVERRIDE PER TEST — many other test modules call
+# app.dependency_overrides.clear() in teardown, which would otherwise wipe a
+# module-level override set during import.
 class _StubSuperadmin:
     id = "test-superadmin"
     is_superadmin = True
-
-app.dependency_overrides[get_superadmin_user] = lambda: _StubSuperadmin()
 
 
 @pytest.fixture(autouse=True)
 def _clear_module_client_cookies():
     """Reset cookies between tests so a stale picur_session/picur_event
-    from a prior test does not poison auth on the next test."""
+    from a prior test does not poison auth on the next test, and re-install
+    the superadmin override since other test modules clear it."""
     client.cookies.clear()
+    app.dependency_overrides[get_superadmin_user] = lambda: _StubSuperadmin()
     yield
+    app.dependency_overrides.pop(get_superadmin_user, None)
 
 
 def _build_s3_error() -> S3Error:
