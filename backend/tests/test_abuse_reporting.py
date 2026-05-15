@@ -275,6 +275,161 @@ def test_delete_photo_preserves_report_row_with_null_image_id(setup_world):
     assert surviving.action_taken == "remove"
 
 
+def test_event_delete_blocked_while_open_abuse_reports(setup_world):
+    """Regression: event delete must refuse while pending/reviewing
+    abuse reports exist for that event. Otherwise an event owner could
+    erase an active CSAM report by deleting the event."""
+    world = setup_world
+    db = world["db"]
+    _flush_abuse_rate_keys()
+
+    report = AbuseReport(
+        image_id=world["image"].id,
+        event_id=world["event"].id,
+        category="csam", reporter_ip="3.3.3.3", status="pending",
+    )
+    db.add(report)
+    db.commit()
+
+    # Owner of the event (regular_admin) tries to delete it.
+    resp = client.delete(
+        f"/events/{world['event'].id}",
+        headers={"Authorization": f"Bearer {world['admin_token']}"},
+    )
+    assert resp.status_code == 409
+    assert "unresolved abuse report" in resp.json()["detail"].lower()
+
+    # Same call after the report is dismissed must succeed.
+    db.query(AbuseReport).filter(AbuseReport.id == report.id).update(
+        {"status": "dismissed", "action_taken": "dismiss"}
+    )
+    db.commit()
+    resp = client.delete(
+        f"/events/{world['event'].id}",
+        headers={"Authorization": f"Bearer {world['admin_token']}"},
+    )
+    assert resp.status_code == 200
+
+
+def test_owner_photo_delete_auto_closes_active_reports(setup_world):
+    """Regression: when an event owner deletes a photo via the normal
+    /events/{event_id}/photos/{image_id} route, any pending/reviewing
+    abuse reports against that image must be auto-closed with
+    action_taken='owner_delete'. Otherwise the report stays pending
+    forever with image_id=NULL (FK SET NULL), unrevealable."""
+    world = setup_world
+    db = world["db"]
+    _flush_abuse_rate_keys()
+
+    report = AbuseReport(
+        image_id=world["image"].id,
+        event_id=world["event"].id,
+        category="nudity", reporter_ip="4.4.4.4", status="pending",
+    )
+    db.add(report)
+    db.commit()
+    db.refresh(report)
+    report_id = report.id
+
+    resp = client.delete(
+        f"/events/{world['event'].id}/photos/{world['image'].id}",
+        headers={"Authorization": f"Bearer {world['admin_token']}"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    db.expire_all()
+    surviving = db.query(AbuseReport).filter(AbuseReport.id == report_id).first()
+    assert surviving is not None
+    assert surviving.status == "removed"
+    assert surviving.action_taken == "owner_delete"
+    assert surviving.reviewed_at is not None
+    assert surviving.reviewed_by == world["regular_admin"].id
+
+
+def test_dismiss_stamps_reviewer_when_skipping_reveal(setup_world):
+    """Regression: dismiss/quarantine/delete-photo on a pending report
+    (no /reveal first) must stamp reviewed_at + reviewed_by, so the
+    queue's 'reviewed by' column is correct and the audit trail records
+    who closed the row."""
+    world = setup_world
+    db = world["db"]
+    _flush_abuse_rate_keys()
+
+    report = AbuseReport(
+        image_id=world["image"].id,
+        event_id=world["event"].id,
+        category="other", reporter_ip="5.5.5.5", status="pending",
+    )
+    db.add(report)
+    db.commit()
+    db.refresh(report)
+    assert report.reviewed_at is None
+    assert report.reviewed_by is None
+
+    resp = client.post(
+        f"/admin/abuse-reports/{report.id}/dismiss",
+        headers={"Authorization": f"Bearer {world['super_token']}"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    db.refresh(report)
+    assert report.status == "dismissed"
+    assert report.reviewed_at is not None
+    assert report.reviewed_by == world["superadmin"].id
+
+
+def test_dismiss_by_source_stamps_reviewer(setup_world):
+    world = setup_world
+    db = world["db"]
+    _flush_abuse_rate_keys()
+
+    r1 = AbuseReport(
+        image_id=world["image"].id, event_id=world["event"].id,
+        category="harassment", reporter_ip="6.6.6.6", status="pending",
+    )
+    r2 = AbuseReport(
+        image_id=world["image"].id, event_id=world["event"].id,
+        category="harassment", reporter_ip="6.6.6.6", status="reviewing",
+    )
+    db.add_all([r1, r2])
+    db.commit()
+
+    resp = client.post(
+        "/admin/abuse-reports/dismiss-by-source",
+        headers={"Authorization": f"Bearer {world['super_token']}"},
+        json={"reporter_ip": "6.6.6.6"},
+    )
+    assert resp.status_code == 200
+
+    db.refresh(r1); db.refresh(r2)
+    for r in (r1, r2):
+        assert r.status == "dismissed"
+        assert r.reviewed_at is not None
+        assert r.reviewed_by == world["superadmin"].id
+
+
+def test_abuse_review_photo_has_no_store_cache(setup_world):
+    """Regression: /photos response for photo_type=abuse_review must
+    return Cache-Control: no-store so the operator's browser does not
+    keep the bytes around past the 5-minute URL expiry."""
+    world = setup_world
+    db = world["db"]
+
+    # Mock storage_service.get_photo to return some bytes.
+    storage_service._client.get_object = Mock()  # not used by get_photo monkeypatch below
+    with patch.object(storage_service, "get_photo", return_value=b"fakejpeg"):
+        # Build a valid signed abuse_review URL.
+        from app.storage import generate_signed_abuse_review_url
+        url = generate_signed_abuse_review_url(
+            event_id=world["event"].id, image_id=world["image"].id, expires_minutes=5,
+        )
+        # url is path+query; pull just the path the FastAPI client expects.
+        path = url[url.index("/photos/"):] if "/photos/" in url else url
+        resp = client.get(path)
+    assert resp.status_code == 200, resp.text
+    assert resp.headers["cache-control"] == "private, no-store"
+
+
 def test_report_invalid_category_returns_422(setup_world):
     world = setup_world
     resp = client.post("/report", json={

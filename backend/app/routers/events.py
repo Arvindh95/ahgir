@@ -1,7 +1,7 @@
 """
 Event management router
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.utils.time import UTCDateTime, to_utc_iso
 from typing import List, Optional
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 from app.auth import get_current_user, hash_password
 from app.database import get_db
-from app.models import User, Event, Image, Face, AuditLog, EventTier, UserTier
+from app.models import User, Event, Image, Face, AuditLog, EventTier, UserTier, AbuseReport
 from app.storage import storage_service, generate_signed_cover_url
 from app.queue import enqueue_face_indexing
 from app.audit import log_action
@@ -1369,6 +1369,44 @@ async def list_photos(
         limit=limit
     )
 
+def _close_active_reports_on_owner_delete(
+    db: Session,
+    image_ids: list,
+    actor_id: uuid.UUID,
+    event_uuid: uuid.UUID,
+) -> list:
+    """Auto-close any pending/reviewing AbuseReport rows for images that
+    the owner is about to delete.
+
+    Without this, owner photo-delete (single or bulk) left active report
+    rows in the queue with image_id later flipped to NULL via the FK SET
+    NULL — the operator would see an unrevealable "pending" row with no
+    way to action it. Each closed report gets action_taken='owner_delete',
+    a reviewed_at stamp, and an abuse_review_owner_close audit row so the
+    audit trail records why it closed without an operator decision.
+
+    Returns the list of closed reports (caller may emit per-row audit
+    rows after the surrounding db.commit()).
+    """
+    if not image_ids:
+        return []
+    open_reports = (
+        db.query(AbuseReport)
+        .filter(AbuseReport.image_id.in_(image_ids))
+        .filter(AbuseReport.status.in_(("pending", "reviewing")))
+        .all()
+    )
+    now = datetime.now(timezone.utc)
+    for r in open_reports:
+        r.status = "removed"
+        r.action_taken = "owner_delete"
+        if r.reviewed_at is None:
+            r.reviewed_at = now
+        if r.reviewed_by is None:
+            r.reviewed_by = actor_id
+    return open_reports
+
+
 @router.delete("/{event_id}/photos/{image_id}", response_model=PhotoDeleteResponse)
 async def delete_photo(
     event_id: str,
@@ -1442,10 +1480,18 @@ async def delete_photo(
     # Delete from MinIO (both original and thumbnail) via tombstone fallback.
     safe_delete_image_photo(db, event_uuid, image_uuid, commit=False)
 
+    # Close any pending/reviewing abuse reports for this image BEFORE we
+    # delete it. The FK is ON DELETE SET NULL so the report rows would
+    # otherwise survive with image_id=NULL but status still pending/
+    # reviewing, leaving an unrevealable row in the queue.
+    closed_reports = _close_active_reports_on_owner_delete(
+        db, [image_uuid], current_user.id, event_uuid
+    )
+
     # Delete from database (cascades to faces)
     db.delete(image)
     db.commit()
-    
+
     # Log photo deletion
     log_action(
         db=db,
@@ -1458,6 +1504,17 @@ async def delete_photo(
             'filename': image.filename
         }
     )
+    for r in closed_reports:
+        log_action(
+            db=db, event_id=event_uuid, actor_type='admin',
+            actor_id=current_user.id, action='abuse_review_owner_close',
+            metadata={
+                'report_id': str(r.id),
+                'image_id': str(image_uuid),
+                'category': r.category,
+                'reason': 'owner_delete',
+            },
+        )
     
     # Invalidate gallery and public share cache for this photo
     cache_delete_pattern(f"gallery:{event_uuid}:*")
@@ -1542,6 +1599,13 @@ async def bulk_delete_photos(
         deleted += 1
         deleted_image_ids.append(image.id)
 
+    # Close any pending/reviewing abuse reports for the batch before commit
+    # (single transaction). Same rationale as the single-image delete: FK
+    # SET NULL would otherwise leave unrevealable rows in the queue.
+    closed_reports = _close_active_reports_on_owner_delete(
+        db, deleted_image_ids, current_user.id, event_uuid
+    )
+
     db.commit()
 
     log_action(
@@ -1552,6 +1616,17 @@ async def bulk_delete_photos(
         action='delete',
         metadata={'bulk_delete': True, 'count': deleted}
     )
+    for r in closed_reports:
+        log_action(
+            db=db, event_id=event_uuid, actor_type='admin',
+            actor_id=current_user.id, action='abuse_review_owner_close',
+            metadata={
+                'report_id': str(r.id),
+                'image_id': str(r.image_id) if r.image_id else None,
+                'category': r.category,
+                'reason': 'bulk_owner_delete',
+            },
+        )
 
     # Invalidate gallery and public share caches for deleted photos
     cache_delete_pattern(f"gallery:{event_uuid}:*")
@@ -2057,6 +2132,27 @@ async def delete_event(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have permission to delete this event"
+        )
+
+    # Block deletion while the event has unresolved abuse reports. The
+    # AbuseReport.event_id FK still cascades on delete (terminal reports
+    # tied to a deleted event are audit-logged elsewhere and can be
+    # collected); but pending/reviewing reports MUST be resolved by a
+    # superadmin first — otherwise an event owner could effectively
+    # erase an active CSAM report by deleting the event around it.
+    open_reports = (
+        db.query(func.count(AbuseReport.id))
+        .filter(AbuseReport.event_id == event_uuid)
+        .filter(AbuseReport.status.in_(("pending", "reviewing")))
+        .scalar()
+    ) or 0
+    if open_reports > 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Cannot delete event with {open_reports} unresolved abuse "
+                f"report(s). A superadmin must dismiss or remove them first."
+            ),
         )
 
     # Stage the audit row inside the same transaction as the delete (commit

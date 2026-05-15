@@ -777,6 +777,23 @@ _VALID_REPORT_TRANSITIONS: dict[str, set[str]] = {
 }
 
 
+def _stamp_reviewer_if_empty(report: AbuseReport, user: User) -> None:
+    """Stamp reviewed_at / reviewed_by on the report row when an action
+    closes it without going through /reveal first.
+
+    /reveal already sets both fields on the first review. But operators
+    can short-circuit straight to dismiss / quarantine / delete-photo
+    (or bulk-dismiss-by-source) without ever opening the report. Those
+    paths must record WHO closed it and WHEN; otherwise the queue lists
+    closed rows as 'reviewed by —', which breaks both the audit trail
+    and the per-operator workload view. Only writes if currently empty
+    — never overwrites a stamp from an earlier /reveal."""
+    if report.reviewed_at is None:
+        report.reviewed_at = datetime.now(timezone.utc)
+    if report.reviewed_by is None:
+        report.reviewed_by = user.id
+
+
 def _ensure_transition_allowed(report: AbuseReport, target: str) -> None:
     """Raise 409 if the report can't transition from its current status
     to ``target``. Used by the dismiss/quarantine/delete action endpoints
@@ -820,6 +837,7 @@ async def quarantine_image(
     image.status = "quarantined"
     report.status = "quarantined"
     report.action_taken = "quarantine"
+    _stamp_reviewer_if_empty(report, current_user)
     db.commit()
 
     cache_delete_pattern(f"gallery:{report.event_id}:*")
@@ -941,6 +959,7 @@ async def delete_photo_for_report(
     # cascade-delete with the image normally.
     report.status = "removed"
     report.action_taken = "remove"
+    _stamp_reviewer_if_empty(report, current_user)
     db.delete(image)
     db.commit()
 
@@ -1002,6 +1021,7 @@ async def dismiss_by_source(
     for r in targets:
         r.status = "dismissed"
         r.action_taken = "dismiss"
+        _stamp_reviewer_if_empty(r, current_user)
     db.commit()
 
     for r in targets:
@@ -1068,6 +1088,7 @@ async def dismiss_report(
 
     report.status = "dismissed"
     report.action_taken = "dismiss"
+    _stamp_reviewer_if_empty(report, current_user)
     db.commit()
 
     log_action(

@@ -6,6 +6,7 @@ a 15-minute default expiry.
 """
 
 import logging
+import time
 import uuid
 from io import BytesIO
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -105,10 +106,23 @@ async def get_photo_signed(
         logger.error(f"Failed to fetch photo {image_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Storage error")
 
+    # abuse_review images MUST NOT live in the browser cache past URL expiry.
+    # The signed URL is 5 minutes; with a hard-coded 15-min max-age, an operator
+    # who already loaded the photo can re-show it (Back button / private cache)
+    # well after the signature has expired. no-store also keeps the image off
+    # disk in case the operator is on a shared workstation.
+    #
+    # For all other photo types, cap cache lifetime to the URL's remaining
+    # validity — never longer. The hard-coded 900s was correct only when the
+    # URL was minted for 15 minutes; once URL expires the cached body becomes
+    # unrevokable and survives quarantine/delete actions.
+    if photo_type == "abuse_review":
+        cache_header = "private, no-store"
+    else:
+        max_age = max(0, int(expires - time.time()))
+        cache_header = f"private, max-age={max_age}"
     headers = {
-        # Browser may cache for the URL's lifetime; once URL expires the browser must
-        # re-fetch a fresh signed URL anyway. private=do not let CDN/proxies cache.
-        "Cache-Control": "private, max-age=900",
+        "Cache-Control": cache_header,
         "Content-Disposition": f'inline; filename="{image_id}.jpg"',
     }
     return StreamingResponse(BytesIO(photo_bytes), media_type="image/jpeg", headers=headers)
