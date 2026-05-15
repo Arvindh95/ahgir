@@ -42,12 +42,15 @@ services:
     environment:
       ENVIRONMENT: production
       COMPREFACE_API_URL: "http://compreface-api:8080,http://compreface-api-2:8080"
+      PYTHONPATH: /app
     depends_on:
       compreface-api-2:
         condition: service_started
     # Run preflight first — API validates at FastAPI import, but the worker
     # doesn't import app.main, so without this gate a bad MinIO/DB/CompreFace
-    # env would leave RQ running with broken settings.
+    # env would leave RQ running with broken settings. PYTHONPATH=/app so
+    # `python scripts/preflight.py` can import the app package (without it
+    # python only adds /app/scripts to sys.path).
     command: >
       /bin/sh -c "python scripts/preflight.py &&
       rq worker --url redis://redis:6379/0 face_indexing retention default"

@@ -60,6 +60,7 @@ services:
     volumes: !reset []
     environment:
       ENVIRONMENT: production
+      PYTHONPATH: /app
     command: >
       /bin/sh -c "python scripts/preflight.py &&
       rq worker --url redis://redis:6379/0 face_indexing retention default"
