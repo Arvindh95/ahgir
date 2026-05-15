@@ -117,6 +117,42 @@ class Settings(BaseSettings):
     event_passcode_ip_rate_window_hours: int = 1
     share_rate_limit: int = 60
     share_rate_window_hours: int = 1
+    # Per-IP abuse report cap. Same window as scan/auth — abuse mass-reporting
+    # is rare and bursty, 5/hour per IP balances responsiveness with queue
+    # protection.
+    abuse_report_rate_limit: int = 5
+    abuse_report_rate_window_hours: int = 1
+    # Defeats trivial IP-rotation within the same provider range.
+    abuse_report_subnet_rate_limit: int = 15
+    abuse_report_subnet_rate_window_hours: int = 1
+    # Per-image dedupe: silent-drop the 4th+ report on the same image_id
+    # in a 24h window. Operators still see the dedup count via the
+    # duplicate_count field on the queue row, so coordinated mass-
+    # reports still influence priority but don't multiply queue rows.
+    abuse_report_image_dedupe_limit: int = 3
+    abuse_report_image_dedupe_window_hours: int = 24
+    # Catches mass-targeting a single photographer (vs spreading across
+    # many events from one bad actor).
+    abuse_report_event_rate_limit: int = 30
+    abuse_report_event_rate_window_hours: int = 1
+    # Per-reporter_email cap. Email is unverified so this is a soft signal
+    # — same window as per-IP.
+    abuse_report_email_rate_limit: int = 5
+    abuse_report_email_rate_window_hours: int = 1
+    # Reporter-reputation soft-ban thresholds. Computed over a rolling
+    # 30-day window. Values are 'minimum reports' / 'min dismiss rate'.
+    # First hit silent-drops for 7 days; second hit (more reports, higher
+    # dismiss rate) is permanent until an operator clears it.
+    abuse_report_softban_min_reports: int = 5
+    abuse_report_softban_dismiss_rate: float = 0.80
+    abuse_report_permaban_min_reports: int = 10
+    abuse_report_permaban_dismiss_rate: float = 0.90
+    abuse_report_reputation_window_days: int = 30
+    # Cloudflare Turnstile (bot defence for POST /report). When secret_key
+    # is non-empty, /report requires a valid Turnstile token. Site key is
+    # exposed to the frontend via NEXT_PUBLIC_TURNSTILE_SITE_KEY at build
+    # time — it's a public value, intentionally not pulled in here.
+    cloudflare_turnstile_secret_key: str = ""
     bulk_download_max_images: int = 100
     bulk_download_max_bytes: int = 500 * 1024 * 1024  # 500 MB
     # Per-file upload cap (matches Caddy request_body max_size in prod).
@@ -282,6 +318,23 @@ def validate_production_secrets():
         errors.append(f"CORS_ORIGINS still contains a placeholder host: {settings.cors_origins}")
     if _looks_like_placeholder(getattr(settings, "frontend_url", "")):
         errors.append(f"FRONTEND_URL still contains a placeholder host: {settings.frontend_url}")
+
+    # Turnstile must be configured as a PAIR. NEXT_PUBLIC_TURNSTILE_SITE_KEY
+    # is a frontend build-arg (not on `settings`), but it lives in the same
+    # .env.production so we check the env var directly. If only the secret
+    # is set, the modal won't render the widget and every submission 403s.
+    # If only the site key is set, users solve an unchecked captcha that
+    # the backend never verifies. Both empty = captcha opt-out (dev/early
+    # prod); both set = enforced. Anything else is half-configured.
+    import os
+    site_key_set = bool((os.environ.get("NEXT_PUBLIC_TURNSTILE_SITE_KEY") or "").strip())
+    secret_key_set = bool(settings.cloudflare_turnstile_secret_key.strip())
+    if site_key_set != secret_key_set:
+        errors.append(
+            "Cloudflare Turnstile is half-configured: NEXT_PUBLIC_TURNSTILE_SITE_KEY "
+            f"set={site_key_set}, CLOUDFLARE_TURNSTILE_SECRET_KEY set={secret_key_set}. "
+            "Either set both (captcha enforced) or leave both empty (captcha disabled)."
+        )
 
     if errors:
         raise RuntimeError(

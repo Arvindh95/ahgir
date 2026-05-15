@@ -96,6 +96,14 @@ services:
       STRIPE_PRICE_PRO_YEARLY: ${STRIPE_PRICE_PRO_YEARLY:-}
       SUBSCRIPTION_GRACE_PERIOD_DAYS: ${SUBSCRIPTION_GRACE_PERIOD_DAYS:-3}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      CLOUDFLARE_TURNSTILE_SECRET_KEY: ${CLOUDFLARE_TURNSTILE_SECRET_KEY:-}
+      # Mirrored into backend env so validate_production_secrets() can
+      # detect the half-configured Turnstile pair (site key set without
+      # secret, or vice versa). The backend itself never USES the site
+      # key — it's a frontend build-arg — but we need it visible at
+      # startup-validation time so the pair check actually fires.
+      NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}
+      STRIPE_BILLING_PORTAL_CONFIG_ID: ${STRIPE_BILLING_PORTAL_CONFIG_ID:-}
     ports:
       - "8000:8000"
     volumes:
@@ -207,6 +215,10 @@ services:
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      # Mirror Turnstile pair into worker env too — its preflight script
+      # imports config.validate_production_secrets() process-wide.
+      CLOUDFLARE_TURNSTILE_SECRET_KEY: ${CLOUDFLARE_TURNSTILE_SECRET_KEY:-}
+      NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}
     volumes:
       - ./backend:/app
     depends_on:

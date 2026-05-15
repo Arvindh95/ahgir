@@ -6,6 +6,7 @@ a 15-minute default expiry.
 """
 
 import logging
+import time
 import uuid
 from io import BytesIO
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -58,8 +59,16 @@ async def get_photo_signed(
     # Live state check: deny if the event has been frozen / expired /
     # deleted, or if the image has been deleted or moved out of the
     # guest-visible states. Cheap (PK + indexed-event_id lookup).
+    #
+    # abuse_review BYPASSES both gates by design — a quarantined image
+    # MUST be reviewable by an operator, and a frozen event MUST be
+    # reviewable. The signed URL itself (5-min HMAC) is the bearer; only
+    # the operator's /admin/abuse-reports/{id}/reveal endpoint mints it,
+    # and that endpoint requires superadmin auth + writes an audit row.
     event = db.query(Event).filter(Event.id == event_uuid).first()
-    if not event or event.status != 'active':
+    if not event:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
+    if photo_type != "abuse_review" and event.status != 'active':
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
 
     # Covers are event-scoped (one per event) and use event_id as a
@@ -68,7 +77,7 @@ async def get_photo_signed(
     # status lookup for cover requests. The event-active check above
     # is sufficient gating: as soon as the event is frozen / expired,
     # the cover stops serving too.
-    if photo_type != "cover":
+    if photo_type not in ("cover", "abuse_review"):
         image = (
             db.query(Image.id)
             .filter(
@@ -80,6 +89,14 @@ async def get_photo_signed(
         )
         if not image:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
+    elif photo_type == "abuse_review":
+        # Image must still exist (we bypass the status enum because
+        # quarantined / pending / failed are all valid for review).
+        image = db.query(Image.id).filter(
+            Image.id == image_uuid, Image.event_id == event_uuid,
+        ).first()
+        if not image:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
 
     try:
         photo_bytes = storage_service.get_photo(event_uuid, image_uuid, photo_type)
@@ -89,10 +106,23 @@ async def get_photo_signed(
         logger.error(f"Failed to fetch photo {image_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Storage error")
 
+    # abuse_review images MUST NOT live in the browser cache past URL expiry.
+    # The signed URL is 5 minutes; with a hard-coded 15-min max-age, an operator
+    # who already loaded the photo can re-show it (Back button / private cache)
+    # well after the signature has expired. no-store also keeps the image off
+    # disk in case the operator is on a shared workstation.
+    #
+    # For all other photo types, cap cache lifetime to the URL's remaining
+    # validity — never longer. The hard-coded 900s was correct only when the
+    # URL was minted for 15 minutes; once URL expires the cached body becomes
+    # unrevokable and survives quarantine/delete actions.
+    if photo_type == "abuse_review":
+        cache_header = "private, no-store"
+    else:
+        max_age = max(0, int(expires - time.time()))
+        cache_header = f"private, max-age={max_age}"
     headers = {
-        # Browser may cache for the URL's lifetime; once URL expires the browser must
-        # re-fetch a fresh signed URL anyway. private=do not let CDN/proxies cache.
-        "Cache-Control": "private, max-age=900",
+        "Cache-Control": cache_header,
         "Content-Disposition": f'inline; filename="{image_id}.jpg"',
     }
     return StreamingResponse(BytesIO(photo_bytes), media_type="image/jpeg", headers=headers)

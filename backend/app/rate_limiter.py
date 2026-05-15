@@ -227,3 +227,36 @@ event_passcode_ip_rate_limiter = RateLimiter(
     limit=settings.event_passcode_ip_rate_limit,
     window_hours=settings.event_passcode_ip_rate_window_hours,
 )
+# Per-IP abuse report limiter. Caps the public /report endpoint so the
+# operator queue can't be flooded by automated tooling.
+abuse_report_rate_limiter = RateLimiter(
+    redis_client,
+    limit=settings.abuse_report_rate_limit,
+    window_hours=settings.abuse_report_rate_window_hours,
+)
+# Defeats trivial IP rotation (same /24 IPv4 or /64 IPv6 range).
+abuse_report_subnet_rate_limiter = RateLimiter(
+    redis_client,
+    limit=settings.abuse_report_subnet_rate_limit,
+    window_hours=settings.abuse_report_subnet_rate_window_hours,
+)
+# Per-image dedup: 4th+ report on the same image_id within the window is
+# silently dropped (still returns 200 — operator sees duplicate_count on
+# the queue row instead).
+abuse_report_image_dedupe_limiter = RateLimiter(
+    redis_client,
+    limit=settings.abuse_report_image_dedupe_limit,
+    window_hours=settings.abuse_report_image_dedupe_window_hours,
+)
+# Caps mass-targeting a single photographer across many of their photos.
+abuse_report_event_rate_limiter = RateLimiter(
+    redis_client,
+    limit=settings.abuse_report_event_rate_limit,
+    window_hours=settings.abuse_report_event_rate_window_hours,
+)
+# Per-email cap (soft signal — email is unverified).
+abuse_report_email_rate_limiter = RateLimiter(
+    redis_client,
+    limit=settings.abuse_report_email_rate_limit,
+    window_hours=settings.abuse_report_email_rate_window_hours,
+)

@@ -1,7 +1,7 @@
 """
 Event management router
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.utils.time import UTCDateTime, to_utc_iso
 from typing import List, Optional
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 from app.auth import get_current_user, hash_password
 from app.database import get_db
-from app.models import User, Event, Image, Face, AuditLog, EventTier, UserTier
+from app.models import User, Event, Image, Face, AuditLog, EventTier, UserTier, AbuseReport
 from app.storage import storage_service, generate_signed_cover_url
 from app.queue import enqueue_face_indexing
 from app.audit import log_action
@@ -1369,6 +1369,51 @@ async def list_photos(
         limit=limit
     )
 
+def _close_active_reports_on_owner_delete(
+    db: Session,
+    image_ids: list,
+    actor_id: uuid.UUID,
+    event_uuid: uuid.UUID,
+) -> list:
+    """Auto-close any pending/reviewing/quarantined AbuseReport rows for
+    images that the owner is about to delete.
+
+    Without this, owner photo-delete (single or bulk) left active report
+    rows in the queue with image_id later flipped to NULL via the FK SET
+    NULL — the operator would see an unrevealable row with no way to
+    action it. Each closed report gets action_taken='owner_delete', a
+    reviewed_at stamp, and an abuse_review_owner_close audit row so the
+    audit trail records why it closed without an operator decision.
+
+    Quarantined is included so the report and the image cleanup stay in
+    sync — without it, deleting an owner-quarantined image would leave
+    the report stuck at status='quarantined' with image_id=NULL, where
+    /restore would 404 and /delete-photo would 409 (no valid transition
+    from quarantined except dismissed/removed via an operator action
+    that itself requires an image to act on).
+
+    Returns the list of closed reports (caller may emit per-row audit
+    rows after the surrounding db.commit()).
+    """
+    if not image_ids:
+        return []
+    open_reports = (
+        db.query(AbuseReport)
+        .filter(AbuseReport.image_id.in_(image_ids))
+        .filter(AbuseReport.status.in_(("pending", "reviewing", "quarantined")))
+        .all()
+    )
+    now = datetime.now(timezone.utc)
+    for r in open_reports:
+        r.status = "removed"
+        r.action_taken = "owner_delete"
+        if r.reviewed_at is None:
+            r.reviewed_at = now
+        if r.reviewed_by is None:
+            r.reviewed_by = actor_id
+    return open_reports
+
+
 @router.delete("/{event_id}/photos/{image_id}", response_model=PhotoDeleteResponse)
 async def delete_photo(
     event_id: str,
@@ -1442,10 +1487,18 @@ async def delete_photo(
     # Delete from MinIO (both original and thumbnail) via tombstone fallback.
     safe_delete_image_photo(db, event_uuid, image_uuid, commit=False)
 
+    # Close any pending/reviewing abuse reports for this image BEFORE we
+    # delete it. The FK is ON DELETE SET NULL so the report rows would
+    # otherwise survive with image_id=NULL but status still pending/
+    # reviewing, leaving an unrevealable row in the queue.
+    closed_reports = _close_active_reports_on_owner_delete(
+        db, [image_uuid], current_user.id, event_uuid
+    )
+
     # Delete from database (cascades to faces)
     db.delete(image)
     db.commit()
-    
+
     # Log photo deletion
     log_action(
         db=db,
@@ -1458,6 +1511,17 @@ async def delete_photo(
             'filename': image.filename
         }
     )
+    for r in closed_reports:
+        log_action(
+            db=db, event_id=event_uuid, actor_type='admin',
+            actor_id=current_user.id, action='abuse_review_owner_close',
+            metadata={
+                'report_id': str(r.id),
+                'image_id': str(image_uuid),
+                'category': r.category,
+                'reason': 'owner_delete',
+            },
+        )
     
     # Invalidate gallery and public share cache for this photo
     cache_delete_pattern(f"gallery:{event_uuid}:*")
@@ -1523,6 +1587,23 @@ async def bulk_delete_photos(
         )
 
     images = db.query(Image).filter(Image.event_id == event_uuid, Image.id.in_(image_uuids)).all()
+    matched_image_ids = [image.id for image in images]
+
+    # Close active abuse reports FIRST, before any db.delete(image) call.
+    # SQLAlchemy autoflush fires pending deletes ahead of any subsequent
+    # query, so if we ran the helper after the loop the FK SET NULL would
+    # have already cleared AbuseReport.image_id and the IN-clause filter
+    # would match nothing — leaving the reports unrevealable in the queue.
+    # Snapshot per-report ids now so the post-commit audit log can still
+    # reference the original image_id.
+    closed_reports = _close_active_reports_on_owner_delete(
+        db, matched_image_ids, current_user.id, event_uuid
+    )
+    closed_report_snaps = [
+        (str(r.id), str(r.image_id) if r.image_id else None, r.category)
+        for r in closed_reports
+    ]
+
     deleted = 0
     deleted_image_ids = []
     for image in images:
@@ -1552,6 +1633,17 @@ async def bulk_delete_photos(
         action='delete',
         metadata={'bulk_delete': True, 'count': deleted}
     )
+    for snap_report_id, snap_image_id, snap_category in closed_report_snaps:
+        log_action(
+            db=db, event_id=event_uuid, actor_type='admin',
+            actor_id=current_user.id, action='abuse_review_owner_close',
+            metadata={
+                'report_id': snap_report_id,
+                'image_id': snap_image_id,
+                'category': snap_category,
+                'reason': 'bulk_owner_delete',
+            },
+        )
 
     # Invalidate gallery and public share caches for deleted photos
     cache_delete_pattern(f"gallery:{event_uuid}:*")
@@ -2057,6 +2149,30 @@ async def delete_event(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have permission to delete this event"
+        )
+
+    # Block deletion while the event has unresolved abuse reports. The
+    # AbuseReport.event_id FK still cascades on delete (terminal reports
+    # — dismissed / removed — tied to a deleted event are audit-logged
+    # elsewhere). But pending / reviewing / quarantined reports MUST be
+    # resolved by a superadmin first — otherwise an event owner could
+    # erase an active CSAM report by deleting the event around it.
+    # Quarantined is included because the image is still under
+    # moderation: the report is closed-ish but the operator may still
+    # need to dismiss-or-delete it, which requires the event to exist.
+    open_reports = (
+        db.query(func.count(AbuseReport.id))
+        .filter(AbuseReport.event_id == event_uuid)
+        .filter(AbuseReport.status.in_(("pending", "reviewing", "quarantined")))
+        .scalar()
+    ) or 0
+    if open_reports > 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Cannot delete event with {open_reports} unresolved abuse "
+                f"report(s). A superadmin must dismiss or remove them first."
+            ),
         )
 
     # Stage the audit row inside the same transaction as the delete (commit

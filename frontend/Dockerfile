@@ -15,9 +15,11 @@ COPY . .
 # Build args for production
 ARG BUILD_ENV=development
 ARG NEXT_PUBLIC_API_URL=http://localhost:8000
+ARG NEXT_PUBLIC_TURNSTILE_SITE_KEY=
 
 # Set env so Next.js bakes it into the build
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_TURNSTILE_SITE_KEY=$NEXT_PUBLIC_TURNSTILE_SITE_KEY
 
 # Build for production (used when command is 'npm start')
 RUN if [ "$BUILD_ENV" = "production" ]; then npm run build; fi

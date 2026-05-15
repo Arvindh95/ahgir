@@ -89,6 +89,10 @@ services:
       args:
         BUILD_ENV: production
         NEXT_PUBLIC_API_URL: /api
+        # Turnstile site key — public, baked into the JS at build time so
+        # ReportPhotoModal can render the widget. Empty in dev (the widget
+        # is then skipped + the backend also skips token verification).
+        NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}
     environment:
       SERVER_API_URL: http://backend:8000
     volumes: !reset []
@@ -106,6 +110,7 @@ services:
       args:
         BUILD_ENV: production
         NEXT_PUBLIC_API_URL: /api
+        NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}
     image: ahgir-frontend
     container_name: picur-frontend-2
     environment:

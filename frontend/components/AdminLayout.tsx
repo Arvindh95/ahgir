@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
 import Image from 'next/image'
 import { authService } from '@/lib/auth'
-import { LogOut, Shield, Menu, X, CreditCard, Zap, Calendar } from 'lucide-react'
+import { abuseService } from '@/lib/abuse'
+import { LogOut, Shield, Menu, X, CreditCard, Zap, Calendar, Flag } from 'lucide-react'
 
 interface AdminLayoutProps {
   children: React.ReactNode
@@ -12,12 +13,22 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
   const router = useRouter()
   const [isSuperadmin, setIsSuperadmin] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [pendingAbuse, setPendingAbuse] = useState(0)
 
   useEffect(() => {
     authService.getMe().then(user => {
-      setIsSuperadmin(user.is_superadmin || false)
+      const su = user.is_superadmin || false
+      setIsSuperadmin(su)
+      if (su) {
+        // Fire-and-forget on mount. The pending count refreshes when the
+        // operator visits /admin/abuse-queue (that page reloads its own
+        // copy) and on the next layout mount; we don't poll here.
+        abuseService.getPendingCount().then(setPendingAbuse).catch(() => {})
+      }
     }).catch(() => {})
   }, [])
+
+  const badge = pendingAbuse > 99 ? '99+' : pendingAbuse > 0 ? String(pendingAbuse) : null
 
   const handleLogout = async () => {
     await authService.logout()
@@ -61,6 +72,20 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
                   <CreditCard className="w-3.5 h-3.5" />
                   Billing
                 </a>
+                {isSuperadmin && (
+                  <a
+                    href="/admin/abuse-queue"
+                    className="text-sm font-medium text-orange-400 hover:text-orange-300 transition-colors flex items-center gap-1"
+                  >
+                    <Flag className="w-3.5 h-3.5" />
+                    Abuse
+                    {badge && (
+                      <span className="ml-1 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full text-[10px] font-bold bg-red-500/30 text-red-300 border border-red-500/40">
+                        {badge}
+                      </span>
+                    )}
+                  </a>
+                )}
                 {isSuperadmin && (
                   <a
                     href="/admin/superadmin"
@@ -116,6 +141,20 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
                 <CreditCard className="w-3.5 h-3.5" />
                 Billing
               </a>
+              {isSuperadmin && (
+                <a
+                  href="/admin/abuse-queue"
+                  className="flex items-center gap-1 px-3 py-2 text-sm font-medium text-orange-400 hover:text-orange-300 hover:bg-white/5 rounded-lg"
+                >
+                  <Flag className="w-3.5 h-3.5" />
+                  Abuse
+                  {badge && (
+                    <span className="ml-1 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full text-[10px] font-bold bg-red-500/30 text-red-300 border border-red-500/40">
+                      {badge}
+                    </span>
+                  )}
+                </a>
+              )}
               {isSuperadmin && (
                 <a
                   href="/admin/superadmin"

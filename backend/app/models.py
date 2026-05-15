@@ -84,19 +84,30 @@ class Image(Base):
     width = Column(Integer)
     height = Column(Integer)
     exif_data = Column(JSONB)
-    status = Column(String(20), nullable=False, index=True)  # pending, indexed, no_faces, failed
+    status = Column(String(20), nullable=False, index=True)  # pending, indexed, no_faces, failed, quarantined
     face_count = Column(Integer, default=0, nullable=False)
     uploaded_at = Column(TIMESTAMP, server_default=func.now(), nullable=False)
     indexed_at = Column(TIMESTAMP)
-    
+
     # Relationships
     event = relationship("Event", back_populates="images")
     faces = relationship("Face", back_populates="image", cascade="all, delete-orphan")
-    
+    # AbuseReport rows DELIBERATELY survive image deletion via the FK's
+    # ON DELETE SET NULL (see migration e7h8i9j0k1). passive_deletes=True
+    # tells SQLAlchemy NOT to preemptively delete report rows when
+    # db.delete(image) runs, so the DB-level FK action actually fires and
+    # report_id stays in the queue with image_id=NULL for audit history.
+    # Adding cascade="all, delete-orphan" here would silently override the
+    # FK and wipe the report trail, defeating the migration's intent.
+    abuse_reports = relationship("AbuseReport", back_populates="image", passive_deletes=True)
+
     # Indexes and constraints
     __table_args__ = (
         Index("idx_event_filename", "event_id", "filename"),
-        CheckConstraint("status IN ('pending', 'indexed', 'no_faces', 'failed')", name="valid_status"),
+        CheckConstraint(
+            "status IN ('pending', 'indexed', 'no_faces', 'failed', 'quarantined')",
+            name="valid_status",
+        ),
         {"schema": None}
     )
 
@@ -368,4 +379,59 @@ class StorageCleanupTask(Base):
             "status IN ('pending', 'running', 'failed', 'done')",
             name="valid_cleanup_status",
         ),
+    )
+
+
+class AbuseReport(Base):
+    """A user-filed abuse report against a single photo.
+
+    Reports are per-image and arrive anonymously (or with an optional
+    reporter_email) via POST /report. Superadmin reviews each report,
+    optionally reveals the image (writes an abuse_review_view audit row),
+    and decides: dismiss, quarantine, or remove.
+
+    See ABUSE_REPORTING_PLAN.md for the full design rationale.
+    """
+    __tablename__ = "abuse_reports"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    image_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("images.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    event_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("events.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    category = Column(String(32), nullable=False)
+    description = Column(sa.Text(), nullable=True)
+    reporter_email = Column(String(255), nullable=True)
+    reporter_ip = Column(String(45), nullable=False)
+    status = Column(String(32), nullable=False, default="pending")
+    action_taken = Column(String(32), nullable=True)
+    notes = Column(sa.Text(), nullable=True)
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+    reviewed_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    reviewed_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    image = relationship("Image", back_populates="abuse_reports")
+
+    __table_args__ = (
+        CheckConstraint(
+            "category IN ('csam', 'nudity', 'harassment', 'copyright', 'violence', 'other')",
+            name="valid_abuse_category",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'reviewing', 'dismissed', 'quarantined', 'removed')",
+            name="valid_abuse_status",
+        ),
+        Index("idx_abuse_status_created", "status", "created_at"),
     )
