@@ -1,0 +1,44 @@
+from app.face_match_scoring import CandidateMatch, MatchScoringConfig, aggregate_face_matches, required_threshold
+
+
+class FaceRow:
+    def __init__(self, bbox):
+        self.bbox = bbox
+
+
+def test_thresholds_vary_by_face_size():
+    config = MatchScoringConfig(large_threshold=0.87, medium_threshold=0.90, small_threshold=0.93)
+    assert required_threshold(200, config) == 0.87
+    assert required_threshold(80, config) == 0.90
+    assert required_threshold(40, config) == 0.93
+
+
+def test_repeated_frame_evidence_ranks_higher_than_one_frame_evidence():
+    config = MatchScoringConfig(large_threshold=0.87, consistency_bonus_weight=0.01)
+    rows = {
+        "s/a/0": FaceRow([0, 0, 200, 200]),
+        "s/b/0": FaceRow([0, 0, 200, 200]),
+    }
+    candidates = [
+        CandidateMatch("s/a/0", "a", 0.91, 0),
+        CandidateMatch("s/b/0", "b", 0.88, 0),
+        CandidateMatch("s/b/0", "b", 0.89, 1),
+        CandidateMatch("s/b/0", "b", 0.88, 2),
+    ]
+    scored = aggregate_face_matches(candidates, rows, config)
+    assert [item.image_id for item in scored] == ["b", "a"]
+    assert scored[0].frame_count == 3
+
+
+def test_small_faces_need_the_small_face_floor():
+    config = MatchScoringConfig(small_threshold=0.93)
+    rows = {
+        "s/a/0": FaceRow([0, 0, 40, 40]),
+        "s/b/0": FaceRow([0, 0, 40, 40]),
+    }
+    candidates = [
+        CandidateMatch("s/a/0", "a", 0.91, 0),
+        CandidateMatch("s/b/0", "b", 0.94, 0),
+    ]
+    scored = aggregate_face_matches(candidates, rows, config)
+    assert [item.image_id for item in scored] == ["b"]
