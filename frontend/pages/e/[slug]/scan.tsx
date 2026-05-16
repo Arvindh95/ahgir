@@ -50,6 +50,26 @@ export default function FaceScanner() {
   // the pose-wait loop, where a React state value would be a stale closure.
   type FrameQuality = 'ok' | 'too_far' | 'too_close' | 'clipped' | 'no_face'
   const frameQualityRef = useRef<FrameQuality>('no_face')
+
+  // Guided walkthrough state machine. The scan runs through align → front →
+  // left → right → matching, with a brief confirmation flash between each
+  // capture. Refs mirror the values so the detection loop (which runs on a
+  // setInterval and would close over stale state) and the async waitForPose
+  // loop can read them cheaply.
+  type ScanStep =
+    | 'align'           // step 1: face must center in the oval
+    | 'aligned_ok'      // brief confirmation flash before front capture
+    | 'capture_front'   // step 2: hold still, looking ahead — snap
+    | 'captured_front'  // confirmation flash
+    | 'prompt_left'     // step 3a: arrow prompt to turn left
+    | 'capture_left'    // step 3b: waiting for pose then snap
+    | 'captured_left'   // confirmation flash
+    | 'prompt_right'    // step 4a: arrow prompt to turn right
+    | 'capture_right'   // step 4b: waiting for pose then snap
+    | 'captured_right'  // confirmation flash
+    | 'matching'        // backend call
+  const [scanStep, setScanStep] = useState<ScanStep | null>(null)
+  const scanStepRef = useRef<ScanStep | null>(null)
   // Ref-mirror of `stream` state so cleanup functions can stop tracks
   // without depending on a closure over `stream` at the time the
   // effect ran. The init effect runs once on mount when `stream` is
@@ -71,7 +91,6 @@ export default function FaceScanner() {
   const [fileSelected, setFileSelected] = useState(false)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [scanPhase, setScanPhase] = useState<string | null>(null) // guided capture phase text
-  const [poseProgress, setPoseProgress] = useState<{ side: 'straight' | 'left' | 'right' | null; hit: boolean }>({ side: null, hit: false })
   const [frameQuality, setFrameQuality] = useState<FrameQuality>('no_face')
   // 0..3 — how many of the multi-pose frames have been captured so far. Drives
   // the three progress dots at the top of the camera viewport.
@@ -258,10 +277,14 @@ export default function FaceScanner() {
         frameQualityRef.current = quality
         setFrameQuality(quality)
 
-        // Target oval. Static position; color reflects current frame quality
-        // so the user gets spatial feedback ("am I the right distance from
-        // the camera?") without having to read the text prompt.
-        if (ctx) {
+        // Target oval. Static position; color reflects current frame quality.
+        // Only drawn when (a) the user is on the idle preview (no scan running)
+        // or (b) we're inside the explicit "align your face" step of the
+        // walkthrough. Capture/prompt/confirmation phases hide the oval so the
+        // viewport reads as a clean snapshot moment, not a setup screen.
+        const step = scanStepRef.current
+        const showOval = step === null || step === 'align'
+        if (ctx && showOval) {
           const cx = overlayCanvas.width / 2
           const cy = overlayCanvas.height / 2
           const rx = overlayCanvas.width  * 0.20
@@ -393,113 +416,136 @@ export default function FaceScanner() {
           reader.readAsDataURL(file)
         })
       } else {
-        // Pose-gated multi-angle capture: wait for the user to actually
-        // hit each pose target before snapping. Falls back to capturing
-        // whatever pose they're in after a per-phase timeout, so users
-        // who can't or won't turn still get something usable.
+        // Guided walkthrough capture. Runs through align → front → left →
+        // right with explicit confirmation flashes between each step. Falls
+        // back to capturing whatever pose the user holds after a per-step
+        // timeout so users who can't / won't turn still get usable frames.
         //
-        // Yaw thresholds:
+        // Yaw sign convention (un-mirrored camera frame, ibug-68 landmarks):
+        //   yaw  > +TURN_THRESH → user turned head to their RIGHT
+        //   yaw  < -TURN_THRESH → user turned head to their LEFT
         //   |yaw| < STRAIGHT_THRESH → looking ahead
-        //   yaw  >  TURN_THRESH     → turned toward "+" side
-        //   yaw  < -TURN_THRESH     → turned toward "-" side
         const STRAIGHT_THRESH = 0.10
         const TURN_THRESH = 0.18
-        const HOLD_TICKS = 3 // require 3 consecutive ticks (=300ms) within target to avoid jitter capture
+        const HOLD_TICKS = 3 // 3 consecutive ticks (~300ms) to avoid jitter capture
         const MAX_WAIT_MS = 6000
         const POLL_MS = 100
+        const CONFIRM_FLASH_MS = 700  // duration of the green check overlay
+        const PROMPT_HOLD_MS = 600    // arrow prompt visible before yaw-wait begins
+
+        const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
+
+        const setStep = (s: ScanStep) => {
+          scanStepRef.current = s
+          setScanStep(s)
+        }
 
         const distanceMessage = (q: FrameQuality): string | null => {
           switch (q) {
             case 'too_far':  return 'Move closer'
             case 'too_close': return 'Move back'
-            case 'clipped':  return 'Fit your whole face in the oval'
-            case 'no_face':  return 'Center your face in the oval'
+            case 'clipped':  return 'Fit your whole face in the frame'
+            case 'no_face':  return 'Center your face'
             default:         return null
           }
         }
 
-        const waitForPose = async (
-          test: (yaw: number) => boolean,
+        const waitForCondition = async (
+          test: () => boolean,
           label: string,
-          side: 'straight' | 'left' | 'right',
+          holdTicks: number = HOLD_TICKS,
         ): Promise<void> => {
           setScanPhase(label)
-          setPoseProgress({ side, hit: false })
           const start = Date.now()
           let consecutive = 0
           let lastShown = label
           while (Date.now() - start < MAX_WAIT_MS) {
-            // Use refs, not React state — closures over state values would
-            // freeze at the value at handleScan invocation time.
             const quality = frameQualityRef.current
             const distMsg = distanceMessage(quality)
-            // Surface distance feedback in the same phase overlay used for
-            // pose prompts; revert to the pose prompt once distance is OK.
             const desired = distMsg ?? label
             if (desired !== lastShown) {
               setScanPhase(desired)
               lastShown = desired
             }
-
-            if (lastDetectionRef.current && quality === 'ok' && test(yawRef.current)) {
+            if (lastDetectionRef.current && quality === 'ok' && test()) {
               consecutive += 1
-              if (consecutive >= HOLD_TICKS) {
-                setPoseProgress({ side, hit: true })
-                // Brief flash so the user sees the check before we snap.
-                await new Promise(r => setTimeout(r, 150))
-                return
-              }
+              if (consecutive >= holdTicks) return
             } else {
               consecutive = 0
             }
-            await new Promise(r => setTimeout(r, POLL_MS))
+            await sleep(POLL_MS)
           }
-          // Timeout — capture whatever we have. Consistent with the existing
-          // pose-gate fallback: a hard block would punish users in awkward
-          // lighting/space who'd otherwise get usable results.
-          setPoseProgress({ side, hit: false })
+          // Timeout — let the caller capture whatever frame we have. Hard-
+          // failing here would punish users in awkward lighting / cramped
+          // spaces who'd otherwise get usable results.
         }
 
         const frames: string[] = []
         setFramesCaptured(0)
-        // 1. Straight on
-        await waitForPose(y => Math.abs(y) < STRAIGHT_THRESH, 'Look straight ahead', 'straight')
+
+        // --- Step 1: ALIGN ---
+        // Wait for the user to put their face in the oval at the right
+        // distance. No yaw constraint — they can be looking anywhere.
+        setStep('align')
+        await waitForCondition(() => true, 'Center your face in the oval')
+
+        // --- Confirmation flash before front capture ---
+        setStep('aligned_ok')
+        setScanPhase('Great! Get ready...')
+        await sleep(CONFIRM_FLASH_MS)
+
+        // --- Step 2: CAPTURE FRONT ---
+        setStep('capture_front')
+        await waitForCondition(
+          () => Math.abs(yawRef.current) < STRAIGHT_THRESH,
+          'Look straight ahead',
+        )
         let f = captureFrame()
         if (f) { frames.push(f); setFramesCaptured(1) }
+        setStep('captured_front')
+        setScanPhase('Front captured')
+        await sleep(CONFIRM_FLASH_MS)
 
-        // 2. First side — whichever direction the user naturally turns first
-        let firstSideSign = 0
-        await waitForPose(
-          y => {
-            if (Math.abs(y) > TURN_THRESH) {
-              firstSideSign = y > 0 ? 1 : -1
-              return true
-            }
-            return false
-          },
-          'Turn your head slowly to one side',
-          'right',
+        // --- Step 3: PROMPT LEFT then CAPTURE LEFT ---
+        setStep('prompt_left')
+        setScanPhase('Turn your head to the LEFT')
+        await sleep(PROMPT_HOLD_MS)
+        setStep('capture_left')
+        await waitForCondition(
+          () => yawRef.current < -TURN_THRESH,
+          'Turn your head to the LEFT',
         )
         f = captureFrame()
         if (f) { frames.push(f); setFramesCaptured(2) }
+        setStep('captured_left')
+        setScanPhase('Left captured')
+        await sleep(CONFIRM_FLASH_MS)
 
-        // 3. Opposite side — whatever the OTHER direction is
-        const otherSign = firstSideSign === 0 ? -1 : -firstSideSign
-        await waitForPose(
-          y => Math.abs(y) > TURN_THRESH && Math.sign(y) === otherSign,
-          'Now turn the other way',
-          'left',
+        // --- Step 4: PROMPT RIGHT then CAPTURE RIGHT ---
+        setStep('prompt_right')
+        setScanPhase('Now turn to the RIGHT')
+        await sleep(PROMPT_HOLD_MS)
+        setStep('capture_right')
+        await waitForCondition(
+          () => yawRef.current > TURN_THRESH,
+          'Now turn to the RIGHT',
         )
         f = captureFrame()
         if (f) { frames.push(f); setFramesCaptured(3) }
+        setStep('captured_right')
+        setScanPhase('Right captured')
+        await sleep(CONFIRM_FLASH_MS)
 
-        setScanPhase('Matching...')
-        setPoseProgress({ side: null, hit: false })
+        // --- Step 5: MATCHING ---
+        setStep('matching')
+        setScanPhase('Finding your photos...')
 
         if (frames.length === 0) {
           setError('Failed to capture frames from camera')
           setScanning(false)
           setScanPhase(null)
+          scanStepRef.current = null
+          setScanStep(null)
           return
         }
 
@@ -529,6 +575,8 @@ export default function FaceScanner() {
 
       setScanResult(response.data)
       setScanPhase(null)
+      scanStepRef.current = null
+      setScanStep(null)
 
       // Hand off to /results via sessionStorage — per-tab, dies on close.
       // Used to be localStorage, which persisted scan matches across tabs
@@ -557,6 +605,8 @@ export default function FaceScanner() {
 
     } catch (err: any) {
       setScanPhase(null)
+      scanStepRef.current = null
+      setScanStep(null)
       if (err.response?.status === 429) {
         setError('Rate limit exceeded. Please wait before scanning again.')
       } else if (err.response?.status === 401) {
@@ -683,24 +733,40 @@ export default function FaceScanner() {
                   90%  { opacity: 1; }
                   100% { top: 82%;  opacity: 0; }
                 }
-                @keyframes picurRingFill {
-                  from { stroke-dashoffset: 251.327; }
-                  to   { stroke-dashoffset: 0; }
-                }
                 @keyframes picurBracketPulse {
                   0%, 100% { opacity: 0.85; }
                   50%      { opacity: 1; }
                 }
+                @keyframes picurCheckPop {
+                  0%   { transform: scale(0.4); opacity: 0; }
+                  60%  { transform: scale(1.15); opacity: 1; }
+                  100% { transform: scale(1);    opacity: 1; }
+                }
+                @keyframes picurArrowBounce {
+                  0%, 100% { transform: translateX(0); opacity: 0.85; }
+                  50%      { transform: translateX(-14px); opacity: 1; }
+                }
+                @keyframes picurArrowBounceRight {
+                  0%, 100% { transform: translateX(0); opacity: 0.85; }
+                  50%      { transform: translateX(14px); opacity: 1; }
+                }
+                @keyframes picurConfirmFlash {
+                  0%, 100% { background-color: rgba(34,197,94,0.0); }
+                  40%      { background-color: rgba(34,197,94,0.18); }
+                }
                 .picur-scan-line {
                   animation: picurScanSweep 1.6s ease-in-out infinite;
                 }
-                .picur-progress-ring {
-                  transform: rotate(-90deg);
-                  transform-origin: 50% 50%;
-                  animation: picurRingFill 6s linear forwards;
-                }
                 .picur-bracket {
                   animation: picurBracketPulse 2.2s ease-in-out infinite;
+                }
+                .picur-check-pop {
+                  animation: picurCheckPop 420ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+                }
+                .picur-arrow-left  { animation: picurArrowBounce 900ms ease-in-out infinite; }
+                .picur-arrow-right { animation: picurArrowBounceRight 900ms ease-in-out infinite; }
+                .picur-confirm-flash {
+                  animation: picurConfirmFlash 600ms ease-out forwards;
                 }
               `}</style>
 
@@ -751,76 +817,133 @@ export default function FaceScanner() {
                 )
               })()}
 
-              {/* Scanning sweep line — only during active capture, only when
-                  distance is OK so users don't see it during error states. */}
-              {scanning && frameQuality === 'ok' && (
-                <div
-                  className="picur-scan-line absolute left-[24%] right-[24%] h-[2px] pointer-events-none"
-                  style={{
-                    background: 'linear-gradient(90deg, transparent 0%, rgba(34,197,94,0.0) 8%, rgba(34,197,94,0.95) 50%, rgba(34,197,94,0.0) 92%, transparent 100%)',
-                    boxShadow: '0 0 18px rgba(34,197,94,0.85), 0 0 36px rgba(34,197,94,0.45)',
-                  }}
-                />
-              )}
-
-              {/* Per-phase progress ring around the oval. Restarts each phase
-                  via `key={poseProgress.side}` so the animation re-fires; the
-                  green check overlay (below) replaces it on a hit. */}
-              {scanning && scanPhase && !poseProgress.hit && (
-                <svg
-                  className="absolute inset-0 w-full h-full pointer-events-none"
-                  viewBox="0 0 100 100"
-                  preserveAspectRatio="none"
-                  key={poseProgress.side ?? 'init'}
-                >
-                  <circle cx="50" cy="50" r="40" fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="0.6" />
-                  <circle
-                    cx="50"
-                    cy="50"
-                    r="40"
-                    fill="none"
-                    stroke={frameQuality === 'ok' ? 'rgb(34,197,94)' : 'rgb(239,68,68)'}
-                    strokeWidth="0.8"
-                    strokeLinecap="round"
-                    strokeDasharray="251.327"
-                    className="picur-progress-ring"
-                  />
-                </svg>
-              )}
-
-              {/* Frame progress dots — three pips at the top showing capture
-                  count. Filled = captured, hollow = pending. Camera path only;
-                  the upload path is a single image so the meter doesn't apply. */}
-              {scanning && !useUpload && (
-                <div className="absolute top-3 left-1/2 -translate-x-1/2 flex gap-2 pointer-events-none z-10">
-                  {[0, 1, 2].map(i => (
-                    <div
-                      key={i}
-                      className={`w-2.5 h-2.5 rounded-full transition-all duration-200 ${
-                        i < framesCaptured
-                          ? 'bg-green-400 shadow-[0_0_10px_rgba(34,197,94,0.95)]'
-                          : 'bg-white/20 border border-white/40'
-                      }`}
-                    />
-                  ))}
-                </div>
-              )}
-
-              {/* Guided scan phase overlay (pose-gated) */}
-              {scanPhase && scanning && (
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
+              {/* Scanning sweep line — only during the actual snap moments
+                  (capture_* steps), not during align/prompt/confirm phases.
+                  Skip when distance is off so users don't see it in error states. */}
+              {scanning &&
+                frameQuality === 'ok' &&
+                (scanStep === 'capture_front' || scanStep === 'capture_left' || scanStep === 'capture_right') && (
                   <div
-                    className={`px-6 py-3 rounded-2xl backdrop-blur-md border text-white font-bold text-lg shadow-lg flex items-center gap-2 transition-colors ${
-                      poseProgress.hit
-                        ? 'bg-green-600/85 border-green-400/60'
-                        : 'bg-blue-600/80 border-blue-400/50 animate-pulse'
-                    }`}
-                  >
-                    {poseProgress.hit ? <span className="text-2xl leading-none">✓</span> : null}
-                    <span>{scanPhase}</span>
+                    className="picur-scan-line absolute left-[24%] right-[24%] h-[2px] pointer-events-none"
+                    style={{
+                      background: 'linear-gradient(90deg, transparent 0%, rgba(34,197,94,0.0) 8%, rgba(34,197,94,0.95) 50%, rgba(34,197,94,0.0) 92%, transparent 100%)',
+                      boxShadow: '0 0 18px rgba(34,197,94,0.85), 0 0 36px rgba(34,197,94,0.45)',
+                    }}
+                  />
+                )}
+
+              {/* Walkthrough step indicator — 4 pills at the top of the viewport.
+                  Highlights the logical stage (align / front / left / right) so
+                  the user always knows where they are in the flow. */}
+              {scanning && !useUpload && (() => {
+                const stages: { key: string; label: string; matches: ScanStep[] }[] = [
+                  { key: 'align',  label: 'Align', matches: ['align', 'aligned_ok'] },
+                  { key: 'front',  label: 'Front', matches: ['capture_front', 'captured_front'] },
+                  { key: 'left',   label: 'Left',  matches: ['prompt_left', 'capture_left', 'captured_left'] },
+                  { key: 'right',  label: 'Right', matches: ['prompt_right', 'capture_right', 'captured_right'] },
+                ]
+                const currentIndex = stages.findIndex(s => scanStep !== null && s.matches.includes(scanStep))
+                return (
+                  <div className="absolute top-3 left-1/2 -translate-x-1/2 flex gap-1.5 pointer-events-none z-10">
+                    {stages.map((s, i) => {
+                      const done = currentIndex > i
+                      const active = currentIndex === i
+                      return (
+                        <div
+                          key={s.key}
+                          className={`px-2.5 py-1 rounded-full backdrop-blur-md text-[10px] font-bold uppercase tracking-wide transition-all ${
+                            done
+                              ? 'bg-green-500/30 border border-green-400/60 text-green-200'
+                              : active
+                                ? 'bg-blue-500/40 border border-blue-300/70 text-white shadow-[0_0_14px_rgba(59,130,246,0.55)]'
+                                : 'bg-black/40 border border-white/15 text-white/50'
+                          }`}
+                        >
+                          {done ? '✓ ' : `${i + 1}. `}{s.label}
+                        </div>
+                      )
+                    })}
                   </div>
-                </div>
-              )}
+                )
+              })()}
+
+              {/* Step-aware center overlay. Renders different visuals per
+                  walkthrough phase: instruction bubble during align/capture,
+                  giant green check during confirmation, animated arrow during
+                  prompt, spinner during matching. */}
+              {scanning && scanStep && (() => {
+                const isConfirm =
+                  scanStep === 'aligned_ok' ||
+                  scanStep === 'captured_front' ||
+                  scanStep === 'captured_left' ||
+                  scanStep === 'captured_right'
+                const isPromptLeft  = scanStep === 'prompt_left'
+                const isPromptRight = scanStep === 'prompt_right'
+                const isMatching    = scanStep === 'matching'
+                const isInstruct =
+                  scanStep === 'align' ||
+                  scanStep === 'capture_front' ||
+                  scanStep === 'capture_left' ||
+                  scanStep === 'capture_right'
+
+                return (
+                  <>
+                    {/* Subtle green wash over the whole viewport on confirm. */}
+                    {isConfirm && (
+                      <div className="picur-confirm-flash absolute inset-0 pointer-events-none z-[5]" />
+                    )}
+
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
+                      {isConfirm && (
+                        <div
+                          className="picur-check-pop flex flex-col items-center gap-2"
+                          // restart pop animation on each confirm step
+                          key={scanStep}
+                        >
+                          <div className="w-24 h-24 rounded-full bg-green-500/90 border-4 border-green-300/70 shadow-[0_0_40px_rgba(34,197,94,0.6)] flex items-center justify-center">
+                            <span className="text-white text-5xl font-black leading-none">✓</span>
+                          </div>
+                          {scanPhase && (
+                            <div className="px-4 py-1.5 rounded-full bg-black/60 backdrop-blur-md border border-green-400/40 text-green-200 text-sm font-bold uppercase tracking-wider">
+                              {scanPhase}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {(isPromptLeft || isPromptRight) && (
+                        <div className="flex flex-col items-center gap-3" key={scanStep}>
+                          <div
+                            className={`text-7xl text-white drop-shadow-[0_0_18px_rgba(59,130,246,0.8)] leading-none ${
+                              isPromptLeft ? 'picur-arrow-left' : 'picur-arrow-right'
+                            }`}
+                          >
+                            {isPromptLeft ? '←' : '→'}
+                          </div>
+                          <div className="px-5 py-2 rounded-2xl bg-blue-600/85 backdrop-blur-md border border-blue-300/60 text-white font-bold text-lg shadow-lg">
+                            {scanPhase}
+                          </div>
+                        </div>
+                      )}
+
+                      {isMatching && (
+                        <div className="flex flex-col items-center gap-3">
+                          <Loader2 className="w-14 h-14 text-blue-400 animate-spin" />
+                          <div className="px-5 py-2 rounded-2xl bg-black/60 backdrop-blur-md border border-blue-400/40 text-white font-bold text-base">
+                            {scanPhase || 'Finding your photos...'}
+                          </div>
+                        </div>
+                      )}
+
+                      {isInstruct && scanPhase && (
+                        <div className="px-6 py-3 rounded-2xl backdrop-blur-md border bg-blue-600/80 border-blue-400/50 text-white font-bold text-lg shadow-lg animate-pulse">
+                          {scanPhase}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )
+              })()}
 
               {/* Status indicator - Moved to be subtle and non-blocking */}
               <div className="absolute bottom-4 left-0 w-full flex justify-center pointer-events-none">
@@ -931,18 +1054,38 @@ export default function FaceScanner() {
             <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
               <ScanFace className="w-5 h-5 text-blue-400" /> How to scan
             </h2>
-            <ol className="list-decimal list-inside space-y-2 text-gray-300 ml-2">
-              <li>Position your face clearly in the frame and wait for the green border</li>
-              <li>Click <span className="text-white font-medium">&quot;Scan My Face&quot;</span></li>
-              <li>The app will guide you through three quick captures:
-                <ul className="list-disc list-inside ml-5 mt-1 space-y-1 text-gray-400">
-                  <li><span className="text-white">Look straight ahead</span> — hold for a moment</li>
-                  <li><span className="text-white">Turn your head slowly to one side</span></li>
-                  <li><span className="text-white">Turn the other way</span></li>
-                </ul>
+            <p className="text-gray-400 text-sm mb-4">
+              Tap <span className="text-white font-medium">&quot;Scan My Face&quot;</span> and follow the on-screen walkthrough. Four quick steps:
+            </p>
+            <ol className="space-y-3 text-gray-300 ml-1">
+              <li className="flex gap-3">
+                <span className="flex-shrink-0 w-7 h-7 rounded-full bg-blue-500/20 border border-blue-400/40 text-blue-300 text-xs font-bold flex items-center justify-center">1</span>
+                <div>
+                  <span className="text-white font-medium">Align</span> — center your face in the oval until it glows green.
+                </div>
               </li>
-              <li className="text-gray-400">If you can&apos;t turn, just hold still — the scan still works with one angle, you&apos;ll just match fewer photos.</li>
+              <li className="flex gap-3">
+                <span className="flex-shrink-0 w-7 h-7 rounded-full bg-blue-500/20 border border-blue-400/40 text-blue-300 text-xs font-bold flex items-center justify-center">2</span>
+                <div>
+                  <span className="text-white font-medium">Front</span> — look straight ahead and hold still.
+                </div>
+              </li>
+              <li className="flex gap-3">
+                <span className="flex-shrink-0 w-7 h-7 rounded-full bg-blue-500/20 border border-blue-400/40 text-blue-300 text-xs font-bold flex items-center justify-center">3</span>
+                <div>
+                  <span className="text-white font-medium">Left</span> — when the <span className="font-mono text-blue-300">←</span> arrow appears, turn your head to your left.
+                </div>
+              </li>
+              <li className="flex gap-3">
+                <span className="flex-shrink-0 w-7 h-7 rounded-full bg-blue-500/20 border border-blue-400/40 text-blue-300 text-xs font-bold flex items-center justify-center">4</span>
+                <div>
+                  <span className="text-white font-medium">Right</span> — when the <span className="font-mono text-blue-300">→</span> arrow appears, turn your head to your right.
+                </div>
+              </li>
             </ol>
+            <p className="text-gray-500 text-xs mt-4">
+              Can&apos;t turn? Hold still — the scan still works with one angle, you&apos;ll just match fewer photos.
+            </p>
           </div>
 
         </div>
