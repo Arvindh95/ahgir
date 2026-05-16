@@ -145,9 +145,6 @@ export default function FaceScanner() {
     setEventName(storedEventName || '')
     setAllowDownloads(storedAllowDownloads === 'true')
 
-    // Initialize camera
-    initializeCamera()
-
     return () => {
       // Read from the ref, not the closed-over state. At the time this
       // cleanup function was created, `stream` was null; the ref is
@@ -162,6 +159,32 @@ export default function FaceScanner() {
       }
     }
   }, [slug, router])
+
+  // Camera lifecycle on Camera/Upload toggle. The conditional render
+  // unmounts the <video> element when the user flips to Upload, so on
+  // flip back its ref is fresh and srcObject is null. Re-attach the
+  // existing MediaStream if it's still live; otherwise (first mount,
+  // or stream was stopped) ask getUserMedia for a new one.
+  useEffect(() => {
+    if (useUpload) return
+    const video = videoRef.current
+    if (!video) return
+
+    const stream = streamRef.current
+    const hasLiveStream = !!stream && stream.getTracks().some(t => t.readyState === 'live')
+
+    if (hasLiveStream && stream) {
+      if (video.srcObject !== stream) {
+        video.srcObject = stream
+        // metadata already loaded on the original bind so onloadedmetadata
+        // won't refire; mark ready manually so the detection-loop effect picks up.
+        setCameraReady(true)
+        video.play().catch(() => {})
+      }
+    } else {
+      initializeCamera()
+    }
+  }, [useUpload])
 
   // Start face detection loop when camera and models are ready
   useEffect(() => {
@@ -283,14 +306,20 @@ export default function FaceScanner() {
         // or (b) we're inside the explicit "align your face" step of the
         // walkthrough. Capture/prompt/confirmation phases hide the oval so the
         // viewport reads as a clean snapshot moment, not a setup screen.
+        //
+        // Sizing: anchored to min(width, height) with a fixed face-proportion
+        // ratio (rx:ry ≈ 3:4). Per-axis percentages would stretch the oval
+        // into a tall pill on portrait viewports and a flat puck on wide
+        // landscape viewports — neither matches the shape of a human face.
         const step = scanStepRef.current
         const showOval = step === null || step === 'align'
         if (ctx && showOval) {
           const cx = overlayCanvas.width / 2
           const cy = overlayCanvas.height / 2
-          const rx = overlayCanvas.width  * 0.20
-          const ry = overlayCanvas.height * 0.32
-          ctx.lineWidth = Math.max(4, overlayCanvas.width * 0.005)
+          const minDim = Math.min(overlayCanvas.width, overlayCanvas.height)
+          const rx = minDim * 0.32
+          const ry = minDim * 0.42
+          ctx.lineWidth = Math.max(4, minDim * 0.006)
           ctx.setLineDash([12, 8])
           ctx.strokeStyle =
             quality === 'ok'        ? 'rgba(34, 197, 94, 0.95)'   // green-500
@@ -794,37 +823,50 @@ export default function FaceScanner() {
               />
               <canvas ref={canvasRef} style={{ display: 'none' }} />
 
-              {/* Corner brackets framing the oval region. Color tracks frame
-                  quality so the brackets read as "locked on" when green. */}
+              {/* Corner brackets framing a fixed face-proportion box. The box
+                  is centered, sized to ~74% of the viewport height with a 3:4
+                  width:height aspect ratio so it always matches face shape,
+                  no matter whether the viewport is portrait or landscape.
+                  Color tracks frame quality so the brackets read as
+                  "locked on" when green. */}
               {cameraReady && modelsLoaded && (() => {
                 const color =
                   frameQuality === 'ok'         ? 'rgb(34, 197, 94)'
                   : frameQuality === 'no_face'  ? 'rgba(148, 163, 184, 0.7)'
                   :                               'rgb(239, 68, 68)'
                 const stroke = '3px solid currentColor'
-                const armSize = '14%'
-                const positions: Array<{ pos: CSSProperties; borders: CSSProperties }> = [
-                  { pos: { top: '14%',    left: '24%'    }, borders: { borderTop: stroke, borderLeft: stroke,  borderTopLeftRadius: 8 } },
-                  { pos: { top: '14%',    right: '24%'   }, borders: { borderTop: stroke, borderRight: stroke, borderTopRightRadius: 8 } },
-                  { pos: { bottom: '14%', left: '24%'    }, borders: { borderBottom: stroke, borderLeft: stroke,  borderBottomLeftRadius: 8 } },
-                  { pos: { bottom: '14%', right: '24%'   }, borders: { borderBottom: stroke, borderRight: stroke, borderBottomRightRadius: 8 } },
+                const armSize = '18%'
+                const arms: Array<CSSProperties> = [
+                  { top: 0,    left: 0,    borderTop: stroke,    borderLeft: stroke,  borderTopLeftRadius: 8 },
+                  { top: 0,    right: 0,   borderTop: stroke,    borderRight: stroke, borderTopRightRadius: 8 },
+                  { bottom: 0, left: 0,    borderBottom: stroke, borderLeft: stroke,  borderBottomLeftRadius: 8 },
+                  { bottom: 0, right: 0,   borderBottom: stroke, borderRight: stroke, borderBottomRightRadius: 8 },
                 ]
                 return (
-                  <>
-                    {positions.map((p, i) => (
+                  <div
+                    className="absolute pointer-events-none"
+                    style={{
+                      left: '50%',
+                      top: '50%',
+                      transform: 'translate(-50%, -50%)',
+                      height: '78%',
+                      aspectRatio: '3 / 4',
+                      maxWidth: '75%',
+                      color,
+                    }}
+                  >
+                    {arms.map((armStyle, i) => (
                       <div
                         key={i}
-                        className="picur-bracket absolute pointer-events-none transition-colors duration-200"
+                        className="picur-bracket absolute transition-colors duration-200"
                         style={{
-                          ...p.pos,
                           width: armSize,
                           height: armSize,
-                          color,
-                          ...p.borders,
+                          ...armStyle,
                         }}
                       />
                     ))}
-                  </>
+                  </div>
                 )
               })()}
 
