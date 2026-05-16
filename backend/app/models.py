@@ -127,6 +127,14 @@ class Face(Base):
     # Gender label from the CompreFace demographics plugin ('male' / 'female').
     # NULL when the plugin is disabled or inconclusive.
     gender = Column(String(16), nullable=True)
+    # Accuracy-tuning metadata populated by the indexer (technical image quality,
+    # not demographic). NULL for legacy rows indexed before these columns existed.
+    face_min_side_px = Column(Float, nullable=True)
+    blur_score = Column(Float, nullable=True)
+    brightness_score = Column(Float, nullable=True)
+    crop_clipped = Column(Boolean, nullable=False, default=False, server_default=sa.text('false'))
+    # Set by the background same-person clustering job (see face_clustering.py).
+    face_cluster_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     created_at = Column(TIMESTAMP, server_default=func.now(), nullable=False)
 
     # Relationships

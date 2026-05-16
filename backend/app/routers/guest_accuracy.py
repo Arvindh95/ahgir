@@ -14,7 +14,6 @@ import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.auth import EventTokenPayload, get_event_from_token
@@ -104,42 +103,22 @@ def _decode_and_sanitize_frames(scan_request: FaceScanRequest) -> list[bytes]:
     return all_frames
 
 
-def _fetch_face_rows(db: Session, subject_ids: list[str]) -> dict[str, object]:
-    """Return subject_id -> Face-like mapping, including optional migration fields.
+def _fetch_face_rows(db: Session, subject_ids: list[str]) -> dict[str, Face]:
+    """Return subject_id -> Face ORM mapping.
 
-    The SQL migration adds quality / cluster columns. During rolling deploys the
-    columns may not exist yet, so we fall back to ORM rows. The scoring helper
-    handles both ORM rows and dictionaries.
+    The scoring helper reads the accuracy metadata via getattr, which works
+    against ORM rows directly. We don't need a raw SELECT — and an earlier
+    raw SELECT path poisoned the session transaction when columns were
+    missing during a rolling deploy. The alembic migration that adds these
+    columns runs as part of every deploy, so we can trust the model.
     """
     if not subject_ids:
         return {}
-    try:
-        rows = db.execute(
-            text(
-                """
-                SELECT
-                    compreface_subject_id,
-                    bbox,
-                    quality_score,
-                    face_min_side_px,
-                    blur_score,
-                    brightness_score,
-                    crop_clipped,
-                    face_cluster_id
-                FROM faces
-                WHERE compreface_subject_id = ANY(:subject_ids)
-                """
-            ),
-            {"subject_ids": subject_ids},
-        ).mappings().all()
-        return {row["compreface_subject_id"]: dict(row) for row in rows}
-    except Exception as exc:
-        logger.warning("Falling back to ORM Face rows for scoring metadata: %s", exc)
-        return {
-            f.compreface_subject_id: f
-            for f in db.query(Face).filter(Face.compreface_subject_id.in_(subject_ids)).all()
-            if f.compreface_subject_id
-        }
+    return {
+        f.compreface_subject_id: f
+        for f in db.query(Face).filter(Face.compreface_subject_id.in_(subject_ids)).all()
+        if f.compreface_subject_id
+    }
 
 
 async def _scan_with_enhanced_scoring(
