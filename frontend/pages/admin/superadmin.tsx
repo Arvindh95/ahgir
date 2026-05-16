@@ -804,7 +804,7 @@ export default function SuperadminPage() {
             )}
           </div>
 
-          <div className="glass-card rounded-2xl p-6 mb-8">
+          <div className="glass-card rounded-2xl p-6 mt-8 mb-8">
             <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
               <h2 className="text-xl font-bold flex items-center gap-2">
                 <Database className="w-5 h-5" /> Storage Cleanup Tasks
