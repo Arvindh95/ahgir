@@ -115,12 +115,13 @@ def setup_event_with_faces(db_session: Session):
         db_session.refresh(image)
 
     for i, image in enumerate(images):
-        # Bbox sized to fall in the MEDIUM tier (min_side >= face_size_medium_px,
-        # default 60px). Without this the sort/similarity test below uses a
-        # subject at similarity 0.86, which fails the strict small-face floor
-        # (0.90). The matching-engine behaviour under test is sort + dedupe,
-        # not threshold tiering — sizing into medium tier (0.85 floor) lets
-        # 0.86 pass and exercises what the test actually means to.
+        # Bbox sized to a min_side of ~80 px (medium-tier under face_size_*_px).
+        # Threshold buckets are flat at 0.90 today, but keeping the sizing
+        # explicit means the test still exercises a defined tier rather than
+        # accidentally landing in the small-face bucket if defaults are tuned.
+        # The matching-engine behaviour under test is sort + dedupe, not
+        # threshold tiering — the mocked similarities below are chosen to
+        # comfortably clear the floor.
         face = Face(
             image_id=image.id,
             event_id=event.id,
@@ -228,10 +229,10 @@ def test_face_scan_returns_all_matches_sorted_by_similarity(db_session: Session,
         recognition_result = [{
             "box": {"x_min": 10, "y_min": 10, "x_max": 60, "y_max": 60, "probability": 0.99},
             "subjects": [
-                {"subject": f"{event.id}/{images[1].id}", "similarity": 0.87},
+                {"subject": f"{event.id}/{images[1].id}", "similarity": 0.91},
                 {"subject": f"{event.id}/{images[0].id}", "similarity": 0.96},
-                {"subject": f"{event.id}/{images[2].id}", "similarity": 0.86},
-                {"subject": f"{event.id}/{images[1].id}", "similarity": 0.92},
+                {"subject": f"{event.id}/{images[2].id}", "similarity": 0.93},
+                {"subject": f"{event.id}/{images[1].id}", "similarity": 0.94},
             ],
         }]
 
@@ -251,7 +252,7 @@ def test_face_scan_returns_all_matches_sorted_by_similarity(db_session: Session,
             str(images[1].id),
             str(images[2].id),
         ]
-        assert [m["similarity"] for m in matches] == [0.96, 0.92, 0.86]
+        assert [m["similarity"] for m in matches] == [0.96, 0.94, 0.93]
     finally:
         app.dependency_overrides.clear()
 
