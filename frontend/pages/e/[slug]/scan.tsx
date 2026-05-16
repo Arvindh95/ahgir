@@ -3,7 +3,7 @@ import { useRouter } from 'next/router'
 import Head from 'next/head'
 import axios from 'axios'
 import api from '@/lib/api'
-import { Camera, Upload, LogOut, Loader2, ScanFace, Image as ImageIcon } from 'lucide-react'
+import { Camera, Upload, LogOut, Loader2, ScanFace, Image as ImageIcon, HelpCircle, X } from 'lucide-react'
 import ScannerOnboarding from '@/components/ScannerOnboarding'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
@@ -95,6 +95,7 @@ export default function FaceScanner() {
   // 0..3 — how many of the multi-pose frames have been captured so far. Drives
   // the three progress dots at the top of the camera viewport.
   const [framesCaptured, setFramesCaptured] = useState(0)
+  const [showHelp, setShowHelp] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Load face-api.js models
@@ -668,11 +669,19 @@ export default function FaceScanner() {
       <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-br from-black via-[#0a0a0a] to-[#050505] z-0"></div>
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-blue-500/10 rounded-full blur-[120px] z-0"></div>
 
-      <div className="relative z-10 max-w-4xl mx-auto px-4 py-8">
+      <div className="relative z-10 max-w-4xl mx-auto px-3 py-3 sm:px-4 sm:py-6">
         {/* Header */}
-        <div className="flex justify-between items-center mb-8 glass-card p-4 rounded-xl">
-          <h1 className="text-xl font-bold truncate pr-4">{eventName}</h1>
-          <div className="flex items-center gap-2">
+        <div className="flex justify-between items-center mb-3 sm:mb-4 glass-card p-3 sm:p-4 rounded-xl">
+          <h1 className="text-base sm:text-xl font-bold truncate pr-3">{eventName}</h1>
+          <div className="flex items-center gap-1 sm:gap-2">
+            <button
+              onClick={() => setShowHelp(true)}
+              aria-label="How to scan"
+              className="p-2 text-gray-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors flex items-center gap-2"
+            >
+              <HelpCircle className="w-5 h-5" />
+              <span className="hidden sm:inline">Help</span>
+            </button>
             <button
               onClick={() => router.push(`/e/${slug}/gallery`)}
               className="p-2 text-gray-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors flex items-center gap-2"
@@ -690,34 +699,36 @@ export default function FaceScanner() {
           </div>
         </div>
 
-        <div className="glass-card p-6 md:p-8 rounded-2xl">
-          {/* Mode Toggle */}
-          <div className="flex justify-center gap-4 mb-8">
-            <button
-              onClick={() => setUseUpload(false)}
-              className={`flex items-center gap-2 px-6 py-3 rounded-xl font-medium transition-all ${!useUpload
-                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20'
-                  : 'bg-white/5 text-gray-400 hover:bg-white/10'
-                }`}
-            >
-              <Camera className="w-5 h-5" />
-              Camera
-            </button>
-            <button
-              onClick={() => setUseUpload(true)}
-              className={`flex items-center gap-2 px-6 py-3 rounded-xl font-medium transition-all ${useUpload
-                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20'
-                  : 'bg-white/5 text-gray-400 hover:bg-white/10'
-                }`}
-            >
-              <Upload className="w-5 h-5" />
-              Upload
-            </button>
+        <div className="glass-card p-3 sm:p-6 md:p-8 rounded-2xl">
+          {/* Mode Toggle — compact pill-pair, hugs top-right corner of card */}
+          <div className="flex justify-end mb-3">
+            <div className="inline-flex bg-white/5 rounded-full p-0.5 border border-white/10">
+              <button
+                onClick={() => setUseUpload(false)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${!useUpload
+                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
+                    : 'text-gray-400 hover:text-white'
+                  }`}
+              >
+                <Camera className="w-3.5 h-3.5" />
+                Camera
+              </button>
+              <button
+                onClick={() => setUseUpload(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${useUpload
+                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
+                    : 'text-gray-400 hover:text-white'
+                  }`}
+              >
+                <Upload className="w-3.5 h-3.5" />
+                Upload
+              </button>
+            </div>
           </div>
 
           {!useUpload ? (
             <div className={`
-                relative rounded-xl overflow-hidden aspect-[4/3] md:aspect-video bg-black mb-6 border-4
+                relative rounded-xl overflow-hidden aspect-[3/4] sm:aspect-[4/3] md:aspect-video bg-black mb-4 border-4
                 transition-all duration-300
                 ${faceDetected && frameQuality === 'ok'
                   ? 'border-green-500 shadow-[0_0_60px_rgba(34,197,94,0.45),inset_0_0_40px_rgba(34,197,94,0.12)]'
@@ -988,7 +999,7 @@ export default function FaceScanner() {
               )}
             </div>
           ) : (
-            <div className="border-2 border-dashed border-white/10 rounded-xl p-12 mb-6 text-center hover:border-white/20 transition-colors bg-white/5">
+            <div className="border-2 border-dashed border-white/10 rounded-xl p-6 sm:p-10 mb-4 text-center hover:border-white/20 transition-colors bg-white/5">
               <input
                 type="file"
                 ref={fileInputRef}
@@ -1036,16 +1047,15 @@ export default function FaceScanner() {
           )}
 
           {error && (
-            <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 text-red-500 rounded-xl text-center">
+            <div className="mb-3 p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl text-center text-sm">
               {error}
             </div>
           )}
 
-          {/* Action Button - Moved ABOVE instructions */}
           <button
             onClick={handleScan}
             disabled={!canScan || scanning}
-            className={`w-full py-4 rounded-xl text-lg font-bold flex items-center justify-center gap-2 transition-all mb-8 ${!canScan || scanning
+            className={`w-full py-3 sm:py-4 rounded-xl text-base sm:text-lg font-bold flex items-center justify-center gap-2 transition-all ${!canScan || scanning
                 ? 'bg-white/10 text-gray-500 cursor-not-allowed'
                 : 'bg-gradient-to-r from-blue-600 to-blue-500 text-white hover:shadow-lg hover:shadow-blue-500/30 hover:scale-[1.02] active:scale-[0.98]'
               }`}
@@ -1061,36 +1071,58 @@ export default function FaceScanner() {
             )}
           </button>
 
-          {/* Instructions */}
-          <div className="bg-white/5 rounded-xl p-6 border border-white/5">
-            <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
-              <ScanFace className="w-5 h-5 text-blue-400" /> How to scan
-            </h2>
+        </div>
+      </div>
+
+      {/* Help modal — same content as the old "How to scan" panel, now
+          surfaced via the header "?" button so it doesn't take up
+          permanent vertical space below the viewport. */}
+      {showHelp && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm p-3 sm:p-4 animate-in fade-in duration-200"
+          onClick={() => setShowHelp(false)}
+        >
+          <div
+            className="glass-card rounded-2xl p-5 sm:p-6 max-w-md w-full max-h-[85vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-lg font-bold flex items-center gap-2">
+                <ScanFace className="w-5 h-5 text-blue-400" /> How to scan
+              </h2>
+              <button
+                onClick={() => setShowHelp(false)}
+                aria-label="Close"
+                className="p-1.5 text-gray-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
             <p className="text-gray-400 text-sm mb-4">
               Tap <span className="text-white font-medium">&quot;Scan My Face&quot;</span> and follow the on-screen walkthrough. Four quick steps:
             </p>
-            <ol className="space-y-3 text-gray-300 ml-1">
+            <ol className="space-y-3 text-gray-300">
               <li className="flex gap-3">
                 <span className="flex-shrink-0 w-7 h-7 rounded-full bg-blue-500/20 border border-blue-400/40 text-blue-300 text-xs font-bold flex items-center justify-center">1</span>
-                <div>
+                <div className="text-sm">
                   <span className="text-white font-medium">Align</span> — center your face in the oval until it glows green.
                 </div>
               </li>
               <li className="flex gap-3">
                 <span className="flex-shrink-0 w-7 h-7 rounded-full bg-blue-500/20 border border-blue-400/40 text-blue-300 text-xs font-bold flex items-center justify-center">2</span>
-                <div>
+                <div className="text-sm">
                   <span className="text-white font-medium">Front</span> — look straight ahead and hold still.
                 </div>
               </li>
               <li className="flex gap-3">
                 <span className="flex-shrink-0 w-7 h-7 rounded-full bg-blue-500/20 border border-blue-400/40 text-blue-300 text-xs font-bold flex items-center justify-center">3</span>
-                <div>
+                <div className="text-sm">
                   <span className="text-white font-medium">Left</span> — when the <span className="font-mono text-blue-300">←</span> arrow appears, turn your head to your left.
                 </div>
               </li>
               <li className="flex gap-3">
                 <span className="flex-shrink-0 w-7 h-7 rounded-full bg-blue-500/20 border border-blue-400/40 text-blue-300 text-xs font-bold flex items-center justify-center">4</span>
-                <div>
+                <div className="text-sm">
                   <span className="text-white font-medium">Right</span> — when the <span className="font-mono text-blue-300">→</span> arrow appears, turn your head to your right.
                 </div>
               </li>
@@ -1099,9 +1131,8 @@ export default function FaceScanner() {
               Can&apos;t turn? Hold still — the scan still works with one angle, you&apos;ll just match fewer photos.
             </p>
           </div>
-
         </div>
-      </div>
+      )}
     </div>
   )
 }
