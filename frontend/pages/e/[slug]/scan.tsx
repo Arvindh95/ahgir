@@ -45,6 +45,11 @@ export default function FaceScanner() {
   // Live head-yaw estimate: -1 (turned to one side) ... 0 (straight) ... +1 (other side).
   // Computed each detection tick from the 68-point face landmarks.
   const yawRef = useRef<number>(0)
+  // Live frame-quality state. Drives the distance gate during pose-confirmed
+  // capture and the colored oval guide on the camera preview. Read inside
+  // the pose-wait loop, where a React state value would be a stale closure.
+  type FrameQuality = 'ok' | 'too_far' | 'too_close' | 'clipped' | 'no_face'
+  const frameQualityRef = useRef<FrameQuality>('no_face')
   // Ref-mirror of `stream` state so cleanup functions can stop tracks
   // without depending on a closure over `stream` at the time the
   // effect ran. The init effect runs once on mount when `stream` is
@@ -67,6 +72,7 @@ export default function FaceScanner() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [scanPhase, setScanPhase] = useState<string | null>(null) // guided capture phase text
   const [poseProgress, setPoseProgress] = useState<{ side: 'straight' | 'left' | 'right' | null; hit: boolean }>({ side: null, hit: false })
+  const [frameQuality, setFrameQuality] = useState<FrameQuality>('no_face')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Load face-api.js models
@@ -183,9 +189,38 @@ export default function FaceScanner() {
         const ctx = overlayCanvas.getContext('2d')
         if (ctx) ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height)
 
+        // Frame-quality thresholds.
+        // AREA_MIN/MAX = bbox area / frame area; outside this band the face
+        // is too far (noisy embedding) or too close (clipped padding +
+        // wide-angle distortion). EDGE_MARGIN is the fraction of width/height
+        // that the bbox must stay inside; touching the edge means the 40%
+        // crop padding (matched to the indexer) gets clipped.
+        const AREA_MIN = 0.04
+        const AREA_MAX = 0.35
+        const EDGE_MARGIN = 0.04
+
+        let quality: FrameQuality = 'no_face'
+
         if (result) {
           setFaceDetected(true)
           lastDetectionRef.current = result.detection
+
+          const box = result.detection.box
+          const frameW = overlayCanvas.width || video.videoWidth
+          const frameH = overlayCanvas.height || video.videoHeight
+          const areaFrac = (box.width * box.height) / (frameW * frameH || 1)
+          const marginX = frameW * EDGE_MARGIN
+          const marginY = frameH * EDGE_MARGIN
+          const clipped =
+            box.x < marginX ||
+            box.y < marginY ||
+            box.x + box.width  > frameW - marginX ||
+            box.y + box.height > frameH - marginY
+
+          if (clipped) quality = 'clipped'
+          else if (areaFrac < AREA_MIN) quality = 'too_far'
+          else if (areaFrac > AREA_MAX) quality = 'too_close'
+          else quality = 'ok'
 
           // Yaw heuristic from 68-point landmarks:
           //   point 30  = nose tip
@@ -215,6 +250,29 @@ export default function FaceScanner() {
           setFaceDetected(false)
           lastDetectionRef.current = null
           yawRef.current = 0
+        }
+
+        frameQualityRef.current = quality
+        setFrameQuality(quality)
+
+        // Target oval. Static position; color reflects current frame quality
+        // so the user gets spatial feedback ("am I the right distance from
+        // the camera?") without having to read the text prompt.
+        if (ctx) {
+          const cx = overlayCanvas.width / 2
+          const cy = overlayCanvas.height / 2
+          const rx = overlayCanvas.width  * 0.20
+          const ry = overlayCanvas.height * 0.32
+          ctx.lineWidth = Math.max(4, overlayCanvas.width * 0.005)
+          ctx.setLineDash([12, 8])
+          ctx.strokeStyle =
+            quality === 'ok'        ? 'rgba(34, 197, 94, 0.95)'   // green-500
+            : quality === 'no_face' ? 'rgba(148, 163, 184, 0.55)' // slate-400, faint
+            :                         'rgba(239, 68, 68, 0.95)'   // red-500
+          ctx.beginPath()
+          ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2)
+          ctx.stroke()
+          ctx.setLineDash([])
         }
       } catch (err) {
         console.error('Face detection error:', err)
@@ -270,8 +328,11 @@ export default function FaceScanner() {
     // If we have a face detection, crop just the face region with padding
     if (lastDetectionRef.current) {
       const box = lastDetectionRef.current.box
-      // Add 50% padding around face for better detection
-      const padding = Math.max(box.width, box.height) * 0.5
+      // 40% padding around the bbox to match the indexer's face_crop_padding_factor
+      // on the backend. Probe and gallery crops must use the same context window,
+      // otherwise the asymmetry costs a few % of cosine similarity on legitimate
+      // matches — which then fall below the 0.90 floor.
+      const padding = Math.max(box.width, box.height) * 0.4
       const x = Math.max(0, box.x - padding)
       const y = Math.max(0, box.y - padding)
       const width = Math.min(video.videoWidth - x, box.width + padding * 2)
@@ -344,6 +405,16 @@ export default function FaceScanner() {
         const MAX_WAIT_MS = 6000
         const POLL_MS = 100
 
+        const distanceMessage = (q: FrameQuality): string | null => {
+          switch (q) {
+            case 'too_far':  return 'Move closer'
+            case 'too_close': return 'Move back'
+            case 'clipped':  return 'Fit your whole face in the oval'
+            case 'no_face':  return 'Center your face in the oval'
+            default:         return null
+          }
+        }
+
         const waitForPose = async (
           test: (yaw: number) => boolean,
           label: string,
@@ -353,25 +424,36 @@ export default function FaceScanner() {
           setPoseProgress({ side, hit: false })
           const start = Date.now()
           let consecutive = 0
+          let lastShown = label
           while (Date.now() - start < MAX_WAIT_MS) {
-            // Use the ref, not the React state — closures over `faceDetected`
-            // would freeze at the value at handleScan invocation time.
-            if (lastDetectionRef.current) {
-              if (test(yawRef.current)) {
-                consecutive += 1
-                if (consecutive >= HOLD_TICKS) {
-                  setPoseProgress({ side, hit: true })
-                  // Brief flash so the user sees the check before we snap.
-                  await new Promise(r => setTimeout(r, 150))
-                  return
-                }
-              } else {
-                consecutive = 0
+            // Use refs, not React state — closures over state values would
+            // freeze at the value at handleScan invocation time.
+            const quality = frameQualityRef.current
+            const distMsg = distanceMessage(quality)
+            // Surface distance feedback in the same phase overlay used for
+            // pose prompts; revert to the pose prompt once distance is OK.
+            const desired = distMsg ?? label
+            if (desired !== lastShown) {
+              setScanPhase(desired)
+              lastShown = desired
+            }
+
+            if (lastDetectionRef.current && quality === 'ok' && test(yawRef.current)) {
+              consecutive += 1
+              if (consecutive >= HOLD_TICKS) {
+                setPoseProgress({ side, hit: true })
+                // Brief flash so the user sees the check before we snap.
+                await new Promise(r => setTimeout(r, 150))
+                return
               }
+            } else {
+              consecutive = 0
             }
             await new Promise(r => setTimeout(r, POLL_MS))
           }
-          // Timeout — capture whatever we have.
+          // Timeout — capture whatever we have. Consistent with the existing
+          // pose-gate fallback: a hard block would punish users in awkward
+          // lighting/space who'd otherwise get usable results.
           setPoseProgress({ side, hit: false })
         }
 
@@ -624,14 +706,22 @@ export default function FaceScanner() {
                   <div className="px-4 py-2 rounded-full backdrop-blur-md bg-black/60 border border-white/10 flex items-center gap-2 text-yellow-500 font-semibold text-sm">
                     <Loader2 className="w-4 h-4 animate-spin" /> Starting camera...
                   </div>
-                ) : faceDetected ? (
-                  // Face detected, green frame is the main indicator, show minimal text
+                ) : faceDetected && frameQuality === 'ok' ? (
+                  // Face detected and well-framed: green oval + this badge confirm "go".
                   <div className="px-4 py-2 rounded-full backdrop-blur-md bg-green-500/20 border border-green-500/50 flex items-center gap-2 text-green-400 font-bold text-sm shadow-lg">
                     <ScanFace className="w-4 h-4" /> Ready to Scan
                   </div>
+                ) : faceDetected ? (
+                  // Face detected but distance/framing is off; mirror the in-scan
+                  // prompts so users self-correct before hitting Scan.
+                  <div className="px-4 py-2 rounded-full backdrop-blur-md bg-amber-500/20 border border-amber-500/50 flex items-center gap-2 text-amber-300 font-semibold text-sm shadow-lg">
+                    {frameQuality === 'too_far' && 'Move closer'}
+                    {frameQuality === 'too_close' && 'Move back'}
+                    {frameQuality === 'clipped' && 'Fit your whole face in the oval'}
+                  </div>
                 ) : (
                   <div className="px-4 py-2 rounded-full backdrop-blur-md bg-black/60 border border-white/10 text-gray-300 font-medium text-sm">
-                    Position your face in the frame
+                    Position your face in the oval
                   </div>
                 )}
               </div>
