@@ -186,6 +186,38 @@ export default function FaceScanner() {
     }
   }, [useUpload])
 
+  // Release the camera when this tab goes background and reacquire on
+  // return. Without this, two open picur.my tabs fight over the single
+  // camera device and only one shows a live feed. Browsers only allow
+  // ONE active getUserMedia consumer per camera; holding the stream in
+  // the hidden tab makes the visible tab fail with NotReadableError.
+  useEffect(() => {
+    if (useUpload) return
+    const handleVisibility = () => {
+      if (document.hidden) {
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach(t => t.stop())
+          streamRef.current = null
+          setStream(null)
+          setCameraReady(false)
+        }
+        if (detectionIntervalRef.current) {
+          clearInterval(detectionIntervalRef.current)
+          detectionIntervalRef.current = null
+        }
+      } else {
+        // Tab visible again — kick getUserMedia. If the other tab is still
+        // holding the camera the initializeCamera error handler will surface
+        // a "Camera in use" message.
+        if (!streamRef.current && videoRef.current) {
+          initializeCamera()
+        }
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => document.removeEventListener('visibilitychange', handleVisibility)
+  }, [useUpload])
+
   // Start face detection loop when camera and models are ready
   useEffect(() => {
     if (cameraReady && modelsLoaded && !useUpload && videoRef.current) {
@@ -364,12 +396,18 @@ export default function FaceScanner() {
       console.error('Camera error:', err)
       if (err.name === 'NotAllowedError') {
         setError('Camera access was denied. Please allow camera access in your browser settings (look for the camera icon in the address bar), then reload the page.')
+        setUseUpload(true)
       } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
         setError('No camera found on this device. You can use the Upload option instead.')
+        setUseUpload(true)
+      } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+        // Another tab/app is already using the camera. Don't auto-switch to
+        // Upload — the user can close the other tab and toggle back.
+        setError('Camera is in use by another tab or app. Close it and tap Camera again to retry.')
       } else {
         setError('Failed to access camera. Try using the Upload option instead.')
+        setUseUpload(true)
       }
-      setUseUpload(true)
     }
   }
 
@@ -757,7 +795,7 @@ export default function FaceScanner() {
 
           {!useUpload ? (
             <div className={`
-                relative rounded-xl overflow-hidden aspect-[3/4] sm:aspect-[4/3] md:aspect-video bg-black mb-4 border-4
+                relative rounded-xl overflow-hidden aspect-[4/5] sm:aspect-[4/3] md:aspect-video bg-black mb-4 border-4
                 transition-all duration-300
                 ${faceDetected && frameQuality === 'ok'
                   ? 'border-green-500 shadow-[0_0_60px_rgba(34,197,94,0.45),inset_0_0_40px_rgba(34,197,94,0.12)]'
