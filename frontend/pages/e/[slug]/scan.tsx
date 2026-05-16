@@ -832,9 +832,8 @@ export default function FaceScanner() {
                   />
                 )}
 
-              {/* Walkthrough step indicator — 4 pills at the top of the viewport.
-                  Highlights the logical stage (align / front / left / right) so
-                  the user always knows where they are in the flow. */}
+              {/* Walkthrough step indicator — compact dots + label at the top
+                  of the viewport. One small line, doesn't crowd the face. */}
               {scanning && !useUpload && (() => {
                 const stages: { key: string; label: string; matches: ScanStep[] }[] = [
                   { key: 'align',  label: 'Align', matches: ['align', 'aligned_ok'] },
@@ -843,34 +842,40 @@ export default function FaceScanner() {
                   { key: 'right',  label: 'Right', matches: ['prompt_right', 'capture_right', 'captured_right'] },
                 ]
                 const currentIndex = stages.findIndex(s => scanStep !== null && s.matches.includes(scanStep))
+                const current = stages[currentIndex]
                 return (
-                  <div className="absolute top-3 left-1/2 -translate-x-1/2 flex gap-1.5 pointer-events-none z-10">
-                    {stages.map((s, i) => {
-                      const done = currentIndex > i
-                      const active = currentIndex === i
-                      return (
-                        <div
-                          key={s.key}
-                          className={`px-2.5 py-1 rounded-full backdrop-blur-md text-[10px] font-bold uppercase tracking-wide transition-all ${
-                            done
-                              ? 'bg-green-500/30 border border-green-400/60 text-green-200'
-                              : active
-                                ? 'bg-blue-500/40 border border-blue-300/70 text-white shadow-[0_0_14px_rgba(59,130,246,0.55)]'
-                                : 'bg-black/40 border border-white/15 text-white/50'
-                          }`}
-                        >
-                          {done ? '✓ ' : `${i + 1}. `}{s.label}
-                        </div>
-                      )
-                    })}
+                  <div className="absolute top-2 left-1/2 -translate-x-1/2 flex items-center gap-2 pointer-events-none z-10">
+                    <div className="flex gap-1">
+                      {stages.map((s, i) => {
+                        const done = currentIndex > i
+                        const active = currentIndex === i
+                        return (
+                          <div
+                            key={s.key}
+                            className={`w-1.5 h-1.5 rounded-full transition-all ${
+                              done
+                                ? 'bg-green-400'
+                                : active
+                                  ? 'bg-blue-400 shadow-[0_0_6px_rgba(96,165,250,0.9)] w-3'
+                                  : 'bg-white/30'
+                            }`}
+                          />
+                        )
+                      })}
+                    </div>
+                    {current && (
+                      <span className="text-[10px] uppercase tracking-wider text-white/70 font-semibold drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">
+                        {currentIndex + 1}/{stages.length} · {current.label}
+                      </span>
+                    )}
                   </div>
                 )
               })()}
 
-              {/* Step-aware center overlay. Renders different visuals per
-                  walkthrough phase: instruction bubble during align/capture,
-                  giant green check during confirmation, animated arrow during
-                  prompt, spinner during matching. */}
+              {/* Step-aware overlays. Designed to stay OFF the face: instruction
+                  bubble pinned to the bottom strip, confirm check as a corner
+                  badge, arrow prompts anchored to the edges. Matching spinner
+                  is centered because the capture sequence is done by then. */}
               {scanning && scanStep && (() => {
                 const isConfirm =
                   scanStep === 'aligned_ok' ||
@@ -888,64 +893,70 @@ export default function FaceScanner() {
 
                 return (
                   <>
-                    {/* Subtle green wash over the whole viewport on confirm. */}
+                    {/* Very faint green wash on confirm — kept subtle so it
+                        reads as "saved" feedback, not a blocking flash. */}
                     {isConfirm && (
                       <div className="picur-confirm-flash absolute inset-0 pointer-events-none z-[5]" />
                     )}
 
-                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
-                      {isConfirm && (
-                        <div
-                          className="picur-check-pop flex flex-col items-center gap-2"
-                          // restart pop animation on each confirm step
-                          key={scanStep}
-                        >
-                          <div className="w-24 h-24 rounded-full bg-green-500/90 border-4 border-green-300/70 shadow-[0_0_40px_rgba(34,197,94,0.6)] flex items-center justify-center">
-                            <span className="text-white text-5xl font-black leading-none">✓</span>
-                          </div>
+                    {/* Corner check badge — small, top-right, doesn't cover face. */}
+                    {isConfirm && (
+                      <div className="absolute top-9 right-3 pointer-events-none z-10" key={scanStep}>
+                        <div className="picur-check-pop flex items-center gap-1.5 px-2 py-1 rounded-full bg-green-500/90 border border-green-300/70 shadow-[0_0_18px_rgba(34,197,94,0.55)]">
+                          <span className="text-white text-sm font-black leading-none">✓</span>
                           {scanPhase && (
-                            <div className="px-4 py-1.5 rounded-full bg-black/60 backdrop-blur-md border border-green-400/40 text-green-200 text-sm font-bold uppercase tracking-wider">
+                            <span className="text-white text-[11px] font-bold uppercase tracking-wider pr-1">
                               {scanPhase}
-                            </div>
+                            </span>
                           )}
                         </div>
-                      )}
+                      </div>
+                    )}
 
-                      {(isPromptLeft || isPromptRight) && (
-                        <div className="flex flex-col items-center gap-3" key={scanStep}>
-                          <div
-                            className={`text-7xl text-white drop-shadow-[0_0_18px_rgba(59,130,246,0.8)] leading-none ${
-                              isPromptLeft ? 'picur-arrow-left' : 'picur-arrow-right'
-                            }`}
-                          >
-                            {isPromptLeft ? '←' : '→'}
-                          </div>
-                          <div className="px-5 py-2 rounded-2xl bg-blue-600/85 backdrop-blur-md border border-blue-300/60 text-white font-bold text-lg shadow-lg">
-                            {scanPhase}
-                          </div>
+                    {/* Edge-anchored arrow prompt: arrow on the side the user
+                        is supposed to turn toward, instruction at the bottom.
+                        Leaves the center clear. */}
+                    {(isPromptLeft || isPromptRight) && (
+                      <>
+                        <div
+                          className={`absolute top-1/2 -translate-y-1/2 ${
+                            isPromptLeft ? 'left-2' : 'right-2'
+                          } text-4xl text-blue-300 drop-shadow-[0_0_10px_rgba(59,130,246,0.85)] leading-none pointer-events-none z-10 ${
+                            isPromptLeft ? 'picur-arrow-left' : 'picur-arrow-right'
+                          }`}
+                          key={scanStep}
+                        >
+                          {isPromptLeft ? '←' : '→'}
                         </div>
-                      )}
+                      </>
+                    )}
 
-                      {isMatching && (
-                        <div className="flex flex-col items-center gap-3">
-                          <Loader2 className="w-14 h-14 text-blue-400 animate-spin" />
-                          <div className="px-5 py-2 rounded-2xl bg-black/60 backdrop-blur-md border border-blue-400/40 text-white font-bold text-base">
+                    {/* Bottom instruction strip — single small bubble, away
+                        from the face. Used for align, capture_*, prompt_*. */}
+                    {(isInstruct || isPromptLeft || isPromptRight) && scanPhase && (
+                      <div className="absolute bottom-3 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full backdrop-blur-md bg-black/55 border border-white/15 text-white text-xs font-semibold shadow-lg pointer-events-none z-10 max-w-[85%] text-center">
+                        {scanPhase}
+                      </div>
+                    )}
+
+                    {/* Matching spinner — centered is fine, capture's done. */}
+                    {isMatching && (
+                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
+                        <div className="flex flex-col items-center gap-2">
+                          <Loader2 className="w-10 h-10 text-blue-400 animate-spin" />
+                          <div className="px-3 py-1.5 rounded-full bg-black/65 backdrop-blur-md border border-blue-400/30 text-white text-xs font-semibold">
                             {scanPhase || 'Finding your photos...'}
                           </div>
                         </div>
-                      )}
-
-                      {isInstruct && scanPhase && (
-                        <div className="px-6 py-3 rounded-2xl backdrop-blur-md border bg-blue-600/80 border-blue-400/50 text-white font-bold text-lg shadow-lg animate-pulse">
-                          {scanPhase}
-                        </div>
-                      )}
-                    </div>
+                      </div>
+                    )}
                   </>
                 )
               })()}
 
-              {/* Status indicator - Moved to be subtle and non-blocking */}
+              {/* Idle status indicator. Hidden during scanning so it doesn't
+                  collide with the walkthrough's bottom instruction strip. */}
+              {!scanning && (
               <div className="absolute bottom-4 left-0 w-full flex justify-center pointer-events-none">
                 {loadingModels ? (
                   <div className="px-4 py-2 rounded-full backdrop-blur-md bg-black/60 border border-white/10 flex items-center gap-2 text-yellow-500 font-semibold text-sm">
@@ -974,6 +985,7 @@ export default function FaceScanner() {
                   </div>
                 )}
               </div>
+              )}
             </div>
           ) : (
             <div className="border-2 border-dashed border-white/10 rounded-xl p-12 mb-6 text-center hover:border-white/20 transition-colors bg-white/5">
