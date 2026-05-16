@@ -179,9 +179,9 @@ class TestFaceIndexingWorker:
         """Faces CompreFace can register should not be dropped by a stricter prefilter.
 
         Detection probability picked just above the configured floor
-        (face_min_detection_probability=0.5) so the test exercises the
+        (face_min_detection_probability=0.4) so the test exercises the
         "usable face passes" path without being trivially well above the
-        threshold. If the floor ever moves up again, bump this value too.
+        threshold. If the floor ever moves, bump this value to match.
         """
         mock_detect = [{
             "box": {

@@ -45,15 +45,17 @@ class Settings(BaseSettings):
     # (to pre-filter faces returned by Detection) and as the floor for the
     # per-face skip in the indexer worker.
     #
-    # Bumped from 0.3 → 0.5 to drop weak detections (low-angle, partial
-    # face, hair-edge artifacts) that previously got registered as Face
-    # rows and surfaced as spurious matches. CompreFace's canonical
-    # confidence line is 0.5; below that, embeddings are noisy enough
-    # that even a strong cosine match is likely a false positive.
+    # 0.4 is the sweet spot for wedding/event photography:
+    # - 0.3 was too permissive (registered hair-edge / shoulder-fabric
+    #   "faces" that surfaced as spurious matches)
+    # - 0.5 was clean precision but DROPPED candid / side-angle / kid /
+    #   hair-blur faces — exactly the photos guests most want to find
+    #   of themselves at events
+    # - 0.4 keeps borderline-but-real faces indexed while still rejecting
+    #   the obvious false detections
     #
-    # If recall regresses noticeably on real event sets, dial back to
-    # 0.4 — that's the conservative middle ground before 0.3.
-    face_min_detection_probability: float = 0.5
+    # Tune empirically once scan_match_metrics has 1-2 events of data.
+    face_min_detection_probability: float = 0.4
     # Minimum bounding-box side (px) for a detected face to be registered.
     face_min_crop_pixels: int = 32
     # Fraction of the bbox width/height padded onto each crop before sending to
