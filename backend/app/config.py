@@ -41,9 +41,19 @@ class Settings(BaseSettings):
     # Indexed-face min_side (px) boundaries selecting which threshold applies.
     face_size_medium_px: int = 60
     face_size_large_px: int = 150
-    # Index broadly, then let CompreFace's add-face detection gate and the
-    # scan similarity threshold reject unusable or unrelated faces.
-    face_min_detection_probability: float = 0.3
+    # CompreFace face-detection confidence floor. Used both at index time
+    # (to pre-filter faces returned by Detection) and as the floor for the
+    # per-face skip in the indexer worker.
+    #
+    # Bumped from 0.3 → 0.5 to drop weak detections (low-angle, partial
+    # face, hair-edge artifacts) that previously got registered as Face
+    # rows and surfaced as spurious matches. CompreFace's canonical
+    # confidence line is 0.5; below that, embeddings are noisy enough
+    # that even a strong cosine match is likely a false positive.
+    #
+    # If recall regresses noticeably on real event sets, dial back to
+    # 0.4 — that's the conservative middle ground before 0.3.
+    face_min_detection_probability: float = 0.5
     # Minimum bounding-box side (px) for a detected face to be registered.
     face_min_crop_pixels: int = 32
     # Fraction of the bbox width/height padded onto each crop before sending to

@@ -176,14 +176,20 @@ class TestFaceIndexingWorker:
 
     @patch('app.workers.face_indexer_compreface._run_async')
     def test_index_photo_keeps_usable_group_photo_faces(self, mock_run_async, test_db):
-        """Faces CompreFace can register should not be dropped by a stricter prefilter."""
+        """Faces CompreFace can register should not be dropped by a stricter prefilter.
+
+        Detection probability picked just above the configured floor
+        (face_min_detection_probability=0.5) so the test exercises the
+        "usable face passes" path without being trivially well above the
+        threshold. If the floor ever moves up again, bump this value too.
+        """
         mock_detect = [{
             "box": {
                 "x_min": 50,
                 "y_min": 50,
                 "x_max": 130,
                 "y_max": 130,
-                "probability": 0.35,
+                "probability": 0.55,
             }
         }]
         mock_run_async.side_effect = [
@@ -238,7 +244,7 @@ class TestFaceIndexingWorker:
         assert image.face_count == 1
 
         face = test_db.query(Face).filter(Face.image_id == image.id).one()
-        assert face.quality_score == 0.35
+        assert face.quality_score == 0.55
 
         storage_service.delete_photo(event.id, image.id)
 

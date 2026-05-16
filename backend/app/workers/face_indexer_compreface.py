@@ -17,6 +17,7 @@ from app.config import settings, get_compreface_url
 from app.utils.thumbnail import generate_thumbnail
 from app.utils.image_safety import safe_open as safe_open_image
 from app.cache import cache_delete_pattern
+from app.face_quality import compute_face_quality_metrics
 
 
 class CompreFaceUpstreamError(Exception):
@@ -347,6 +348,28 @@ def index_photo_compreface(image_id: str, api_key: str, db_session: Optional[Ses
             crop_x2 = min(img.width, x_max + padding_x)
             crop_y2 = min(img.height, y_max + padding_y)
 
+            # Compute technical-quality metrics on the padded crop. These
+            # populate the migration columns the scan-side scorer reads to
+            # decide whether to raise / lower the cosine-similarity threshold
+            # for this indexed face. Costs ~one extra 64x64 grayscale pass
+            # plus a crop, so well under 1ms per face.
+            try:
+                quality_metrics = compute_face_quality_metrics(
+                    img,
+                    [x_min, y_min, x_max, y_max],
+                    [crop_x1, crop_y1, crop_x2, crop_y2],
+                )
+            except Exception as exc:
+                # Quality metrics are an accuracy nice-to-have, not a hard
+                # requirement — if the helper raises on a weird image, the
+                # face still gets indexed without them and the scorer falls
+                # back to detection-probability-only thresholds.
+                logger.warning(
+                    f"compute_face_quality_metrics failed for face {idx} "
+                    f"in image {image_id}: {exc}"
+                )
+                quality_metrics = None
+
             # Crop face
             face_img = img.crop((crop_x1, crop_y1, crop_x2, crop_y2))
 
@@ -425,6 +448,10 @@ def index_photo_compreface(image_id: str, api_key: str, db_session: Optional[Ses
                     quality_score=probability,
                     compreface_subject_id=subject_id,  # Store CompreFace reference
                     gender=gender_value,
+                    face_min_side_px=quality_metrics.face_min_side_px if quality_metrics else None,
+                    blur_score=quality_metrics.blur_score if quality_metrics else None,
+                    brightness_score=quality_metrics.brightness_score if quality_metrics else None,
+                    crop_clipped=quality_metrics.crop_clipped if quality_metrics else False,
                 )
                 db.add(face)
                 face_count += 1
