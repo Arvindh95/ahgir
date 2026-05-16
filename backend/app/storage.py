@@ -25,7 +25,10 @@ def _url_signing_key() -> bytes:
     ).digest()
 
 
-_VALID_PHOTO_TYPES = {"original", "thumb", "cover", "abuse_review"}
+_VALID_PHOTO_TYPES = {
+    "original", "thumb", "cover", "abuse_review",
+    "owner_thumb", "owner_original",
+}
 
 
 def _build_signature_payload(event_id: str, image_id: str, photo_type: str, expires: int) -> bytes:
@@ -229,6 +232,13 @@ class StorageService:
             # No separate MinIO object — abuse_review is a different SIGNED
             # URL path that grants temporary review access to the underlying
             # original bytes. Operator-only via /admin/abuse-reports/.../reveal.
+            object_path = f"events/{event_id}/original/{image_id}.jpg"
+        elif photo_type == "owner_thumb":
+            # Owner-context signed URL — resolves to the same thumb object
+            # as 'thumb' but bypasses the indexed/no_faces status gate at
+            # the route layer (see photos.py). No separate MinIO object.
+            object_path = f"events/{event_id}/thumb/{image_id}.jpg"
+        elif photo_type == "owner_original":
             object_path = f"events/{event_id}/original/{image_id}.jpg"
         else:
             object_path = f"events/{event_id}/{photo_type}/{image_id}.jpg"

@@ -145,6 +145,62 @@ def test_signed_url_serves_when_image_no_faces(client, db_session: Session):
     assert r.status_code == 200
 
 
+def test_owner_thumb_serves_pending_image(client, db_session: Session):
+    """owner_thumb URLs are minted by the authenticated owner photo list
+    so the photographer sees their just-uploaded photos before the
+    worker has flipped status to 'indexed'. The bytes are written
+    synchronously on upload; only face indexing is async. Pre-fix the
+    owner saw a broken-image icon for the seconds-to-minutes the photo
+    sat in the worker queue.
+    """
+    event, image = _seed(db_session, event_status="active", image_status="pending")
+
+    path = _signed_path(event.id, image.id, "owner_thumb")
+    with patch.object(storage_service, "get_photo", return_value=b"fake-jpeg-bytes"):
+        r = client.get(path)
+    assert r.status_code == 200
+    assert r.content == b"fake-jpeg-bytes"
+
+
+def test_owner_original_serves_failed_image(client, db_session: Session):
+    """Failed-indexing photos still have valid bytes in MinIO — the
+    failure is in face indexing, not in the file itself. The owner
+    must be able to view + download to decide whether to retry or
+    delete."""
+    event, image = _seed(db_session, event_status="active", image_status="failed")
+
+    path = _signed_path(event.id, image.id, "owner_original")
+    with patch.object(storage_service, "get_photo", return_value=b"fake-jpeg-bytes"):
+        r = client.get(path)
+    assert r.status_code == 200
+
+
+def test_owner_thumb_serves_frozen_event(client, db_session: Session):
+    """Owner-context URLs must continue to work after the event freezes
+    (paid plan expired / manual freeze) so the photographer can still
+    download or export photos. Only guest-facing thumb/original URLs
+    are blocked when the event is non-active."""
+    event, image = _seed(db_session, event_status="frozen", image_status="indexed")
+
+    path = _signed_path(event.id, image.id, "owner_thumb")
+    with patch.object(storage_service, "get_photo", return_value=b"fake-jpeg-bytes"):
+        r = client.get(path)
+    assert r.status_code == 200
+
+
+def test_owner_thumb_still_404s_when_image_deleted(client, db_session: Session):
+    """Even with the relaxed status gate, owner_* must still 404 when
+    the underlying image row is gone — otherwise a stale signed URL
+    would keep serving bytes after deletion."""
+    event, image = _seed(db_session, event_status="active", image_status="indexed")
+    path = _signed_path(event.id, image.id, "owner_thumb")
+    db_session.delete(image)
+    db_session.commit()
+    with patch.object(storage_service, "get_photo", return_value=b"fake-jpeg-bytes"):
+        r = client.get(path)
+    assert r.status_code == 404
+
+
 def test_signed_url_serves_cover_with_event_id_sentinel(client, db_session: Session):
     """Covers are event-scoped (one per event); generate_signed_cover_url
     encodes the event_id in BOTH the event_id and image_id positions of

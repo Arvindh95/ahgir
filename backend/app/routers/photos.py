@@ -68,7 +68,10 @@ async def get_photo_signed(
     event = db.query(Event).filter(Event.id == event_uuid).first()
     if not event:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
-    if photo_type != "abuse_review" and event.status != 'active':
+    if (
+        photo_type not in ("abuse_review", "owner_thumb", "owner_original")
+        and event.status != 'active'
+    ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
 
     # Covers are event-scoped (one per event) and use event_id as a
@@ -77,7 +80,27 @@ async def get_photo_signed(
     # status lookup for cover requests. The event-active check above
     # is sufficient gating: as soon as the event is frozen / expired,
     # the cover stops serving too.
-    if photo_type not in ("cover", "abuse_review"):
+    if photo_type in ("owner_thumb", "owner_original"):
+        # Owner-context carve-out. The owner photo-list endpoint mints
+        # these URLs for the photographer viewing their own event. They
+        # bypass BOTH the event-status gate (so owners can still view
+        # photos in frozen events for download/management) AND the
+        # image-status gate (so pending uploads and failed-indexing
+        # photos render immediately — the bytes are uploaded
+        # synchronously during /photos POST, only face indexing is
+        # async). Only authenticated owner endpoints can mint these
+        # URLs, since the HMAC signature is server-side; a guest can
+        # not forge an owner_* URL even if they discover the path.
+        # 'quarantined' photos are still served here — operator
+        # takedown deletes the image row entirely, so a quarantined-
+        # but-still-existing image means the operator is in the
+        # process of reviewing and the owner has not yet been notified.
+        image = db.query(Image.id).filter(
+            Image.id == image_uuid, Image.event_id == event_uuid,
+        ).first()
+        if not image:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
+    elif photo_type not in ("cover", "abuse_review"):
         image = (
             db.query(Image.id)
             .filter(

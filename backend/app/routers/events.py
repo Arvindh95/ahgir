@@ -1345,11 +1345,17 @@ async def list_photos(
             thumbnail_url = None
             download_url = None
         else:
+            # Owner-context URLs bypass the indexed/no_faces gate on the
+            # /photos signed route so the photographer sees thumbnails for
+            # pending uploads (worker hasn't indexed yet) and failed-
+            # indexing photos. Only this authenticated endpoint can mint
+            # owner_* signatures; guests still get plain 'thumb' URLs via
+            # guest endpoints which keep the strict status gate.
             thumbnail_url = storage_service.generate_url(
-                event_id=event_uuid, image_id=image.id, photo_type='thumb'
+                event_id=event_uuid, image_id=image.id, photo_type='owner_thumb'
             )
             download_url = storage_service.generate_url(
-                event_id=event_uuid, image_id=image.id, photo_type='original'
+                event_id=event_uuid, image_id=image.id, photo_type='owner_original'
             )
 
         photo_list.append(PhotoListItem(
