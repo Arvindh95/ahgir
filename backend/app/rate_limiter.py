@@ -82,20 +82,38 @@ class RateLimiter:
         self,
         redis_client: redis.Redis,
         limit: int = None,
-        window_hours: int = None
+        window_hours: float = None,
+        window_minutes: float = None,
     ):
         """
         Initialize rate limiter.
-        
+
         Args:
             redis_client: Redis client instance
-            limit: Maximum number of scans allowed per window (default from settings)
-            window_hours: Time window in hours (default from settings)
+            limit: Maximum number of actions allowed per window (default from settings)
+            window_hours: Time window in hours. Mutually exclusive with window_minutes.
+            window_minutes: Time window in minutes. Takes precedence over window_hours
+                when both are provided. Use for sub-hour windows (e.g. 15 min).
         """
         self.redis = redis_client
-        self.limit = limit or settings.scan_rate_limit
-        self.window_hours = window_hours or settings.scan_rate_window_hours
-        self.window_seconds = self.window_hours * 3600
+        # Treat `None` as "use the configured default", but reject 0 / negative
+        # explicitly. The previous `limit or settings.scan_rate_limit` silently
+        # turned `limit=0` into the default, and `window_*=0` would disable the
+        # limiter entirely (sliding-window prune drops everything pre-check).
+        self.limit = settings.scan_rate_limit if limit is None else limit
+        if self.limit <= 0:
+            raise ValueError(f"Rate-limit `limit` must be > 0 (got {limit!r})")
+        if window_minutes is not None:
+            if window_minutes <= 0:
+                raise ValueError(f"`window_minutes` must be > 0 (got {window_minutes!r})")
+            self.window_hours = window_minutes / 60
+        elif window_hours is not None:
+            if window_hours <= 0:
+                raise ValueError(f"`window_hours` must be > 0 (got {window_hours!r})")
+            self.window_hours = window_hours
+        else:
+            self.window_hours = settings.scan_rate_window_hours
+        self.window_seconds = int(self.window_hours * 3600)
     
     def _get_key(self, session_id: str, action: str = "scan") -> str:
         """Generate Redis key for session and action."""
@@ -166,9 +184,16 @@ class RateLimiter:
         allowed, retry_after = self.check_rate_limit(session_id, action)
         
         if not allowed:
+            # Sub-hour windows: report the window in minutes for clarity.
+            # Otherwise the message reads e.g. "per 0.25 hour(s)" which is
+            # less useful to a guest staring at the 429 toast.
+            if self.window_hours < 1:
+                window_desc = f"{int(round(self.window_hours * 60))} minute(s)"
+            else:
+                window_desc = f"{self.window_hours} hour(s)"
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=f"Rate limit exceeded. Maximum {self.limit} {action}s per {self.window_hours} hour(s).",
+                detail=f"Rate limit exceeded. Maximum {self.limit} {action}s per {window_desc}.",
                 headers={"Retry-After": str(retry_after)}
             )
     
@@ -211,7 +236,11 @@ rate_limiter = RateLimiter(redis_client)
 # per-session limiter, but a separate instance so test infrastructure can
 # lift its ceiling without affecting the per-session budget that the
 # rate-limit tests deliberately exercise.
-scan_ip_rate_limiter = RateLimiter(redis_client)
+scan_ip_rate_limiter = RateLimiter(
+    redis_client,
+    limit=settings.scan_ip_rate_limit,
+    window_minutes=settings.scan_ip_rate_window_minutes,
+)
 # Same pattern for the per-event+IP download (zip bulk) budget. Without
 # this, a guest could mint a fresh session via re-auth and reset the
 # per-session download counter to bypass the throttle.

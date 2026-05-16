@@ -101,8 +101,19 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000"  # Comma-separated; set to "https://picur.my" in production
 
     # Rate Limiting
-    scan_rate_limit: int = 30
+    # Per-session scan budget. 60/hour gives legitimate guests headroom to
+    # retry without hitting the wall, while still bounding a single hijacked
+    # token's damage.
+    scan_rate_limit: int = 60
     scan_rate_window_hours: int = 1
+    # Per (event, IP) scan budget. Sized for venue-WiFi events where 500+
+    # guests share one outbound IP. 10000 per 15 min ≈ 40000/hr — covers
+    # legitimate end-of-event burst scanning and still catches sustained
+    # re-auth amplification abuse. Bump SCAN_IP_RATE_LIMIT in env for mega
+    # (5000+) events; window stays 15 min for fast recovery from natural
+    # bursts.
+    scan_ip_rate_limit: int = 10000
+    scan_ip_rate_window_minutes: int = 15
     auth_rate_limit: int = 30
     auth_rate_window_hours: int = 1
     # Two-tier passcode brute-force defence:
