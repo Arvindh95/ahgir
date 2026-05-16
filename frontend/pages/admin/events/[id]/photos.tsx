@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/router'
 import Head from 'next/head'
 import ProtectedRoute from '@/components/ProtectedRoute'
@@ -30,6 +30,8 @@ export default function EventPhotosPage() {
   const [isBulkDeleting, setIsBulkDeleting] = useState(false)
   const [isDownloading, setIsDownloading] = useState(false)
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
+  const [lightboxLoaded, setLightboxLoaded] = useState(false)
+  const touchStartXRef = useRef<number | null>(null)
 
   useEffect(() => {
     if (id && typeof id === 'string') {
@@ -151,6 +153,27 @@ export default function EventPhotosPage() {
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
   }, [lightboxIndex, photos.length])
+
+  // Reset image-loaded flag whenever the active photo changes so the spinner
+  // overlay reappears until the new image decodes.
+  useEffect(() => {
+    setLightboxLoaded(false)
+  }, [lightboxIndex])
+
+  // Preload adjacent photos into the browser HTTP cache so swiping/clicking
+  // through the gallery feels instant. Signed URLs are cache-friendly: same
+  // URL + signature for the life of the page.
+  useEffect(() => {
+    if (lightboxIndex === null) return
+    const preload = (url?: string | null) => {
+      if (!url) return
+      const img = new window.Image()
+      img.src = url
+    }
+    preload(photos[lightboxIndex + 1]?.download_url)
+    preload(photos[lightboxIndex - 1]?.download_url)
+    preload(photos[lightboxIndex + 2]?.download_url)
+  }, [lightboxIndex, photos])
 
   const handleSingleDownload = (photo: Photo) => {
     if (!photo.download_url) {
@@ -422,70 +445,99 @@ export default function EventPhotosPage() {
         {/* Lightbox */}
         {lightboxIndex !== null && photos[lightboxIndex] && (
           <div
-            className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center"
-            onClick={() => setLightboxIndex(null)}
+            className="fixed inset-0 z-50 bg-black/95 backdrop-blur-sm flex flex-col"
+            onTouchStart={(e) => { touchStartXRef.current = e.touches[0].clientX }}
+            onTouchEnd={(e) => {
+              if (touchStartXRef.current === null) return
+              const delta = e.changedTouches[0].clientX - touchStartXRef.current
+              touchStartXRef.current = null
+              if (delta > 50 && lightboxIndex > 0) setLightboxIndex(lightboxIndex - 1)
+              else if (delta < -50 && lightboxIndex < photos.length - 1) setLightboxIndex(lightboxIndex + 1)
+            }}
           >
             {/* Top bar */}
-            <div className="absolute top-0 left-0 right-0 flex items-center justify-between p-4 z-10">
-              <span className="text-white/70 text-sm truncate max-w-[60%]">
+            <div className="flex items-center justify-between px-3 py-2 sm:px-4 sm:py-3 bg-black/40 backdrop-blur-md border-b border-white/10 z-10">
+              <span className="text-white/70 text-xs sm:text-sm truncate max-w-[55%]">
                 {photos[lightboxIndex].filename}
               </span>
               <div className="flex items-center gap-2">
+                <span className="text-white/40 text-xs sm:text-sm hidden sm:inline">
+                  {lightboxIndex + 1} / {photos.length}
+                </span>
                 <button
                   onClick={(e) => { e.stopPropagation(); handleSingleDownload(photos[lightboxIndex]) }}
                   className="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors"
                   title="Download"
+                  aria-label="Download"
                 >
-                  <Download className="w-5 h-5" />
+                  <Download className="w-4 h-4 sm:w-5 sm:h-5" />
                 </button>
                 <button
                   onClick={() => setLightboxIndex(null)}
                   className="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors"
                   title="Close"
+                  aria-label="Close"
                 >
-                  <X className="w-5 h-5" />
+                  <X className="w-4 h-4 sm:w-5 sm:h-5" />
                 </button>
               </div>
             </div>
 
-            {/* Previous button */}
-            {lightboxIndex > 0 && (
-              <button
-                className="absolute left-4 top-1/2 -translate-y-1/2 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors z-10"
-                onClick={(e) => { e.stopPropagation(); setLightboxIndex(lightboxIndex - 1) }}
-              >
-                <ChevronLeft className="w-6 h-6" />
-              </button>
-            )}
-
-            {/* Next button */}
-            {lightboxIndex < photos.length - 1 && (
-              <button
-                className="absolute right-4 top-1/2 -translate-y-1/2 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors z-10"
-                onClick={(e) => { e.stopPropagation(); setLightboxIndex(lightboxIndex + 1) }}
-              >
-                <ChevronRight className="w-6 h-6" />
-              </button>
-            )}
-
-            {/* Image */}
+            {/* Image area — flex-1 so the photo gets every remaining pixel.
+                Click background (NOT the image) to close. */}
             <div
-              className="max-w-[90vw] max-h-[85vh] relative"
-              onClick={(e) => e.stopPropagation()}
+              className="relative flex-1 min-h-0 w-full"
+              onClick={() => setLightboxIndex(null)}
             >
-              {/* Lightbox guard: in operator-view, download_url is null and
-                  we shouldn't render a broken <img>. The lightbox should
-                  not be openable in that view at all, but defend in depth. */}
-              <img
-                src={photos[lightboxIndex].download_url || ''}
-                alt={photos[lightboxIndex].filename}
-                className="max-w-full max-h-[85vh] object-contain rounded-lg"
-              />
-            </div>
+              {photos[lightboxIndex].download_url ? (
+                <>
+                  <img
+                    src={photos[lightboxIndex].download_url || ''}
+                    alt={photos[lightboxIndex].filename}
+                    onLoad={() => setLightboxLoaded(true)}
+                    onError={() => setLightboxLoaded(true)}
+                    onClick={(e) => e.stopPropagation()}
+                    className={`absolute inset-0 m-auto max-w-full max-h-full object-contain transition-opacity duration-200 ${lightboxLoaded ? 'opacity-100' : 'opacity-0'}`}
+                    key={photos[lightboxIndex].image_id}
+                  />
+                  {!lightboxLoaded && (
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                      <Loader2 className="w-10 h-10 text-white/60 animate-spin" />
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="absolute inset-0 flex items-center justify-center text-white/50 text-sm">
+                  Preview not available in operator view.
+                </div>
+              )}
 
-            {/* Counter */}
-            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-white/50 text-sm">
-              {lightboxIndex + 1} / {photos.length}
+              {/* Previous button */}
+              {lightboxIndex > 0 && (
+                <button
+                  className="absolute left-2 sm:left-4 top-1/2 -translate-y-1/2 p-2 sm:p-3 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors z-10 hidden sm:flex"
+                  onClick={(e) => { e.stopPropagation(); setLightboxIndex(lightboxIndex - 1) }}
+                  aria-label="Previous"
+                >
+                  <ChevronLeft className="w-5 h-5 sm:w-6 sm:h-6" />
+                </button>
+              )}
+
+              {/* Next button */}
+              {lightboxIndex < photos.length - 1 && (
+                <button
+                  className="absolute right-2 sm:right-4 top-1/2 -translate-y-1/2 p-2 sm:p-3 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors z-10 hidden sm:flex"
+                  onClick={(e) => { e.stopPropagation(); setLightboxIndex(lightboxIndex + 1) }}
+                  aria-label="Next"
+                >
+                  <ChevronRight className="w-5 h-5 sm:w-6 sm:h-6" />
+                </button>
+              )}
+
+              {/* Mobile counter (top bar hides it on small screens) */}
+              <div className="absolute bottom-3 left-1/2 -translate-x-1/2 text-white/60 text-xs sm:hidden bg-black/40 px-2 py-0.5 rounded-full pointer-events-none">
+                {lightboxIndex + 1} / {photos.length}
+              </div>
             </div>
           </div>
         )}
