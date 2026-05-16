@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import EventTokenPayload, get_event_from_token
 from app.database import get_db
-from app.models import Event, Face, Image
+from app.models import Event, Face, Image, ScanMatchMetric
 from app.rate_limiter import rate_limiter, scan_ip_rate_limiter
 from app.config import settings
 from app.routers import guest as _guest_legacy
@@ -41,6 +41,7 @@ from app.face_match_scoring import (
     CandidateMatch,
     MatchScoringConfig,
     aggregate_face_matches,
+    score_candidates_diagnostic,
 )
 
 logger = logging.getLogger(__name__)
@@ -101,6 +102,66 @@ def _decode_and_sanitize_frames(scan_request: FaceScanRequest) -> list[bytes]:
 
     logger.info("Received %s scan frames, %s bytes (sanitized)", len(all_frames), running_total)
     return all_frames
+
+
+def _record_scan_telemetry(
+    db: Session,
+    *,
+    scan_uuid: uuid.UUID,
+    session_id: uuid.UUID,
+    event_id: uuid.UUID,
+    candidates: list[CandidateMatch],
+    faces_by_subject: dict[str, Face],
+    config: MatchScoringConfig,
+) -> None:
+    """Bulk-insert one scan_match_metrics row per candidate image.
+
+    Captures both passing matches and filtered-out near-misses so post-
+    event analytics can answer "would lowering the threshold to 0.85
+    have surfaced more legitimate photos?" without rerunning anything.
+
+    Wrapped in try/except — telemetry must never fail the scan.
+    """
+    try:
+        diagnostics = score_candidates_diagnostic(candidates, faces_by_subject, config)
+        rows: list[ScanMatchMetric] = []
+        for d in diagnostics:
+            try:
+                image_uuid = uuid.UUID(d.image_id)
+            except (ValueError, AttributeError):
+                continue
+            cluster_uuid: Optional[uuid.UUID] = None
+            if d.cluster_id:
+                try:
+                    cluster_uuid = uuid.UUID(d.cluster_id)
+                except ValueError:
+                    cluster_uuid = None
+            rows.append(ScanMatchMetric(
+                scan_id=scan_uuid,
+                session_id=session_id,
+                event_id=event_id,
+                image_id=image_uuid,
+                raw_similarity=d.raw_similarity,
+                scored_similarity=d.scored_similarity,
+                score_gap=d.score_gap,
+                frame_count=d.frame_count,
+                threshold_used=d.threshold_used,
+                passed=d.passed,
+                blur_score=d.blur_score,
+                brightness_score=d.brightness_score,
+                face_min_side_px=d.face_min_side_px,
+                quality_score=d.quality_score,
+                cluster_id=cluster_uuid,
+            ))
+        if rows:
+            db.bulk_save_objects(rows)
+            db.commit()
+    except Exception as exc:
+        logger.warning("scan telemetry insert failed (scan_id=%s): %s", scan_uuid, exc)
+        try:
+            db.rollback()
+        except Exception:
+            pass
 
 
 def _fetch_face_rows(db: Session, subject_ids: list[str]) -> dict[str, Face]:
@@ -185,12 +246,31 @@ async def _scan_with_enhanced_scoring(
                     frame_index=frame_index,
                 ))
 
+    # Single scan_id reused across (a) the FaceScanResponse the guest sees
+    # and (b) every scan_match_metrics row written below — lets analytics
+    # join the metrics back to a single guest scan session later.
+    scan_uuid = uuid.uuid4()
+
     if not candidates:
         _log_scan_outcome(db, event_id, session_id, outcome="no_matches", frame_count=len(all_frames))
-        return FaceScanResponse(matches=[], scan_id=str(uuid.uuid4()), total_matches=0)
+        return FaceScanResponse(matches=[], scan_id=str(scan_uuid), total_matches=0)
 
+    scoring_config = _scoring_config()
     faces_by_subject = _fetch_face_rows(db, list({c.subject_id for c in candidates}))
-    scored = aggregate_face_matches(candidates, faces_by_subject, _scoring_config())
+    scored = aggregate_face_matches(candidates, faces_by_subject, scoring_config)
+
+    # Telemetry — log every candidate (passing and filtered) so the team
+    # can tune thresholds / bonuses from real data. Best effort: a failure
+    # here must never fail the scan.
+    _record_scan_telemetry(
+        db,
+        scan_uuid=scan_uuid,
+        session_id=session_id,
+        event_id=event_id,
+        candidates=candidates,
+        faces_by_subject=faces_by_subject,
+        config=scoring_config,
+    )
 
     if not scored:
         _log_scan_outcome(
@@ -201,7 +281,7 @@ async def _scan_with_enhanced_scoring(
             frame_count=len(all_frames),
             detail=f"{len(candidates)} candidate(s) all filtered by enhanced scoring",
         )
-        return FaceScanResponse(matches=[], scan_id=str(uuid.uuid4()), total_matches=0)
+        return FaceScanResponse(matches=[], scan_id=str(scan_uuid), total_matches=0)
 
     image_ids = [uuid.UUID(match.image_id) for match in scored]
     visible_image_ids = {
@@ -249,7 +329,7 @@ async def _scan_with_enhanced_scoring(
 
     return FaceScanResponse(
         matches=face_matches,
-        scan_id=str(uuid.uuid4()),
+        scan_id=str(scan_uuid),
         total_matches=len(face_matches),
     )
 

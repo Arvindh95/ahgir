@@ -1,4 +1,10 @@
-from app.face_match_scoring import CandidateMatch, MatchScoringConfig, aggregate_face_matches, required_threshold
+from app.face_match_scoring import (
+    CandidateMatch,
+    MatchScoringConfig,
+    aggregate_face_matches,
+    required_threshold,
+    score_candidates_diagnostic,
+)
 
 
 class FaceRow:
@@ -87,3 +93,31 @@ def test_cluster_evidence_boosts_related_images():
     scored = aggregate_face_matches(candidates, rows, config)
     assert scored[0].cluster_id == "cluster-1"
     assert scored[0].similarity > 0.89
+
+
+def test_score_candidates_diagnostic_includes_filtered():
+    """Telemetry helper must return BOTH passing and filtered candidates
+    so tuning analytics can see near-misses, not just successful matches."""
+    config = MatchScoringConfig(
+        large_threshold=0.87,
+        medium_threshold=0.90,
+        small_threshold=0.93,
+    )
+    rows = {
+        "s/a/0": FaceRow([0, 0, 200, 200]),  # large face → 0.87 threshold
+        "s/b/0": FaceRow([0, 0, 40, 40]),    # small face → 0.93 threshold
+    }
+    candidates = [
+        CandidateMatch("s/a/0", "a", 0.91, 0),   # passes 0.87
+        CandidateMatch("s/b/0", "b", 0.85, 0),   # fails 0.93 — filtered
+    ]
+    diagnostics = score_candidates_diagnostic(candidates, rows, config)
+    by_image = {d.image_id: d for d in diagnostics}
+    assert set(by_image.keys()) == {"a", "b"}
+    assert by_image["a"].passed is True
+    assert by_image["a"].threshold_used == 0.87
+    assert by_image["b"].passed is False
+    assert by_image["b"].threshold_used == 0.93
+    assert by_image["b"].raw_similarity == 0.85
+    # Filtered candidates surface scored_similarity = raw, no bonuses applied.
+    assert by_image["b"].scored_similarity == 0.85

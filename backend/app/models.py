@@ -155,6 +155,50 @@ Index(
     postgresql_where=Face.compreface_subject_id.isnot(None),
 )
 
+
+class ScanMatchMetric(Base):
+    """One row per (scan, candidate photo) pair — telemetry only.
+
+    Captured at the end of /scan after enhanced scoring runs. Both
+    matches that PASSED the threshold (and were returned to the guest)
+    AND candidates that were FILTERED are logged, so post-event
+    analytics can answer questions like "would lowering the floor
+    to 0.85 have surfaced more legitimate photos?". Writing is
+    best-effort: a failure here never breaks the scan endpoint.
+    """
+    __tablename__ = "scan_match_metrics"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # Unique per /scan call. Links a guest's whole scan session back to
+    # the set of candidate photos that came out of CompreFace.
+    scan_id = Column(UUID(as_uuid=True), nullable=False)
+    session_id = Column(UUID(as_uuid=True), nullable=False)
+    event_id = Column(UUID(as_uuid=True), ForeignKey("events.id", ondelete="CASCADE"), nullable=False, index=True)
+    image_id = Column(UUID(as_uuid=True), ForeignKey("images.id", ondelete="CASCADE"), nullable=False)
+    # Raw CompreFace max-of-frames similarity, before any bonus/penalty.
+    raw_similarity = Column(Float, nullable=False)
+    # After multi_frame_bonus + consistency_bonus + cluster_bonus,
+    # minus ambiguous_gap penalty if applied.
+    scored_similarity = Column(Float, nullable=False)
+    # Difference between this match's scored_similarity and the next
+    # match's scored_similarity. NULL on the last ranked candidate.
+    score_gap = Column(Float, nullable=True)
+    frame_count = Column(Integer, nullable=False)
+    # The face-size-bucket threshold this match was compared against
+    # (large/medium/small × quality-adjustment). Lets us bucket later.
+    threshold_used = Column(Float, nullable=False)
+    # True if this match was returned to the guest, False if filtered.
+    passed = Column(Boolean, nullable=False)
+    # Snapshot of the indexed face's quality fields at the time of the
+    # match. NULL for pre-Gap-#1 indexed photos.
+    blur_score = Column(Float, nullable=True)
+    brightness_score = Column(Float, nullable=True)
+    face_min_side_px = Column(Float, nullable=True)
+    quality_score = Column(Float, nullable=True)
+    cluster_id = Column(UUID(as_uuid=True), nullable=True)
+    created_at = Column(TIMESTAMP, server_default=func.now(), nullable=False)
+
+
 class GuestSession(Base):
     __tablename__ = "guest_sessions"
     
