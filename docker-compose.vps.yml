@@ -53,14 +53,161 @@ services:
       ENVIRONMENT: production
     ports: !override
       - "127.0.0.1:8005:8000"
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4 --proxy-headers --forwarded-allow-ips=172.18.0.1,127.0.0.1
+    # Bumped --workers 4 → 8 to lift the sustained scan rate from
+    # ~6 → ~12 scans/sec. Each worker is ~200MB, so 8 × 200MB = 1.6GB —
+    # well within the VPS RAM budget. Tune lower if memory pressure
+    # ever rises.
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 8 --proxy-headers --forwarded-allow-ips=172.18.0.1,127.0.0.1
     restart: unless-stopped
 
+  # Four parallel RQ workers. Without this a 1000-photo upload takes
+  # ~3.3h to index on one worker; 4 workers cuts that to ~50min. They
+  # all subscribe to the same Redis queues (face_indexing / retention
+  # / default), so RQ load-balances jobs across them automatically.
+  #
+  # The codebase prefers explicit per-instance services over
+  # `deploy: replicas:` (which only works in swarm mode) — same
+  # pattern as `frontend-2`.
   worker:
     volumes: !reset []
     environment:
       ENVIRONMENT: production
       PYTHONPATH: /app
+    command: >
+      /bin/sh -c "python scripts/preflight.py &&
+      rq worker --url redis://redis:6379/0 face_indexing retention default"
+    restart: unless-stopped
+
+  worker-2:
+    image: ahgir-worker
+    container_name: picur-worker-2
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-picur}:${POSTGRES_PASSWORD:-picur_dev_only}@postgres:5432/${POSTGRES_DB:-picur}
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin_dev_only}
+      MINIO_KMS_SECRET_KEY: ${MINIO_KMS_SECRET_KEY:-}
+      REDIS_URL: redis://redis:6379/0
+      COMPREFACE_API_URL: http://compreface-api:8080
+      COMPREFACE_API_KEY: ${COMPREFACE_API_KEY:-}
+      COMPREFACE_DETECTION_API_KEY: ${COMPREFACE_DETECTION_API_KEY:-}
+      COMPREFACE_DB_PASSWORD: ${COMPREFACE_DB_PASSWORD:-postgres}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-only-not-for-prod}
+      ENVIRONMENT: production
+      PYTHONPATH: /app
+      SMTP_HOST: ${SMTP_HOST:-smtp-relay.brevo.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      CLOUDFLARE_TURNSTILE_SECRET_KEY: ${CLOUDFLARE_TURNSTILE_SECRET_KEY:-}
+      NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      compreface-api:
+        condition: service_started
+    security_opt:
+      - seccomp:unconfined
+    command: >
+      /bin/sh -c "python scripts/preflight.py &&
+      rq worker --url redis://redis:6379/0 face_indexing retention default"
+    restart: unless-stopped
+
+  worker-3:
+    image: ahgir-worker
+    container_name: picur-worker-3
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-picur}:${POSTGRES_PASSWORD:-picur_dev_only}@postgres:5432/${POSTGRES_DB:-picur}
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin_dev_only}
+      MINIO_KMS_SECRET_KEY: ${MINIO_KMS_SECRET_KEY:-}
+      REDIS_URL: redis://redis:6379/0
+      COMPREFACE_API_URL: http://compreface-api:8080
+      COMPREFACE_API_KEY: ${COMPREFACE_API_KEY:-}
+      COMPREFACE_DETECTION_API_KEY: ${COMPREFACE_DETECTION_API_KEY:-}
+      COMPREFACE_DB_PASSWORD: ${COMPREFACE_DB_PASSWORD:-postgres}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-only-not-for-prod}
+      ENVIRONMENT: production
+      PYTHONPATH: /app
+      SMTP_HOST: ${SMTP_HOST:-smtp-relay.brevo.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      CLOUDFLARE_TURNSTILE_SECRET_KEY: ${CLOUDFLARE_TURNSTILE_SECRET_KEY:-}
+      NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      compreface-api:
+        condition: service_started
+    security_opt:
+      - seccomp:unconfined
+    command: >
+      /bin/sh -c "python scripts/preflight.py &&
+      rq worker --url redis://redis:6379/0 face_indexing retention default"
+    restart: unless-stopped
+
+  worker-4:
+    image: ahgir-worker
+    container_name: picur-worker-4
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-picur}:${POSTGRES_PASSWORD:-picur_dev_only}@postgres:5432/${POSTGRES_DB:-picur}
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin_dev_only}
+      MINIO_KMS_SECRET_KEY: ${MINIO_KMS_SECRET_KEY:-}
+      REDIS_URL: redis://redis:6379/0
+      COMPREFACE_API_URL: http://compreface-api:8080
+      COMPREFACE_API_KEY: ${COMPREFACE_API_KEY:-}
+      COMPREFACE_DETECTION_API_KEY: ${COMPREFACE_DETECTION_API_KEY:-}
+      COMPREFACE_DB_PASSWORD: ${COMPREFACE_DB_PASSWORD:-postgres}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-only-not-for-prod}
+      ENVIRONMENT: production
+      PYTHONPATH: /app
+      SMTP_HOST: ${SMTP_HOST:-smtp-relay.brevo.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      CLOUDFLARE_TURNSTILE_SECRET_KEY: ${CLOUDFLARE_TURNSTILE_SECRET_KEY:-}
+      NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      compreface-api:
+        condition: service_started
+    security_opt:
+      - seccomp:unconfined
     command: >
       /bin/sh -c "python scripts/preflight.py &&
       rq worker --url redis://redis:6379/0 face_indexing retention default"
@@ -135,6 +282,11 @@ services:
     restart: unless-stopped
 
   compreface-core:
+    # Reserve up to 8 vCPUs for face inference. Without an explicit
+    # ceiling the kernel can starve compreface-core during a scan rush
+    # while 12 other containers fight for cycles; explicit allocation
+    # keeps 1:N search latency predictable under concurrent load.
+    cpus: 8.0
     restart: unless-stopped
 
   compreface-postgres-db:
