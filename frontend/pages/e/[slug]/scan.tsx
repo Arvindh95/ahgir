@@ -238,9 +238,21 @@ export default function FaceScanner() {
     const video = videoRef.current
     const overlayCanvas = overlayCanvasRef.current
 
-    // Match canvas size to video display size
+    // Match canvas pixel resolution to the live video stream. Important
+    // for two reasons: (a) drawing on a 300x150 default canvas that CSS
+    // then stretches to fill a portrait viewport elongates the oval, and
+    // (b) face-bbox coords come from face-api in video-pixel space, so
+    // the canvas must share that coord system for overlay alignment.
+    //
+    // Called every detect tick (cheap — just two property checks) so the
+    // canvas resyncs when the camera is reattached after Upload→Camera
+    // toggle: the new <canvas> element starts at the HTML default size
+    // until something resizes it.
     const updateCanvasSize = () => {
-      if (video.videoWidth && video.videoHeight) {
+      if (
+        video.videoWidth && video.videoHeight &&
+        (overlayCanvas.width !== video.videoWidth || overlayCanvas.height !== video.videoHeight)
+      ) {
         overlayCanvas.width = video.videoWidth
         overlayCanvas.height = video.videoHeight
       }
@@ -252,6 +264,7 @@ export default function FaceScanner() {
     // estimate head yaw (rotation left/right) for pose-gated capture.
     const detect = async () => {
       if (!video || video.paused || video.ended) return
+      updateCanvasSize()
 
       try {
         const result = await faceapi
