@@ -98,14 +98,18 @@ def test_cluster_evidence_boosts_related_images():
 def test_score_candidates_diagnostic_includes_filtered():
     """Telemetry helper must return BOTH passing and filtered candidates
     so tuning analytics can see near-misses, not just successful matches."""
+    # quality_score below high_quality_probability (0.80 default) so the
+    # quality-adjusted threshold discount/penalty stays out of the picture
+    # and the threshold_used assertions are deterministic against the
+    # base bucket values.
     config = MatchScoringConfig(
         large_threshold=0.87,
         medium_threshold=0.90,
         small_threshold=0.93,
     )
     rows = {
-        "s/a/0": FaceRow([0, 0, 200, 200]),  # large face → 0.87 threshold
-        "s/b/0": FaceRow([0, 0, 40, 40]),    # small face → 0.93 threshold
+        "s/a/0": FaceRow([0, 0, 200, 200], quality_score=0.7),  # large face → 0.87 threshold
+        "s/b/0": FaceRow([0, 0, 40, 40], quality_score=0.7),    # small face → 0.93 threshold
     }
     candidates = [
         CandidateMatch("s/a/0", "a", 0.91, 0),   # passes 0.87
