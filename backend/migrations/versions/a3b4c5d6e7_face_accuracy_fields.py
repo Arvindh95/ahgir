@@ -6,7 +6,7 @@ background job (face_cluster_id). All columns are nullable / safely
 defaulted so existing rows remain valid without backfill.
 
 Revision ID: a3b4c5d6e7
-Revises: z2c3d4e5f6
+Revises: e7h8i9j0k1
 Create Date: 2026-05-16 12:30:00.000000
 """
 from alembic import op
@@ -15,7 +15,7 @@ from sqlalchemy.dialects.postgresql import UUID
 
 
 revision = 'a3b4c5d6e7'
-down_revision = 'z2c3d4e5f6'
+down_revision = 'e7h8i9j0k1'
 branch_labels = None
 depends_on = None
 
