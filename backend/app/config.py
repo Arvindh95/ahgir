@@ -31,9 +31,10 @@ class Settings(BaseSettings):
     jwt_expiration_hours: int = 24
     
     # Face Recognition
-    # Cosine-similarity floor applied to LARGE indexed faces (>= face_size_large_px).
-    # Tiny crops produce noisier embeddings and need a stricter floor — set those
-    # via the *_medium / *_small variants below.
+    # Cosine-similarity floor applied during guest scan matching, bucketed by
+    # the indexed face's min_side (px). The *_medium and *_small variants exist
+    # so future tuning can re-introduce a size-dependent floor without a code
+    # change; today all three are set to 0.90 to favor precision over recall.
     face_similarity_threshold: float = 0.90
     face_similarity_threshold_medium: float = 0.90
     face_similarity_threshold_small: float = 0.90
@@ -41,7 +42,7 @@ class Settings(BaseSettings):
     face_size_medium_px: int = 60
     face_size_large_px: int = 150
     # Index broadly, then let CompreFace's add-face detection gate and the
-    # tiered scan similarity threshold reject unusable or unrelated faces.
+    # scan similarity threshold reject unusable or unrelated faces.
     face_min_detection_probability: float = 0.3
     # Minimum bounding-box side (px) for a detected face to be registered.
     face_min_crop_pixels: int = 32
