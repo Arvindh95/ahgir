@@ -135,7 +135,24 @@ export default function TermsOfService() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-white mb-3">13. Contact Us</h2>
+            <h2 className="text-xl font-semibold text-white mb-3">13. Reporting Abuse &amp; Takedown</h2>
+            <p className="mb-3">
+              Every event photo viewable by a guest carries a <span className="text-white font-medium">Report</span> control. Anyone who can see a photo can flag it — no PicUr account required. The form collects a category (non-consensual content, minor in photo, harassment, copyright, other), an optional reason, and an optional contact email. Submissions are protected by Cloudflare Turnstile to keep automated abuse off the queue.
+            </p>
+            <ul className="list-disc list-inside space-y-2 ml-2 mb-3">
+              <li><span className="text-white font-medium">Review:</span> reports land in a queue reviewed by our operations team. An operator may view the specific reported photo to verify the report. Every operator view is recorded in the event&apos;s audit log — the organizer can see exactly when the carve-out was exercised on their event.</li>
+              <li><span className="text-white font-medium">Actions:</span> after review, a report is resolved as <em>dismissed</em> (no policy violation), <em>quarantined</em> (photo hidden from guests pending further investigation), or <em>removed</em> (photo deleted from storage and the face index). Organizers can also delete a flagged photo themselves; open reports against that photo are auto-closed.</li>
+              <li><span className="text-white font-medium">Good-faith use:</span> reports must be made in good faith. Mass-flagging, retaliation, or reports submitted to harass an organizer are prohibited and may result in IP rate-limiting or account action.</li>
+              <li><span className="text-white font-medium">Counter-notice:</span> if your photo was removed and you believe the takedown was incorrect, email <a href="mailto:support@picur.my" className="text-blue-400 hover:text-blue-300 underline">support@picur.my</a> with the event link and the photo reference. We will review the operator decision and respond.</li>
+              <li><span className="text-white font-medium">Open reports block deletion:</span> while an active report (pending, reviewing, or quarantined) exists against a photo, the organizer cannot delete the surrounding event. Resolve the report first by deleting the specific photo, or contact support if you believe the report is in bad faith.</li>
+            </ul>
+            <p>
+              We do not act on reports outside the in-app flow. Email or DM-based takedown requests are routed back through the Report button so they receive the same audit trail. For data subject requests under PDPA, see the <a href="/privacy" className="text-blue-400 hover:text-blue-300 underline">Privacy Policy</a>.
+            </p>
+          </section>
+
+          <section>
+            <h2 className="text-xl font-semibold text-white mb-3">14. Contact Us</h2>
             <p>
               If you have any questions about these Terms of Service, please contact us at:
             </p>

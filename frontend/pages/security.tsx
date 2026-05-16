@@ -12,6 +12,9 @@ import {
   EyeOff,
   KeyRound,
   Mail,
+  Flag,
+  ClipboardCheck,
+  AlertTriangle,
 } from 'lucide-react'
 
 type Card = {
@@ -289,6 +292,44 @@ export default function Security() {
                 <p className="text-gray-300">{line}</p>
               </div>
             ))}
+          </div>
+        </section>
+
+        {/* Reporting abuse */}
+        <section className="mb-16 md:mb-20">
+          <SectionHeading
+            kicker="REPORTING ABUSE"
+            title="A Report button on every photo"
+            blurb="If a photo shouldn't be in an event gallery — non-consensual, minor pictured, harassment, copyright — anyone who can see it can flag it. No PicUr account required."
+          />
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+            <div className="glass-card rounded-2xl p-6 flex flex-col">
+              <div className="w-10 h-10 rounded-xl bg-blue-500/15 text-blue-300 flex items-center justify-center mb-4">
+                <Flag className="w-5 h-5" />
+              </div>
+              <h3 className="text-base font-semibold mb-2">One tap to report</h3>
+              <p className="text-sm text-gray-400 leading-relaxed">
+                Every guest-viewable photo carries a Report control. Pick a category, leave an optional note, and the report goes straight to our ops queue. Cloudflare Turnstile keeps automated abuse off the form.
+              </p>
+            </div>
+            <div className="glass-card rounded-2xl p-6 flex flex-col">
+              <div className="w-10 h-10 rounded-xl bg-blue-500/15 text-blue-300 flex items-center justify-center mb-4">
+                <ClipboardCheck className="w-5 h-5" />
+              </div>
+              <h3 className="text-base font-semibold mb-2">Reviewed by a human</h3>
+              <p className="text-sm text-gray-400 leading-relaxed">
+                An operator reviews the report, may view the specific photo, and resolves it as dismissed, quarantined, or removed. Every operator view is recorded in the event&apos;s audit log so the organizer can see when the carve-out was used.
+              </p>
+            </div>
+            <div className="glass-card rounded-2xl p-6 flex flex-col">
+              <div className="w-10 h-10 rounded-xl bg-blue-500/15 text-blue-300 flex items-center justify-center mb-4">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <h3 className="text-base font-semibold mb-2">Removed means gone</h3>
+              <p className="text-sm text-gray-400 leading-relaxed">
+                When a photo is taken down — by the organizer or by an operator — the bytes and face embeddings are purged immediately. The report row itself stays as an audit trail with its image link nulled out.
+              </p>
+            </div>
           </div>
         </section>
 

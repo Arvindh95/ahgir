@@ -33,6 +33,7 @@ export default function PrivacyPolicy() {
               <li><span className="text-white font-medium">Face Recognition Data:</span> Facial feature vectors (mathematical representations) generated from uploaded photos and guest selfie scans. These are not actual images of faces but numerical data used for matching.</li>
               <li><span className="text-white font-medium">Usage Data:</span> Scan counts, download counts, and basic service usage analytics.</li>
               <li><span className="text-white font-medium">Payment Data:</span> If you subscribe to a paid plan or buy a one-time event package, your payment is processed by Stripe. We receive a Stripe customer ID, subscription status, and invoice metadata — we do not see or store your full card number.</li>
+              <li><span className="text-white font-medium">Abuse Report Data:</span> When a user submits an abuse report against a photo, we record the report category, the optional reason text, the reporter&apos;s email (if provided), the reporter&apos;s IP address, and a Cloudflare Turnstile token. This data is used to verify the report and to detect abuse-report spam.</li>
             </ul>
           </section>
 
@@ -81,6 +82,7 @@ export default function PrivacyPolicy() {
               <li><span className="text-white font-medium">Event photos and face data:</span> Retained for the retention window of the event&apos;s plan — 30 days on Free, 6 months on Starter, 1 year on Pro, and a custom window on enterprise / one-time event packages. When the window expires or the organizer deletes the event, all associated photos, thumbnails, and facial vectors are immediately removed from active storage, the face recognition engine, and the database. Encrypted operational backups containing this data roll off on a 7-day rotation, after which it is permanently gone.</li>
               <li><span className="text-white font-medium">Selfie scan data:</span> Processed in real-time and not permanently stored.</li>
               <li><span className="text-white font-medium">Payment history:</span> Stripe customer IDs and invoice records are retained for accounting and tax purposes as required by Malaysian law.</li>
+              <li><span className="text-white font-medium">Abuse report rows:</span> When a reported photo is deleted (by the organizer or by our operator after review), the photo bytes and face data are purged immediately, but the abuse report row itself is preserved with its image link nulled out. The row keeps the category, reason text, reporter contact, and review decision so we have an audit trail of every takedown action. Report rows roll off with the event when the event is deleted.</li>
             </ul>
           </section>
 
