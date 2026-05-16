@@ -96,10 +96,20 @@ class RateLimiter:
                 when both are provided. Use for sub-hour windows (e.g. 15 min).
         """
         self.redis = redis_client
-        self.limit = limit or settings.scan_rate_limit
+        # Treat `None` as "use the configured default", but reject 0 / negative
+        # explicitly. The previous `limit or settings.scan_rate_limit` silently
+        # turned `limit=0` into the default, and `window_*=0` would disable the
+        # limiter entirely (sliding-window prune drops everything pre-check).
+        self.limit = settings.scan_rate_limit if limit is None else limit
+        if self.limit <= 0:
+            raise ValueError(f"Rate-limit `limit` must be > 0 (got {limit!r})")
         if window_minutes is not None:
+            if window_minutes <= 0:
+                raise ValueError(f"`window_minutes` must be > 0 (got {window_minutes!r})")
             self.window_hours = window_minutes / 60
         elif window_hours is not None:
+            if window_hours <= 0:
+                raise ValueError(f"`window_hours` must be > 0 (got {window_hours!r})")
             self.window_hours = window_hours
         else:
             self.window_hours = settings.scan_rate_window_hours
