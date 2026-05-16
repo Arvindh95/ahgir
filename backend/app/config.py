@@ -34,8 +34,8 @@ class Settings(BaseSettings):
     # Cosine-similarity floor applied to LARGE indexed faces (>= face_size_large_px).
     # Tiny crops produce noisier embeddings and need a stricter floor — set those
     # via the *_medium / *_small variants below.
-    face_similarity_threshold: float = 0.80
-    face_similarity_threshold_medium: float = 0.85
+    face_similarity_threshold: float = 0.90
+    face_similarity_threshold_medium: float = 0.90
     face_similarity_threshold_small: float = 0.90
     # Indexed-face min_side (px) boundaries selecting which threshold applies.
     face_size_medium_px: int = 60
