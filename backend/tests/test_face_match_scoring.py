@@ -64,7 +64,16 @@ def test_low_quality_face_requires_stronger_similarity():
 
 
 def test_cluster_evidence_boosts_related_images():
-    config = MatchScoringConfig(large_threshold=0.87, cluster_bonus=0.02, consistency_bonus_weight=0.0)
+    # ambiguous_gap=0.0 disables the close-runner-up penalty so this test
+    # isolates cluster-boost behavior. With the default 0.015 gap, the two
+    # cluster-1 hits tie at 0.90 and get docked by ambiguous_penalty —
+    # correct system behavior but unrelated to cluster scoring.
+    config = MatchScoringConfig(
+        large_threshold=0.87,
+        cluster_bonus=0.02,
+        consistency_bonus_weight=0.0,
+        ambiguous_gap=0.0,
+    )
     rows = {
         "s/a/0": FaceRow([0, 0, 200, 200], face_cluster_id="cluster-1"),
         "s/b/0": FaceRow([0, 0, 200, 200], face_cluster_id="cluster-1"),

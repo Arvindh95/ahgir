@@ -7,6 +7,7 @@ helpers, but replaces the final ranking/filtering step with the scoring helper.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 import uuid
@@ -21,6 +22,7 @@ from app.database import get_db
 from app.models import Event, Face, Image
 from app.rate_limiter import rate_limiter, scan_ip_rate_limiter
 from app.config import settings
+from app.routers import guest as _guest_legacy
 from app.routers.guest import (
     CompreFaceUpstreamError,
     FaceMatch,
@@ -29,9 +31,13 @@ from app.routers.guest import (
     NoFaceDetectedError,
     _guest_photo_urls,
     _log_scan_outcome,
-    _recognize_single_frame,
     _sanitize_scan_frame,
 )
+# NOTE: _recognize_single_frame is intentionally NOT imported by name. Call
+# it as `_guest_legacy._recognize_single_frame(...)` so test patches against
+# `app.routers.guest._recognize_single_frame` propagate to this router too.
+# A `from ... import _recognize_single_frame` would bind a separate name
+# here and bypass those patches.
 from app.face_match_scoring import (
     CandidateMatch,
     MatchScoringConfig,
@@ -43,11 +49,15 @@ router = APIRouter(tags=["guest-accuracy"])
 
 
 def _scoring_config() -> MatchScoringConfig:
-    """Build scoring config from settings with safer fallback defaults."""
+    """Use MatchScoringConfig defaults (0.87 / 0.90 / 0.93 tiered thresholds).
+
+    The face_similarity_threshold* env vars are flat 0.90 across all tiers in
+    config.py today, so coupling them in here just flattens the tiering. The
+    dataclass defaults already encode the intended adaptive thresholds; if
+    future tuning needs env-driven tier overrides, introduce dedicated env
+    vars rather than reusing the flat ones.
+    """
     return MatchScoringConfig(
-        large_threshold=min(getattr(settings, "face_similarity_threshold", 0.90), 0.87),
-        medium_threshold=getattr(settings, "face_similarity_threshold_medium", 0.90),
-        small_threshold=max(getattr(settings, "face_similarity_threshold_small", 0.90), 0.93),
         medium_face_px=getattr(settings, "face_size_medium_px", 60),
         large_face_px=getattr(settings, "face_size_large_px", 150),
     )
@@ -139,8 +149,11 @@ async def _scan_with_enhanced_scoring(
     event: Event,
     db: Session,
 ) -> FaceScanResponse:
-    frame_results_raw = await __import__("asyncio").gather(
-        *[_recognize_single_frame(frame, settings.compreface_api_key) for frame in all_frames],
+    frame_results_raw = await asyncio.gather(
+        *[
+            _guest_legacy._recognize_single_frame(frame, settings.compreface_api_key)
+            for frame in all_frames
+        ],
         return_exceptions=True,
     )
 
