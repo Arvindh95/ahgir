@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, type CSSProperties } from 'react'
 import { useRouter } from 'next/router'
 import Head from 'next/head'
 import axios from 'axios'
@@ -73,6 +73,9 @@ export default function FaceScanner() {
   const [scanPhase, setScanPhase] = useState<string | null>(null) // guided capture phase text
   const [poseProgress, setPoseProgress] = useState<{ side: 'straight' | 'left' | 'right' | null; hit: boolean }>({ side: null, hit: false })
   const [frameQuality, setFrameQuality] = useState<FrameQuality>('no_face')
+  // 0..3 — how many of the multi-pose frames have been captured so far. Drives
+  // the three progress dots at the top of the camera viewport.
+  const [framesCaptured, setFramesCaptured] = useState(0)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Load face-api.js models
@@ -458,10 +461,11 @@ export default function FaceScanner() {
         }
 
         const frames: string[] = []
+        setFramesCaptured(0)
         // 1. Straight on
         await waitForPose(y => Math.abs(y) < STRAIGHT_THRESH, 'Look straight ahead', 'straight')
         let f = captureFrame()
-        if (f) frames.push(f)
+        if (f) { frames.push(f); setFramesCaptured(1) }
 
         // 2. First side — whichever direction the user naturally turns first
         let firstSideSign = 0
@@ -477,7 +481,7 @@ export default function FaceScanner() {
           'right',
         )
         f = captureFrame()
-        if (f) frames.push(f)
+        if (f) { frames.push(f); setFramesCaptured(2) }
 
         // 3. Opposite side — whatever the OTHER direction is
         const otherSign = firstSideSign === 0 ? -1 : -firstSideSign
@@ -487,7 +491,7 @@ export default function FaceScanner() {
           'left',
         )
         f = captureFrame()
-        if (f) frames.push(f)
+        if (f) { frames.push(f); setFramesCaptured(3) }
 
         setScanPhase('Matching...')
         setPoseProgress({ side: null, hit: false })
@@ -663,10 +667,43 @@ export default function FaceScanner() {
 
           {!useUpload ? (
             <div className={`
-                relative rounded-xl overflow-hidden aspect-[4/3] md:aspect-video bg-black shadow-2xl mb-6 border-4
-                ${faceDetected ? 'border-green-500 shadow-[0_0_20px_rgba(34,197,94,0.5)]' : 'border-transparent'}
+                relative rounded-xl overflow-hidden aspect-[4/3] md:aspect-video bg-black mb-6 border-4
                 transition-all duration-300
+                ${faceDetected && frameQuality === 'ok'
+                  ? 'border-green-500 shadow-[0_0_60px_rgba(34,197,94,0.45),inset_0_0_40px_rgba(34,197,94,0.12)]'
+                  : faceDetected
+                    ? 'border-red-500/80 shadow-[0_0_30px_rgba(239,68,68,0.35)]'
+                    : 'border-white/10 shadow-2xl'}
               `}>
+              {/* Component-scoped animations for the futuristic capture UI */}
+              <style>{`
+                @keyframes picurScanSweep {
+                  0%   { top: 18%;  opacity: 0; }
+                  10%  { opacity: 1; }
+                  90%  { opacity: 1; }
+                  100% { top: 82%;  opacity: 0; }
+                }
+                @keyframes picurRingFill {
+                  from { stroke-dashoffset: 251.327; }
+                  to   { stroke-dashoffset: 0; }
+                }
+                @keyframes picurBracketPulse {
+                  0%, 100% { opacity: 0.85; }
+                  50%      { opacity: 1; }
+                }
+                .picur-scan-line {
+                  animation: picurScanSweep 1.6s ease-in-out infinite;
+                }
+                .picur-progress-ring {
+                  transform: rotate(-90deg);
+                  transform-origin: 50% 50%;
+                  animation: picurRingFill 6s linear forwards;
+                }
+                .picur-bracket {
+                  animation: picurBracketPulse 2.2s ease-in-out infinite;
+                }
+              `}</style>
+
               <video
                 ref={videoRef}
                 autoPlay
@@ -679,6 +716,95 @@ export default function FaceScanner() {
                 className="absolute top-0 left-0 w-full h-full pointer-events-none scale-x-[-1]"
               />
               <canvas ref={canvasRef} style={{ display: 'none' }} />
+
+              {/* Corner brackets framing the oval region. Color tracks frame
+                  quality so the brackets read as "locked on" when green. */}
+              {cameraReady && modelsLoaded && (() => {
+                const color =
+                  frameQuality === 'ok'         ? 'rgb(34, 197, 94)'
+                  : frameQuality === 'no_face'  ? 'rgba(148, 163, 184, 0.7)'
+                  :                               'rgb(239, 68, 68)'
+                const stroke = '3px solid currentColor'
+                const armSize = '14%'
+                const positions: Array<{ pos: CSSProperties; borders: CSSProperties }> = [
+                  { pos: { top: '14%',    left: '24%'    }, borders: { borderTop: stroke, borderLeft: stroke,  borderTopLeftRadius: 8 } },
+                  { pos: { top: '14%',    right: '24%'   }, borders: { borderTop: stroke, borderRight: stroke, borderTopRightRadius: 8 } },
+                  { pos: { bottom: '14%', left: '24%'    }, borders: { borderBottom: stroke, borderLeft: stroke,  borderBottomLeftRadius: 8 } },
+                  { pos: { bottom: '14%', right: '24%'   }, borders: { borderBottom: stroke, borderRight: stroke, borderBottomRightRadius: 8 } },
+                ]
+                return (
+                  <>
+                    {positions.map((p, i) => (
+                      <div
+                        key={i}
+                        className="picur-bracket absolute pointer-events-none transition-colors duration-200"
+                        style={{
+                          ...p.pos,
+                          width: armSize,
+                          height: armSize,
+                          color,
+                          ...p.borders,
+                        }}
+                      />
+                    ))}
+                  </>
+                )
+              })()}
+
+              {/* Scanning sweep line — only during active capture, only when
+                  distance is OK so users don't see it during error states. */}
+              {scanning && frameQuality === 'ok' && (
+                <div
+                  className="picur-scan-line absolute left-[24%] right-[24%] h-[2px] pointer-events-none"
+                  style={{
+                    background: 'linear-gradient(90deg, transparent 0%, rgba(34,197,94,0.0) 8%, rgba(34,197,94,0.95) 50%, rgba(34,197,94,0.0) 92%, transparent 100%)',
+                    boxShadow: '0 0 18px rgba(34,197,94,0.85), 0 0 36px rgba(34,197,94,0.45)',
+                  }}
+                />
+              )}
+
+              {/* Per-phase progress ring around the oval. Restarts each phase
+                  via `key={poseProgress.side}` so the animation re-fires; the
+                  green check overlay (below) replaces it on a hit. */}
+              {scanning && scanPhase && !poseProgress.hit && (
+                <svg
+                  className="absolute inset-0 w-full h-full pointer-events-none"
+                  viewBox="0 0 100 100"
+                  preserveAspectRatio="none"
+                  key={poseProgress.side ?? 'init'}
+                >
+                  <circle cx="50" cy="50" r="40" fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="0.6" />
+                  <circle
+                    cx="50"
+                    cy="50"
+                    r="40"
+                    fill="none"
+                    stroke={frameQuality === 'ok' ? 'rgb(34,197,94)' : 'rgb(239,68,68)'}
+                    strokeWidth="0.8"
+                    strokeLinecap="round"
+                    strokeDasharray="251.327"
+                    className="picur-progress-ring"
+                  />
+                </svg>
+              )}
+
+              {/* Frame progress dots — three pips at the top showing capture
+                  count. Filled = captured, hollow = pending. Camera path only;
+                  the upload path is a single image so the meter doesn't apply. */}
+              {scanning && !useUpload && (
+                <div className="absolute top-3 left-1/2 -translate-x-1/2 flex gap-2 pointer-events-none z-10">
+                  {[0, 1, 2].map(i => (
+                    <div
+                      key={i}
+                      className={`w-2.5 h-2.5 rounded-full transition-all duration-200 ${
+                        i < framesCaptured
+                          ? 'bg-green-400 shadow-[0_0_10px_rgba(34,197,94,0.95)]'
+                          : 'bg-white/20 border border-white/40'
+                      }`}
+                    />
+                  ))}
+                </div>
+              )}
 
               {/* Guided scan phase overlay (pose-gated) */}
               {scanPhase && scanning && (
