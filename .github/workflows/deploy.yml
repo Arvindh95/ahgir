@@ -69,7 +69,11 @@ jobs:
             # image until someone noticed customers seeing old code (the
             # "RM 9 / RM 39 still shows in superadmin" incident on
             # 2026-05-14). Both must be force-recreated every deploy.
-            docker compose $COMPOSE_FILES up -d --force-recreate backend worker frontend retention-scheduler
+            #
+            # worker-2/3/4 share the `ahgir-worker` image built above — they
+            # MUST be listed explicitly here, otherwise they stay pinned to
+            # the previous image (same class of bug as the frontend-2 incident).
+            docker compose $COMPOSE_FILES up -d --force-recreate backend worker worker-2 worker-3 worker-4 frontend retention-scheduler
 
             # Wait for `frontend` to be reachable on its loopback port
             # before flipping `frontend-2` — otherwise both replicas
