@@ -56,6 +56,56 @@ export interface EventDetails extends Event {
   is_cross_tenant_superadmin_view?: boolean
 }
 
+export interface AccuracyScoreBucket {
+  bucket: string
+  passed: number
+  filtered: number
+}
+
+export interface AccuracyProblemScan {
+  scan_id: string
+  candidate_count: number
+  near_miss_count: number
+  max_raw_similarity: number
+  max_scored_similarity: number
+}
+
+export interface AccuracyRecommendation {
+  level: 'success' | 'info' | 'warning'
+  title: string
+  detail: string
+}
+
+export interface EventAccuracy {
+  event_id: string
+  generated_at: string
+  scan_summary: {
+    total_scans: number
+    unique_guests: number
+    matched_scans: number
+    zero_match_scans: number
+    no_face_scans: number
+    filtered_scans: number
+    upstream_error_scans: number
+    uncategorized_scans: number
+    avg_returned_matches: number
+  }
+  match_quality: {
+    telemetry_scans: number
+    candidate_count: number
+    passed_candidates: number
+    filtered_candidates: number
+    rescued_candidates: number
+    near_miss_candidates: number
+    tiny_filtered_candidates: number
+    blurry_filtered_candidates: number
+  }
+  indexing_health: EventStatus
+  score_buckets: AccuracyScoreBucket[]
+  problem_scans: AccuracyProblemScan[]
+  recommendations: AccuracyRecommendation[]
+}
+
 export interface CreateEventRequest {
   name: string
   date: string
@@ -86,6 +136,11 @@ export const eventService = {
 
   async reindexEvent(eventId: string): Promise<{ message: string; queued_count: number }> {
     const response = await api.post(`/events/${eventId}/reindex`)
+    return response.data
+  },
+
+  async getAccuracy(eventId: string): Promise<EventAccuracy> {
+    const response = await api.get(`/events/${eventId}/accuracy`)
     return response.data
   },
 

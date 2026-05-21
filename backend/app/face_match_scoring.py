@@ -18,6 +18,11 @@ from dataclasses import dataclass, replace
 from statistics import mean
 from typing import Any, Iterable, Mapping, Optional
 
+# Laplacian-variance blur score below which an indexed face is treated as
+# soft/out-of-focus. Shared so the indexer's quality penalty and the accuracy
+# dashboard's "blurry filtered" telemetry agree on a single definition.
+BLUR_SCORE_FLOOR = 80.0
+
 
 @dataclass(frozen=True)
 class CandidateMatch:
@@ -145,7 +150,7 @@ def face_quality(face: Any) -> float:
 
     if blur_score is not None:
         try:
-            if float(blur_score) < 80.0:
+            if float(blur_score) < BLUR_SCORE_FLOOR:
                 quality -= 0.08
         except (TypeError, ValueError):
             pass

@@ -5,6 +5,7 @@ import ProtectedRoute from '@/components/ProtectedRoute'
 import AdminLayout from '@/components/AdminLayout'
 import EventMonitoring from '@/components/EventMonitoring'
 import EventAnalytics from '@/components/EventAnalytics'
+import EventAccuracy from '@/components/EventAccuracy'
 import ConfirmModal from '@/components/ConfirmModal'
 import { eventService, EventDetails } from '@/lib/events'
 import { useToast } from '@/hooks/useToast'
@@ -419,6 +420,11 @@ export default function EventDetailsPage() {
 
           {/* Event Monitoring Dashboard */}
           <EventMonitoring eventId={event.event_id} />
+
+          {/* Face Accuracy Dashboard */}
+          <div className="mt-8">
+            <EventAccuracy eventId={event.event_id} />
+          </div>
 
           {/* Analytics Dashboard */}
           <div className="mt-8">

@@ -8,7 +8,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile, File
 from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_, and_
+from sqlalchemy import func, or_, and_, case, Integer
 from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 import uuid
@@ -31,12 +31,12 @@ logger = logging.getLogger(__name__)
 
 from app.auth import get_current_user, hash_password
 from app.database import get_db
-from app.models import User, Event, Image, Face, AuditLog, EventTier, UserTier, AbuseReport
+from app.models import User, Event, Image, Face, AuditLog, EventTier, UserTier, AbuseReport, ScanMatchMetric
 from app.storage import storage_service, generate_signed_cover_url
 from app.queue import enqueue_face_indexing
 from app.audit import log_action
 from app.config import settings, get_compreface_url
-from app.cache import cache_delete_pattern
+from app.cache import cache_delete_pattern, cache_get, cache_set
 from app.tiers import get_effective_limits
 from app.utils.compreface import delete_compreface_subjects_for_event
 from app.utils.storage_cleanup import (
@@ -46,12 +46,20 @@ from app.utils.storage_cleanup import (
     enqueue_cleanup_task,
 )
 from app.utils.exif import strip_exif_bytes
+from app.face_match_scoring import BLUR_SCORE_FLOOR
 import httpx
 
 router = APIRouter(prefix="/events", tags=["events"])
 
 _SLUG_INVALID_RE = re.compile(r"[^a-z0-9]+")
 _SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+# Accuracy-dashboard tuning constants. A filtered candidate whose raw
+# similarity sits within ACCURACY_NEAR_MISS_WINDOW of its threshold is a
+# "near miss". A zero-match scan still surfaces as a "problem scan" without
+# near misses if its best raw similarity reaches ACCURACY_PROBLEM_SCAN_RAW_FLOOR.
+ACCURACY_NEAR_MISS_WINDOW = 0.03
+ACCURACY_PROBLEM_SCAN_RAW_FLOOR = 0.84
 
 
 def normalize_public_slug(
@@ -2347,3 +2355,267 @@ async def get_event_analytics(
             for row in peak_hours
         ],
     }
+
+
+@router.get("/{event_id}/accuracy")
+async def get_event_accuracy(
+    event_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Accuracy-focused event telemetry for admins.
+
+    This is read-only and deliberately derived from existing scan audit rows
+    plus scan_match_metrics. Guest feedback is a later phase.
+    """
+    try:
+        event_uuid = uuid.UUID(event_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid event ID format")
+
+    event = db.query(Event).filter(Event.id == event_uuid).first()
+    if not event:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+    if not current_user.is_superadmin and event.owner_user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
+
+    audit_superadmin_cross_tenant(db, current_user, event, "get_event_accuracy")
+
+    # Short-lived response cache. The dashboard aggregates the event's whole
+    # scan_match_metrics history, so a refresh-happy admin would otherwise
+    # re-run the full aggregation on every click. 60s of staleness is fine
+    # for admin telemetry, and the payload's `generated_at` shows exactly how
+    # fresh it is. The access + audit checks above still run on every request
+    # (including cache hits) so this never widens who can read the data.
+    cache_key = f"event_accuracy:{event_uuid}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    status_summary = get_event_status(event_uuid, db)
+
+    # --- Scan-level outcomes from audit logs, aggregated in SQL ---
+    # One scan_match_metrics row exists per (scan, candidate) pair, so loading
+    # raw rows would not scale for a busy event. Every count below is computed
+    # by the database; only small grouped result sets come back to Python.
+    outcome_expr = AuditLog.metadata_["outcome"].astext
+    outcome_rows = (
+        db.query(outcome_expr.label("outcome"), func.count().label("count"))
+        .filter(AuditLog.event_id == event_uuid, AuditLog.action == "scan")
+        .group_by(outcome_expr)
+        .all()
+    )
+    scan_outcomes = {
+        "matched": 0,
+        "no_matches": 0,
+        "no_face": 0,
+        "filtered": 0,
+        "upstream_error": 0,
+        "other": 0,
+    }
+    total_scans = 0
+    for outcome, count in outcome_rows:
+        total_scans += count
+        if outcome in scan_outcomes:
+            scan_outcomes[outcome] += count
+        else:
+            # NULL or unrecognized outcome — surfaced as uncategorized_scans
+            # so the displayed buckets always reconcile against total_scans.
+            scan_outcomes["other"] += count
+
+    # match_count is a JSONB value; the regex guard keeps a malformed row from
+    # erroring the SUM cast. Denominator is total_scans (the prior Python loop
+    # counted every scan with parseable metadata, which is effectively all).
+    match_count_text = AuditLog.metadata_["match_count"].astext
+    total_returned_matches = (
+        db.query(
+            func.coalesce(
+                func.sum(
+                    case(
+                        (match_count_text.op("~")(r"^[0-9]+$"), match_count_text.cast(Integer)),
+                        else_=0,
+                    )
+                ),
+                0,
+            )
+        )
+        .filter(AuditLog.event_id == event_uuid, AuditLog.action == "scan")
+        .scalar()
+        or 0
+    )
+    avg_returned_matches = round(total_returned_matches / total_scans, 2) if total_scans else 0.0
+
+    unique_guests = (
+        db.query(func.count(func.distinct(AuditLog.actor_id)))
+        .filter(
+            AuditLog.event_id == event_uuid,
+            AuditLog.action == "scan",
+            AuditLog.actor_type == "guest",
+        )
+        .scalar()
+        or 0
+    )
+
+    # --- Candidate-level telemetry from scan_match_metrics, aggregated in SQL ---
+    is_passed = ScanMatchMetric.passed.is_(True)
+    is_filtered = ScanMatchMetric.passed.is_(False)
+    near_miss_cond = ScanMatchMetric.raw_similarity >= func.greatest(
+        0.0, ScanMatchMetric.threshold_used - ACCURACY_NEAR_MISS_WINDOW
+    )
+    # A passed row whose raw similarity was below threshold can only have
+    # passed via the multi-frame rescue path (a single-frame near-miss never
+    # passes), so this exactly identifies rescued matches.
+    rescued_cond = and_(
+        is_passed,
+        ScanMatchMetric.raw_similarity < ScanMatchMetric.threshold_used,
+        ScanMatchMetric.threshold_used <= ScanMatchMetric.scored_similarity,
+    )
+
+    quality = (
+        db.query(
+            func.count().label("candidate_count"),
+            func.count(func.distinct(ScanMatchMetric.scan_id)).label("telemetry_scans"),
+            func.count(case((is_passed, 1))).label("passed_candidates"),
+            func.count(case((is_filtered, 1))).label("filtered_candidates"),
+            func.count(case((rescued_cond, 1))).label("rescued_candidates"),
+            func.count(case((and_(is_filtered, near_miss_cond), 1))).label("near_miss_candidates"),
+            func.count(case((
+                and_(
+                    is_filtered,
+                    ScanMatchMetric.face_min_side_px.isnot(None),
+                    ScanMatchMetric.face_min_side_px < settings.face_size_medium_px,
+                ),
+                1,
+            ))).label("tiny_filtered_candidates"),
+            func.count(case((
+                and_(
+                    is_filtered,
+                    ScanMatchMetric.blur_score.isnot(None),
+                    ScanMatchMetric.blur_score < BLUR_SCORE_FLOOR,
+                ),
+                1,
+            ))).label("blurry_filtered_candidates"),
+        )
+        .filter(ScanMatchMetric.event_id == event_uuid)
+        .one()
+    )
+
+    # --- Score buckets: 0.05-wide bands of scored_similarity, grouped in SQL ---
+    bucket_start = func.least(
+        0.95, func.greatest(0.0, func.floor(ScanMatchMetric.scored_similarity * 20) / 20.0)
+    )
+    bucket_rows = (
+        db.query(
+            bucket_start.label("bucket_start"),
+            func.count(case((is_passed, 1))).label("passed"),
+            func.count(case((is_filtered, 1))).label("filtered"),
+        )
+        .filter(ScanMatchMetric.event_id == event_uuid)
+        .group_by(bucket_start)
+        .order_by(bucket_start)
+        .all()
+    )
+    score_buckets = [
+        {
+            "bucket": f"{float(row.bucket_start):.2f}-{float(row.bucket_start) + 0.05:.2f}",
+            "passed": row.passed,
+            "filtered": row.filtered,
+        }
+        for row in bucket_rows
+    ]
+
+    # --- Problem scans: zero-match scans with near-miss or strong-raw evidence ---
+    near_miss_sum = func.sum(case((near_miss_cond, 1), else_=0))
+    max_raw = func.max(ScanMatchMetric.raw_similarity)
+    problem_rows = (
+        db.query(
+            ScanMatchMetric.scan_id.label("scan_id"),
+            func.count().label("candidate_count"),
+            near_miss_sum.label("near_miss_count"),
+            max_raw.label("max_raw"),
+            func.max(ScanMatchMetric.scored_similarity).label("max_scored"),
+        )
+        .filter(ScanMatchMetric.event_id == event_uuid)
+        .group_by(ScanMatchMetric.scan_id)
+        .having(func.bool_or(ScanMatchMetric.passed).is_(False))
+        .having(or_(near_miss_sum > 0, max_raw >= ACCURACY_PROBLEM_SCAN_RAW_FLOOR))
+        .order_by(near_miss_sum.desc(), max_raw.desc())
+        .limit(10)
+        .all()
+    )
+    problem_scans = [
+        {
+            "scan_id": str(row.scan_id),
+            "candidate_count": row.candidate_count,
+            "near_miss_count": int(row.near_miss_count or 0),
+            "max_raw_similarity": round(float(row.max_raw or 0.0), 4),
+            "max_scored_similarity": round(float(row.max_scored or 0.0), 4),
+        }
+        for row in problem_rows
+    ]
+
+    recommendations: list[dict[str, str]] = []
+    if status_summary.failed > 0:
+        recommendations.append({
+            "level": "warning",
+            "title": "Retry or reindex failed photos",
+            "detail": f"{status_summary.failed} photo(s) failed indexing and cannot appear in scan results.",
+        })
+    if status_summary.no_faces > 0 and status_summary.total_photos:
+        no_face_ratio = status_summary.no_faces / status_summary.total_photos
+        if no_face_ratio >= 0.15:
+            recommendations.append({
+                "level": "info",
+                "title": "Review no-face photos",
+                "detail": "A high share of photos had no indexed faces. Reindexing may help after detector tuning, but some may be crowd/detail shots.",
+            })
+    if quality.near_miss_candidates:
+        recommendations.append({
+            "level": "info",
+            "title": "Near-miss candidates detected",
+            "detail": f"{quality.near_miss_candidates} filtered candidate(s) landed close to their threshold. Review before changing thresholds.",
+        })
+    if quality.rescued_candidates:
+        recommendations.append({
+            "level": "success",
+            "title": "Multi-frame rescue is active",
+            "detail": f"{quality.rescued_candidates} match candidate(s) passed only after scoring bonuses.",
+        })
+    if not recommendations:
+        recommendations.append({
+            "level": "success",
+            "title": "No obvious accuracy issues",
+            "detail": "Telemetry does not show failed indexing, close near-misses, or scan-side filtering pressure yet.",
+        })
+
+    payload = {
+        "event_id": str(event_uuid),
+        "generated_at": to_utc_iso(datetime.utcnow()),
+        "scan_summary": {
+            "total_scans": total_scans,
+            "unique_guests": unique_guests,
+            "matched_scans": scan_outcomes["matched"],
+            "zero_match_scans": scan_outcomes["no_matches"] + scan_outcomes["filtered"],
+            "no_face_scans": scan_outcomes["no_face"],
+            "filtered_scans": scan_outcomes["filtered"],
+            "upstream_error_scans": scan_outcomes["upstream_error"],
+            "uncategorized_scans": scan_outcomes["other"],
+            "avg_returned_matches": avg_returned_matches,
+        },
+        "match_quality": {
+            "telemetry_scans": quality.telemetry_scans,
+            "candidate_count": quality.candidate_count,
+            "passed_candidates": quality.passed_candidates,
+            "filtered_candidates": quality.filtered_candidates,
+            "rescued_candidates": quality.rescued_candidates,
+            "near_miss_candidates": quality.near_miss_candidates,
+            "tiny_filtered_candidates": quality.tiny_filtered_candidates,
+            "blurry_filtered_candidates": quality.blurry_filtered_candidates,
+        },
+        "indexing_health": status_summary.model_dump(),
+        "score_buckets": score_buckets,
+        "problem_scans": problem_scans,
+        "recommendations": recommendations,
+    }
+    cache_set(cache_key, payload, ttl_seconds=60)
+    return payload

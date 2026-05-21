@@ -9,7 +9,7 @@ import uuid
 
 from app.main import app
 from app.database import get_db
-from app.models import User, Event, UserTier
+from app.models import User, Event, UserTier, Image, Face, AuditLog, ScanMatchMetric
 from app.auth import hash_password, create_access_token
 from app.routers.events import normalize_public_slug
 
@@ -232,6 +232,295 @@ def test_create_event_no_auth(db_session: Session):
     assert response.status_code == 401
     
     app.dependency_overrides.clear()
+
+
+def test_event_accuracy_summary_counts(client, db_session: Session):
+    user = User(
+        email=f"accuracy_{uuid.uuid4()}@example.com",
+        password_hash=hash_password("password"),
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+
+    event = Event(
+        owner_user_id=user.id,
+        slug=f"accuracy-{uuid.uuid4().hex[:8]}",
+        name="Accuracy Event",
+        allow_downloads=True,
+        retention_days=90,
+    )
+    db_session.add(event)
+    db_session.commit()
+    db_session.refresh(event)
+
+    image = Image(
+        event_id=event.id,
+        filename="match.jpg",
+        file_hash=f"hash-{uuid.uuid4()}",
+        size_bytes=1024,
+        status="indexed",
+        face_count=1,
+    )
+    db_session.add(image)
+    db_session.commit()
+    db_session.refresh(image)
+
+    db_session.add(Face(
+        image_id=image.id,
+        event_id=event.id,
+        embedding=[0.0] * 512,
+        bbox=[0, 0, 200, 200],
+        quality_score=0.9,
+        compreface_subject_id=f"{event.id}/{image.id}/0",
+    ))
+
+    scan_id = uuid.uuid4()
+    session_id = uuid.uuid4()
+    db_session.add_all([
+        AuditLog(
+            event_id=event.id,
+            actor_type="guest",
+            actor_id=session_id,
+            action="scan",
+            metadata_={"outcome": "matched", "match_count": 1},
+        ),
+        AuditLog(
+            event_id=event.id,
+            actor_type="guest",
+            actor_id=uuid.uuid4(),
+            action="scan",
+            metadata_={"outcome": "filtered", "match_count": 0},
+        ),
+        ScanMatchMetric(
+            scan_id=scan_id,
+            session_id=session_id,
+            event_id=event.id,
+            image_id=image.id,
+            raw_similarity=0.86,
+            scored_similarity=0.875,
+            score_gap=None,
+            frame_count=3,
+            threshold_used=0.87,
+            passed=True,
+            face_min_side_px=200,
+            quality_score=0.9,
+        ),
+        ScanMatchMetric(
+            scan_id=uuid.uuid4(),
+            session_id=uuid.uuid4(),
+            event_id=event.id,
+            image_id=image.id,
+            raw_similarity=0.855,
+            scored_similarity=0.855,
+            score_gap=None,
+            frame_count=1,
+            threshold_used=0.87,
+            passed=False,
+            face_min_side_px=200,
+            quality_score=0.9,
+        ),
+    ])
+    db_session.commit()
+
+    token = create_access_token(data={"sub": str(user.id), "email": user.email})
+    response = client.get(
+        f"/events/{event.id}/accuracy",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["scan_summary"]["total_scans"] == 2
+    assert data["scan_summary"]["matched_scans"] == 1
+    assert data["scan_summary"]["filtered_scans"] == 1
+    assert data["match_quality"]["candidate_count"] == 2
+    assert data["match_quality"]["passed_candidates"] == 1
+    assert data["match_quality"]["filtered_candidates"] == 1
+    assert data["match_quality"]["rescued_candidates"] == 1
+    assert data["match_quality"]["near_miss_candidates"] == 1
+    assert data["indexing_health"]["indexed"] == 1
+
+
+def test_event_accuracy_rejects_non_owner(client, db_session: Session):
+    owner = User(
+        email=f"accuracy_owner_{uuid.uuid4()}@example.com",
+        password_hash=hash_password("password"),
+    )
+    other = User(
+        email=f"accuracy_other_{uuid.uuid4()}@example.com",
+        password_hash=hash_password("password"),
+    )
+    db_session.add_all([owner, other])
+    db_session.commit()
+    db_session.refresh(owner)
+    db_session.refresh(other)
+
+    event = Event(
+        owner_user_id=owner.id,
+        slug=f"accuracy-private-{uuid.uuid4().hex[:8]}",
+        name="Private Accuracy Event",
+        allow_downloads=True,
+        retention_days=90,
+    )
+    db_session.add(event)
+    db_session.commit()
+
+    token = create_access_token(data={"sub": str(other.id), "email": other.email})
+    response = client.get(
+        f"/events/{event.id}/accuracy",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_event_accuracy_allows_superadmin(client, db_session: Session):
+    """A superadmin can read accuracy telemetry for an event they don't own."""
+    owner = User(
+        email=f"accuracy_so_owner_{uuid.uuid4()}@example.com",
+        password_hash=hash_password("password"),
+    )
+    admin = User(
+        email=f"accuracy_superadmin_{uuid.uuid4()}@example.com",
+        password_hash=hash_password("password"),
+        is_superadmin=True,
+    )
+    db_session.add_all([owner, admin])
+    db_session.commit()
+    db_session.refresh(owner)
+    db_session.refresh(admin)
+
+    event = Event(
+        owner_user_id=owner.id,
+        slug=f"accuracy-so-{uuid.uuid4().hex[:8]}",
+        name="Superadmin Accuracy Event",
+        allow_downloads=True,
+        retention_days=90,
+    )
+    db_session.add(event)
+    db_session.commit()
+
+    token = create_access_token(data={"sub": str(admin.id), "email": admin.email})
+    response = client.get(
+        f"/events/{event.id}/accuracy",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200, response.text
+
+
+def test_event_accuracy_empty_event(client, db_session: Session):
+    """An event with no scans/photos returns zeroed counts and the
+    'no obvious accuracy issues' recommendation."""
+    user = User(
+        email=f"accuracy_empty_{uuid.uuid4()}@example.com",
+        password_hash=hash_password("password"),
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+
+    event = Event(
+        owner_user_id=user.id,
+        slug=f"accuracy-empty-{uuid.uuid4().hex[:8]}",
+        name="Empty Accuracy Event",
+        allow_downloads=True,
+        retention_days=90,
+    )
+    db_session.add(event)
+    db_session.commit()
+
+    token = create_access_token(data={"sub": str(user.id), "email": user.email})
+    response = client.get(
+        f"/events/{event.id}/accuracy",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["scan_summary"]["total_scans"] == 0
+    assert data["match_quality"]["candidate_count"] == 0
+    assert data["score_buckets"] == []
+    assert data["problem_scans"] == []
+    assert len(data["recommendations"]) == 1
+    assert data["recommendations"][0]["level"] == "success"
+    assert data["recommendations"][0]["title"] == "No obvious accuracy issues"
+
+
+def test_event_accuracy_problem_scans_and_buckets(client, db_session: Session):
+    """A zero-match scan with near-miss candidates surfaces as a problem
+    scan, and its candidates land in a score bucket."""
+    user = User(
+        email=f"accuracy_problem_{uuid.uuid4()}@example.com",
+        password_hash=hash_password("password"),
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+
+    event = Event(
+        owner_user_id=user.id,
+        slug=f"accuracy-problem-{uuid.uuid4().hex[:8]}",
+        name="Problem Accuracy Event",
+        allow_downloads=True,
+        retention_days=90,
+    )
+    db_session.add(event)
+    db_session.commit()
+    db_session.refresh(event)
+
+    image = Image(
+        event_id=event.id,
+        filename="near.jpg",
+        file_hash=f"hash-{uuid.uuid4()}",
+        size_bytes=1024,
+        status="indexed",
+        face_count=1,
+    )
+    db_session.add(image)
+    db_session.commit()
+    db_session.refresh(image)
+
+    scan_id = uuid.uuid4()
+    session_id = uuid.uuid4()
+    # Two filtered candidates for one scan, both within the near-miss window
+    # (threshold 0.87, window 0.03 -> raw >= 0.84 counts as a near miss).
+    db_session.add_all([
+        ScanMatchMetric(
+            scan_id=scan_id, session_id=session_id, event_id=event.id, image_id=image.id,
+            raw_similarity=0.855, scored_similarity=0.855, score_gap=None,
+            frame_count=1, threshold_used=0.87, passed=False,
+            face_min_side_px=200, quality_score=0.9,
+        ),
+        ScanMatchMetric(
+            scan_id=scan_id, session_id=session_id, event_id=event.id, image_id=image.id,
+            raw_similarity=0.86, scored_similarity=0.862, score_gap=None,
+            frame_count=2, threshold_used=0.87, passed=False,
+            face_min_side_px=200, quality_score=0.9,
+        ),
+    ])
+    db_session.commit()
+
+    token = create_access_token(data={"sub": str(user.id), "email": user.email})
+    response = client.get(
+        f"/events/{event.id}/accuracy",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert len(data["problem_scans"]) == 1
+    problem = data["problem_scans"][0]
+    assert problem["scan_id"] == str(scan_id)
+    assert problem["candidate_count"] == 2
+    assert problem["near_miss_count"] == 2
+    assert problem["max_raw_similarity"] == 0.86
+    # Both candidates score into the 0.85-0.90 band, neither passed.
+    bucket = next(b for b in data["score_buckets"] if b["bucket"] == "0.85-0.90")
+    assert bucket["passed"] == 0
+    assert bucket["filtered"] == 2
+    assert data["match_quality"]["near_miss_candidates"] == 2
 
 def test_list_events_ownership_filtering(db_session: Session):
     """Test that list events only returns events owned by the current user"""
