@@ -467,7 +467,7 @@ export default function FaceScanner() {
     }
 
     // Convert to base64
-    return canvas.toDataURL('image/jpeg', 0.9)
+    return canvas.toDataURL('image/jpeg', 0.95)
   }
 
   const handleScan = async () => {

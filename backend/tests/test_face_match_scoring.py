@@ -41,6 +41,81 @@ def test_repeated_frame_evidence_ranks_higher_than_one_frame_evidence():
     assert scored[0].frame_count == 3
 
 
+def test_repeated_near_threshold_frames_can_pass():
+    config = MatchScoringConfig(
+        large_threshold=0.87,
+        multi_frame_bonus=0.015,
+        consistency_bonus_weight=0.01,
+    )
+    rows = {
+        "s/a/0": FaceRow([0, 0, 200, 200], quality_score=0.70),
+    }
+    candidates = [
+        CandidateMatch("s/a/0", "a", 0.855, 0),
+        CandidateMatch("s/a/0", "a", 0.858, 1),
+        CandidateMatch("s/a/0", "a", 0.856, 2),
+    ]
+    scored = aggregate_face_matches(candidates, rows, config)
+    assert [item.image_id for item in scored] == ["a"]
+    assert scored[0].raw_similarity < 0.87
+    assert scored[0].similarity >= 0.87
+    assert scored[0].frame_count == 3
+
+
+def test_diagnostic_marks_repeated_near_threshold_frames_as_passed():
+    config = MatchScoringConfig(
+        large_threshold=0.87,
+        multi_frame_bonus=0.015,
+        consistency_bonus_weight=0.01,
+    )
+    rows = {
+        "s/a/0": FaceRow([0, 0, 200, 200], quality_score=0.70),
+    }
+    candidates = [
+        CandidateMatch("s/a/0", "a", 0.855, 0),
+        CandidateMatch("s/a/0", "a", 0.858, 1),
+        CandidateMatch("s/a/0", "a", 0.856, 2),
+    ]
+    diagnostics = score_candidates_diagnostic(candidates, rows, config)
+    assert len(diagnostics) == 1
+    assert diagnostics[0].passed is True
+    assert diagnostics[0].raw_similarity < diagnostics[0].threshold_used
+    assert diagnostics[0].scored_similarity >= diagnostics[0].threshold_used
+    assert diagnostics[0].frame_count == 3
+
+
+def test_repeated_frames_still_fail_when_bonuses_do_not_clear_threshold():
+    config = MatchScoringConfig(
+        large_threshold=0.87,
+        multi_frame_bonus=0.015,
+        consistency_bonus_weight=0.01,
+    )
+    rows = {
+        "s/a/0": FaceRow([0, 0, 200, 200], quality_score=0.70),
+    }
+    candidates = [
+        CandidateMatch("s/a/0", "a", 0.820, 0),
+        CandidateMatch("s/a/0", "a", 0.822, 1),
+        CandidateMatch("s/a/0", "a", 0.821, 2),
+    ]
+    assert aggregate_face_matches(candidates, rows, config) == []
+
+
+def test_single_near_threshold_frame_is_not_rescued():
+    config = MatchScoringConfig(
+        large_threshold=0.87,
+        multi_frame_bonus=0.015,
+        consistency_bonus_weight=0.01,
+    )
+    rows = {
+        "s/a/0": FaceRow([0, 0, 200, 200], quality_score=0.70),
+    }
+    candidates = [
+        CandidateMatch("s/a/0", "a", 0.865, 0),
+    ]
+    assert aggregate_face_matches(candidates, rows, config) == []
+
+
 def test_small_faces_need_the_small_face_floor():
     config = MatchScoringConfig(small_threshold=0.93)
     rows = {
