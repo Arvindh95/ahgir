@@ -24,8 +24,8 @@ html {
   --lumiere-accent: #d4a574;
   --lumiere-accent-2: #8b6f4e;
   --lumiere-border: #2a211a;
-  --font-display: "Instrument Serif", "EB Garamond", Georgia, serif;
-  --font-body: "Geist", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-display: "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-body: "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, monospace;
 }
 
