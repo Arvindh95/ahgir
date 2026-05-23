@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&family=Geist:wght@300..700&family=Geist+Mono:wght@400;500&display=swap");
 
 @tailwind base;
 @tailwind components;
@@ -15,6 +15,17 @@ html {
 
 :root {
   --font-inter: "Inter", sans-serif;
+  /* Atelier theme — cream editorial */
+  --atelier-bg: #f4ecdc;
+  --atelier-paper: #faf5e7;
+  --atelier-ink: #1f1813;
+  --atelier-muted: #857560;
+  --atelier-accent: #b85a3c;
+  --atelier-accent-2: #5c6e4a;
+  --atelier-border: #d8c9ae;
+  --font-display: "Instrument Serif", Georgia, serif;
+  --font-body: "Geist", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, monospace;
 }
 
 body {
@@ -23,6 +34,33 @@ body {
   font-family: "Inter", sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* Atelier pages opt-in by wrapping in .atelier — overrides base body styles */
+.atelier {
+  background-color: var(--atelier-bg);
+  color: var(--atelier-ink);
+  font-family: var(--font-body);
+}
+
+/* Marquee for EventTicker */
+@keyframes atelier-marquee {
+  0% {
+    transform: translateY(0);
+  }
+  100% {
+    transform: translateY(-50%);
+  }
+}
+
+@keyframes atelier-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
 }
 
 .glass-card {

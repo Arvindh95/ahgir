@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/router'
 import Head from 'next/head'
 import api from '@/lib/api'
-import { Calendar, MapPin, Eye, Loader2, ArrowRight } from 'lucide-react'
+import { Loader2 } from 'lucide-react'
+import { ATELIER, Scene } from '@/components/atelier'
 
 interface EventInfo {
   event_id: string
@@ -14,7 +15,29 @@ interface EventInfo {
   cover_image_url?: string
 }
 
+// Split "Maria & David" into a first + rest pair so we can italicize the
+// post-ampersand half the way the mockup does. Falls back to a single line
+// if the name doesn't follow that pattern.
+function splitName(name: string): { head: string; tail?: string } {
+  const m = name.match(/^(.+?)\s*([&×x])\s*(.+)$/i)
+  if (!m) return { head: name }
+  return { head: m[1].trim(), tail: `${m[2]} ${m[3].trim()}` }
+}
+
+function formatDate(iso?: string): { day: string; full: string } | null {
+  if (!iso) return null
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return null
+  const full = d.toLocaleDateString('en-US', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  })
+  return { day: full, full }
+}
+
 export default function GuestEventAccess() {
+  const t = ATELIER
   const router = useRouter()
   const { slug } = router.query
 
@@ -23,11 +46,9 @@ export default function GuestEventAccess() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [authenticating, setAuthenticating] = useState(false)
-  const [showPasscode, setShowPasscode] = useState(false)
 
   useEffect(() => {
     if (!slug) return
-
     const fetchEventInfo = async () => {
       try {
         setLoading(true)
@@ -44,28 +65,23 @@ export default function GuestEventAccess() {
         setLoading(false)
       }
     }
-
     fetchEventInfo()
   }, [slug])
 
   const handleAuthenticate = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!eventInfo) return
-
     try {
       setAuthenticating(true)
       setError('')
-
       const payload = eventInfo.requires_passcode ? { passcode } : {}
       // Token comes back as an HttpOnly cookie set by the backend (picur_event),
-      // not in the response body. We can't (and don't need to) touch it from
-      // JS. The non-sensitive metadata that downstream pages render lives in
-      // sessionStorage — per-tab, cleared on close, useless to an XSS payload.
+      // not in the response body. The non-sensitive metadata that downstream
+      // pages render lives in sessionStorage — per-tab, cleared on close.
       const response = await api.post(`/e/${slug}/auth`, payload)
       sessionStorage.setItem('event_id', response.data.event_id)
       sessionStorage.setItem('event_name', response.data.event_name)
       sessionStorage.setItem('allow_downloads', String(response.data.allow_downloads))
-
       router.push(`/e/${slug}/scan`)
     } catch (err: any) {
       if (err.response?.status === 401) {
@@ -80,18 +96,78 @@ export default function GuestEventAccess() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-black flex items-center justify-center">
-        <Loader2 className="w-8 h-8 text-white animate-spin" />
+      <div
+        className="atelier"
+        style={{
+          minHeight: '100vh',
+          background: t.bg,
+          color: t.ink,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <Loader2 className="animate-spin" size={32} style={{ color: t.accent }} />
       </div>
     )
   }
 
   if (error && !eventInfo) {
     return (
-      <div className="min-h-screen bg-black flex items-center justify-center p-4">
-        <div className="glass-card max-w-md w-full p-8 rounded-2xl text-center">
-          <h1 className="text-2xl font-bold text-red-500 mb-2">Error</h1>
-          <p className="text-gray-300">{error}</p>
+      <div
+        className="atelier px-6"
+        style={{
+          minHeight: '100vh',
+          background: t.bg,
+          color: t.ink,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <div
+          style={{
+            maxWidth: 480,
+            padding: '40px',
+            background: t.paper,
+            border: `1px solid ${t.border}`,
+            textAlign: 'center',
+          }}
+        >
+          <div
+            style={{
+              fontFamily: t.monoFont,
+              fontSize: 11,
+              letterSpacing: '0.16em',
+              color: t.accent,
+              marginBottom: 12,
+              textTransform: 'uppercase',
+            }}
+          >
+            · WE COULDN&apos;T FIND THAT EVENT
+          </div>
+          <h1
+            style={{
+              fontFamily: t.displayFont,
+              fontWeight: 400,
+              fontSize: 48,
+              lineHeight: 1,
+              margin: 0,
+              letterSpacing: '-0.02em',
+            }}
+          >
+            <span style={{ fontStyle: 'italic' }}>Not found.</span>
+          </h1>
+          <p
+            style={{
+              marginTop: 16,
+              fontFamily: t.bodyFont,
+              fontSize: 14,
+              color: `${t.ink}aa`,
+            }}
+          >
+            {error}
+          </p>
         </div>
       </div>
     )
@@ -99,127 +175,330 @@ export default function GuestEventAccess() {
 
   if (!eventInfo) return null
 
-  const hasCover = !!eventInfo.cover_image_url
+  const { head, tail } = splitName(eventInfo.name)
+  const dateFmt = formatDate(eventInfo.date)
 
   return (
-    <div className="min-h-screen relative text-white overflow-hidden">
-      <Head><title>Event - PicUr</title></Head>
-      {/* Background: cover image or dark gradient */}
-      {hasCover ? (
-        <>
-          <div className="absolute inset-0 bg-black" />
-          <img
-            src={eventInfo.cover_image_url}
-            alt=""
-            className="absolute inset-0 w-full h-full object-cover object-center"
-          />
-          {/* Dark overlay for readability */}
-          <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-black/50 to-black/80" />
-        </>
-      ) : (
-        <div className="absolute inset-0 bg-gradient-to-br from-black via-[#0a0a0a] to-[#050505]">
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-blue-500/10 rounded-full blur-[120px]" />
-        </div>
-      )}
+    <div
+      className="atelier"
+      style={{
+        minHeight: '100vh',
+        background: t.bg,
+        color: t.ink,
+        fontFamily: t.bodyFont,
+        overflow: 'hidden',
+      }}
+    >
+      <Head>
+        <title>{eventInfo.name} — PicUr</title>
+      </Head>
 
-      {/* Content */}
-      <div className="relative z-10 min-h-screen flex flex-col">
-        {/* Top nav placeholder for branding */}
-        <nav className="flex items-center justify-between px-6 py-4">
-          <div className="w-10 h-10" />
-          {/* "View My Photos" button shown after auth would go here */}
-        </nav>
+      <style>{`
+        .atelier-event-grid {
+          display: grid;
+          grid-template-columns: 1fr;
+          min-height: 100vh;
+        }
+        @media (min-width: 900px) {
+          .atelier-event-grid {
+            grid-template-columns: 1.1fr 1fr;
+          }
+        }
+        .atelier-event-name { font-size: clamp(56px, 12vw, 96px); line-height: 0.95; letter-spacing: -0.025em; }
+      `}</style>
 
-        {/* Hero content - centered vertically */}
-        <div className="flex-1 flex flex-col items-center justify-center px-4 pb-16">
-          {/* Event Title */}
-          <h1 className="text-5xl md:text-7xl font-bold text-center leading-tight tracking-tight mb-4 drop-shadow-lg">
-            {eventInfo.name}
-          </h1>
-
-          {/* Description */}
-          {eventInfo.description && (
-            <p className="text-lg md:text-xl text-gray-200 text-center max-w-2xl mx-auto mb-6 drop-shadow">
-              {eventInfo.description}
-            </p>
+      <div className="atelier-event-grid">
+        {/* ========== LEFT: COVER PHOTO ========== */}
+        <div style={{ position: 'relative', minHeight: 320 }}>
+          {eventInfo.cover_image_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={eventInfo.cover_image_url}
+              alt=""
+              style={{
+                position: 'absolute',
+                inset: 0,
+                width: '100%',
+                height: '100%',
+                objectFit: 'cover',
+              }}
+            />
+          ) : (
+            <Scene
+              tone="cream"
+              aspect="auto"
+              style={{ height: '100%', aspectRatio: 'auto', position: 'absolute', inset: 0 }}
+            />
           )}
-
-          {/* CTA Card */}
-          <div className="w-full max-w-md mt-4">
-            <div className={`rounded-2xl p-6 md:p-8 ${hasCover ? 'bg-black/60 backdrop-blur-md border border-white/10' : 'glass-card'}`}>
-              <form onSubmit={handleAuthenticate} className="space-y-5">
-                {eventInfo.requires_passcode && (
-                  <div className="space-y-2">
-                    <label htmlFor="passcode" className="block text-sm font-medium text-gray-300 ml-1">
-                      Event Passcode
-                    </label>
-                    <input
-                      id="passcode"
-                      type="password"
-                      value={passcode}
-                      onChange={(e) => setPasscode(e.target.value)}
-                      placeholder="Enter passcode"
-                      className="w-full px-4 py-3 rounded-xl bg-white/10 border border-white/15 focus:border-white/40 focus:outline-none text-white placeholder:text-gray-500 transition-all"
-                      required
-                      disabled={authenticating}
-                    />
-                  </div>
-                )}
-
-                {error && (
-                  <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm text-center">
-                    {error}
-                  </div>
-                )}
-
-                <button
-                  type="submit"
-                  disabled={authenticating}
-                  className="group w-full bg-white text-black font-semibold py-3.5 px-4 rounded-xl hover:bg-gray-100 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
-                >
-                  {authenticating ? (
-                    <>
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      <span>Verifying...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Eye className="w-5 h-5" />
-                      <span>Browse My Photos</span>
-                      <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
-                    </>
-                  )}
-                </button>
-              </form>
-            </div>
+          <div
+            style={{
+              position: 'absolute',
+              top: 28,
+              left: 28,
+              fontFamily: t.displayFont,
+              fontStyle: 'italic',
+              fontSize: 28,
+              color: t.paper,
+              textShadow: `0 2px 16px ${t.ink}88`,
+            }}
+          >
+            Picur
           </div>
-
-          {/* Location & Date footer */}
-          <div className="flex items-center justify-center gap-6 mt-8 text-gray-300 text-sm md:text-base">
-            {eventInfo.location && (
-              <div className="flex items-center gap-2">
-                <MapPin className="w-4 h-4" />
-                <span>{eventInfo.location}</span>
-              </div>
-            )}
-            {eventInfo.date && (
-              <div className="flex items-center gap-2">
-                <Calendar className="w-4 h-4" />
-                <span>
-                  {new Date(eventInfo.date).toLocaleDateString('en-US', {
-                    day: 'numeric',
-                    month: 'short',
-                    year: 'numeric'
-                  })}
-                </span>
-              </div>
-            )}
+          <div
+            style={{
+              position: 'absolute',
+              bottom: 24,
+              left: 28,
+              right: 28,
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 18,
+              fontFamily: t.monoFont,
+              fontSize: 10,
+              letterSpacing: '0.14em',
+              color: t.paper,
+              textTransform: 'uppercase',
+              textShadow: `0 2px 6px ${t.ink}88`,
+            }}
+          >
+            {eventInfo.location && <span>· {eventInfo.location}</span>}
+            {dateFmt && <span>· {dateFmt.full}</span>}
           </div>
         </div>
 
-        {/* Footer */}
-        <div className="text-center text-gray-500 text-xs pb-4">
-          <p>© {new Date().getFullYear()} PicUr. All rights reserved.</p>
+        {/* ========== RIGHT: INVITATION CARD ========== */}
+        <div
+          className="px-6 sm:px-10 lg:px-16 py-12 lg:py-16"
+          style={{
+            background: t.paper,
+            backgroundImage: `repeating-linear-gradient(0deg, ${t.border}22 0 1px, transparent 1px 28px)`,
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'space-between',
+            gap: 32,
+          }}
+        >
+          <div>
+            <div
+              style={{
+                fontFamily: t.monoFont,
+                fontSize: 10,
+                letterSpacing: '0.22em',
+                color: t.accent,
+                marginBottom: 28,
+                textTransform: 'uppercase',
+              }}
+            >
+              · YOU ARE INVITED TO COLLECT
+            </div>
+            <div
+              style={{
+                fontFamily: t.displayFont,
+                fontWeight: 400,
+                fontSize: 22,
+                color: t.muted,
+                fontStyle: 'italic',
+                marginBottom: 14,
+              }}
+            >
+              the photographs from
+            </div>
+            <h1
+              className="atelier-event-name"
+              style={{
+                fontFamily: t.displayFont,
+                fontWeight: 400,
+                margin: 0,
+              }}
+            >
+              {head}
+              {tail && (
+                <>
+                  <br />
+                  <span style={{ fontStyle: 'italic' }}>{tail}</span>
+                </>
+              )}
+            </h1>
+
+            {(eventInfo.location || dateFmt) && (
+              <div
+                className="flex flex-wrap gap-x-9 gap-y-4"
+                style={{
+                  marginTop: 32,
+                  marginBottom: 32,
+                  padding: '18px 0',
+                  borderTop: `1px solid ${t.ink}22`,
+                  borderBottom: `1px solid ${t.ink}22`,
+                }}
+              >
+                {dateFmt && (
+                  <div>
+                    <div
+                      style={{
+                        fontFamily: t.monoFont,
+                        fontSize: 10,
+                        letterSpacing: '0.16em',
+                        color: t.muted,
+                        marginBottom: 6,
+                        textTransform: 'uppercase',
+                      }}
+                    >
+                      DATE
+                    </div>
+                    <div style={{ fontFamily: t.displayFont, fontStyle: 'italic', fontSize: 22 }}>
+                      {dateFmt.full}
+                    </div>
+                  </div>
+                )}
+                {eventInfo.location && (
+                  <div>
+                    <div
+                      style={{
+                        fontFamily: t.monoFont,
+                        fontSize: 10,
+                        letterSpacing: '0.16em',
+                        color: t.muted,
+                        marginBottom: 6,
+                        textTransform: 'uppercase',
+                      }}
+                    >
+                      PLACE
+                    </div>
+                    <div style={{ fontFamily: t.displayFont, fontStyle: 'italic', fontSize: 22 }}>
+                      {eventInfo.location}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <p
+              style={{
+                fontFamily: t.displayFont,
+                fontStyle: 'italic',
+                fontSize: 'clamp(18px, 2.2vw, 22px)',
+                lineHeight: 1.4,
+                color: `${t.ink}cc`,
+                maxWidth: 460,
+                margin: '0 0 24px',
+              }}
+            >
+              {eventInfo.description ||
+                'Take a quick selfie below and every photo of you, captured that day, will be yours to keep.'}
+            </p>
+          </div>
+
+          <form onSubmit={handleAuthenticate}>
+            {eventInfo.requires_passcode && (
+              <div style={{ marginBottom: 18 }}>
+                <label
+                  htmlFor="passcode"
+                  style={{
+                    fontFamily: t.monoFont,
+                    fontSize: 10,
+                    letterSpacing: '0.16em',
+                    color: t.muted,
+                    display: 'block',
+                    marginBottom: 8,
+                    textTransform: 'uppercase',
+                  }}
+                >
+                  EVENT PASSCODE
+                </label>
+                <input
+                  id="passcode"
+                  type="password"
+                  value={passcode}
+                  onChange={(e) => setPasscode(e.target.value)}
+                  placeholder="• • • • • •"
+                  required
+                  disabled={authenticating}
+                  style={{
+                    width: '100%',
+                    padding: '16px 18px',
+                    background: t.bg,
+                    border: `1px solid ${t.border}`,
+                    fontFamily: t.bodyFont,
+                    fontSize: 16,
+                    color: t.ink,
+                    outline: 'none',
+                    letterSpacing: '0.04em',
+                  }}
+                />
+              </div>
+            )}
+
+            {error && (
+              <div
+                style={{
+                  marginBottom: 16,
+                  padding: '12px 16px',
+                  background: `${t.accent}15`,
+                  border: `1px solid ${t.accent}55`,
+                  color: t.accent,
+                  fontFamily: t.bodyFont,
+                  fontSize: 13,
+                  textAlign: 'center',
+                }}
+              >
+                {error}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={authenticating}
+              style={{
+                width: '100%',
+                padding: '20px',
+                background: t.ink,
+                color: t.paper,
+                border: 'none',
+                fontFamily: t.bodyFont,
+                fontWeight: 600,
+                fontSize: 16,
+                cursor: authenticating ? 'wait' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 12,
+                opacity: authenticating ? 0.7 : 1,
+              }}
+            >
+              {authenticating ? (
+                <>
+                  <Loader2 className="animate-spin" size={18} />
+                  <span>Verifying…</span>
+                </>
+              ) : (
+                <>
+                  <span
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: '50%',
+                      background: t.accent,
+                    }}
+                  />
+                  Take selfie &amp; find my photos →
+                </>
+              )}
+            </button>
+            <div
+              className="flex justify-between flex-wrap gap-y-2"
+              style={{
+                marginTop: 18,
+                fontFamily: t.monoFont,
+                fontSize: 9,
+                letterSpacing: '0.14em',
+                color: t.muted,
+                textTransform: 'uppercase',
+              }}
+            >
+              <span>· No app required</span>
+              <span>· Photos auto-delete after the event</span>
+            </div>
+          </form>
         </div>
       </div>
     </div>
