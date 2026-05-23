@@ -1,93 +1,240 @@
 import Head from 'next/head'
 import { Mail, Clock } from 'lucide-react'
-import PublicLayout from '@/components/PublicLayout'
-import { FadeIn } from '@/components/FadeIn'
+import { LumiereLayout, LUMIERE } from '@/components/lumiere'
 
 export default function Contact() {
+  const t = LUMIERE
   return (
-    <PublicLayout>
+    <LumiereLayout>
       <Head>
-        <title>Contact PicUr - Get in Touch</title>
-        <meta name="description" content="Contact PicUr - Get in touch with our team for questions, feedback, or support." />
+        <meta
+          name="description"
+          content="Contact PicUr — get in touch with our team for questions, feedback, or beta access."
+        />
       </Head>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 md:py-24">
-        <FadeIn>
-          <div className="text-center mb-16">
-            <h1 className="text-3xl md:text-5xl font-bold mb-6 tracking-tight">Get in Touch</h1>
-            <p className="text-gray-400 text-xl max-w-xl mx-auto font-light">
-              Have questions, feedback, or need support? We&apos;d love to hear from you.
-            </p>
+      <style>{`
+        .lumiere-contact-h1 { font-size: clamp(40px, 7vw, 88px); line-height: 0.95; letter-spacing: -0.02em; }
+      `}</style>
+
+      <section className="px-6 sm:px-10 lg:px-14 py-16 lg:py-24">
+        <div className="max-w-[1100px] mx-auto">
+          <div
+            style={{
+              fontFamily: t.monoFont,
+              fontSize: 11,
+              letterSpacing: '0.26em',
+              color: t.accent,
+              marginBottom: 16,
+              textTransform: 'uppercase',
+            }}
+          >
+            — GET IN TOUCH —
           </div>
-        </FadeIn>
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 md:gap-16 max-w-6xl mx-auto">
-          {/* About */}
-          <FadeIn delay={0.2}>
-            <div>
-              <h2 className="text-2xl font-bold mb-6">About PicUr</h2>
-              <div className="space-y-4 text-gray-300 leading-relaxed font-light text-lg">
-                <p>
-                  PicUr is an AI-powered photo sharing platform built for events. Whether it&apos;s a wedding, corporate event, birthday party, or conference — we make it effortless for guests to find and download their photos.
-                </p>
-                <p>
-                  Simply upload your event photos, share a link with your guests, and let our face recognition technology do the rest. Guests take a quick selfie and instantly find all their photos from the event.
-                </p>
-                <p>
-                  Built with privacy in mind. All face recognition processing happens on our own secure servers. Face data is never shared with third parties.
-                </p>
-              </div>
-            </div>
-          </FadeIn>
-
-          {/* Contact Card */}
-          <FadeIn delay={0.4}>
-            <div className="glass-card rounded-3xl p-8 md:p-10 border border-white/10">
-              <h2 className="text-xl font-bold mb-8">Contact Us</h2>
-
-              <div className="space-y-8">
-                <div className="flex items-start gap-5">
-                  <div className="w-12 h-12 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center flex-shrink-0">
-                    <Mail className="w-6 h-6 text-blue-400" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-semibold text-white mb-1">Email</h3>
-                    <a
-                      href="mailto:support@picur.my"
-                      className="text-blue-400 hover:text-blue-300 transition-colors text-lg"
-                    >
-                      support@picur.my
-                    </a>
-                    <p className="text-gray-500 text-sm mt-1">For general inquiries and support</p>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-5">
-                  <div className="w-12 h-12 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center flex-shrink-0">
-                    <Clock className="w-6 h-6 text-blue-400" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-semibold text-white mb-1">Response Time</h3>
-                    <p className="text-gray-300">Within 24 hours</p>
-                    <p className="text-gray-500 text-sm mt-1">We typically respond much faster</p>
-                  </div>
-                </div>
-
-              </div>
-
-              <div className="mt-10 pt-8 border-t border-white/10">
-                <a
-                  href="mailto:support@picur.my"
-                  className="inline-flex items-center justify-center gap-2 w-full bg-white text-black font-semibold py-4 rounded-xl hover:bg-gray-100 transition-all active:scale-[0.98] text-lg"
-                >
-                  <Mail className="w-5 h-5" />
-                  Send us an Email
-                </a>
-              </div>
-            </div>
-          </FadeIn>
+          <h1
+            className="lumiere-contact-h1"
+            style={{ fontFamily: t.displayFont, fontWeight: 400, margin: 0, color: t.ink }}
+          >
+            We&apos;d love to <span style={{ fontStyle: 'italic', color: t.accent }}>hear from you.</span>
+          </h1>
+          <p
+            style={{
+              fontFamily: t.displayFont,
+              fontStyle: 'italic',
+              fontSize: 'clamp(18px, 2.2vw, 24px)',
+              color: t.inkDim,
+              maxWidth: 620,
+              marginTop: 24,
+              lineHeight: 1.4,
+            }}
+          >
+            Questions, feedback, beta access, custom event quotes — write to us and we&apos;ll write back personally.
+          </p>
         </div>
-      </div>
-    </PublicLayout>
+      </section>
+
+      <section className="px-6 sm:px-10 lg:px-14 pb-20 lg:pb-28">
+        <div className="max-w-[1100px] mx-auto grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-16">
+          <div>
+            <div
+              style={{
+                fontFamily: t.monoFont,
+                fontSize: 11,
+                letterSpacing: '0.22em',
+                color: t.accent,
+                marginBottom: 16,
+                textTransform: 'uppercase',
+              }}
+            >
+              · ABOUT PICUR
+            </div>
+            <div
+              style={{
+                fontFamily: t.bodyFont,
+                fontSize: 16,
+                lineHeight: 1.65,
+                color: t.inkDim,
+              }}
+            >
+              <p style={{ margin: '0 0 18px' }}>
+                PicUr is an AI-powered photo sharing platform built for events — weddings, conferences, family reunions. Photographers upload, guests find themselves with a selfie.
+              </p>
+              <p style={{ margin: '0 0 18px' }}>
+                Built private from the start. Face recognition runs on hardware we own, embeddings are math not photos, and every event auto-deletes on a timer you choose.
+              </p>
+              <p style={{ margin: 0 }}>
+                We&apos;re a small team. Emails land in a real inbox, not a ticketing maze.
+              </p>
+            </div>
+          </div>
+
+          <div
+            style={{
+              padding: '36px',
+              background: t.paper,
+              border: `1px solid ${t.border}`,
+            }}
+          >
+            <div
+              style={{
+                fontFamily: t.monoFont,
+                fontSize: 11,
+                letterSpacing: '0.22em',
+                color: t.accent,
+                marginBottom: 24,
+                textTransform: 'uppercase',
+              }}
+            >
+              · WAYS TO REACH US
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
+              <div style={{ display: 'flex', gap: 20 }}>
+                <div
+                  style={{
+                    width: 44,
+                    height: 44,
+                    background: `${t.accent}1a`,
+                    border: `1px solid ${t.accent}55`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flex: '0 0 auto',
+                  }}
+                >
+                  <Mail size={20} color={t.accent} />
+                </div>
+                <div>
+                  <div
+                    style={{
+                      fontFamily: t.monoFont,
+                      fontSize: 10,
+                      letterSpacing: '0.18em',
+                      color: t.muted,
+                      textTransform: 'uppercase',
+                      marginBottom: 4,
+                    }}
+                  >
+                    EMAIL
+                  </div>
+                  <a
+                    href="mailto:support@picur.my"
+                    style={{
+                      fontFamily: t.displayFont,
+                      fontStyle: 'italic',
+                      fontSize: 22,
+                      color: t.ink,
+                      textDecoration: 'none',
+                    }}
+                  >
+                    support@picur.my
+                  </a>
+                  <p
+                    style={{
+                      fontFamily: t.bodyFont,
+                      fontSize: 13,
+                      color: t.muted,
+                      marginTop: 6,
+                      marginBottom: 0,
+                    }}
+                  >
+                    General questions, beta access, custom quotes.
+                  </p>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 20 }}>
+                <div
+                  style={{
+                    width: 44,
+                    height: 44,
+                    background: `${t.accent}1a`,
+                    border: `1px solid ${t.accent}55`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flex: '0 0 auto',
+                  }}
+                >
+                  <Clock size={20} color={t.accent} />
+                </div>
+                <div>
+                  <div
+                    style={{
+                      fontFamily: t.monoFont,
+                      fontSize: 10,
+                      letterSpacing: '0.18em',
+                      color: t.muted,
+                      textTransform: 'uppercase',
+                      marginBottom: 4,
+                    }}
+                  >
+                    RESPONSE TIME
+                  </div>
+                  <div
+                    style={{
+                      fontFamily: t.displayFont,
+                      fontStyle: 'italic',
+                      fontSize: 22,
+                      color: t.ink,
+                    }}
+                  >
+                    Within 24 hours
+                  </div>
+                  <p
+                    style={{
+                      fontFamily: t.bodyFont,
+                      fontSize: 13,
+                      color: t.muted,
+                      marginTop: 6,
+                      marginBottom: 0,
+                    }}
+                  >
+                    Usually much faster. We read every email.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <a
+              href="mailto:support@picur.my"
+              style={{
+                display: 'block',
+                marginTop: 32,
+                padding: '16px 20px',
+                background: t.accent,
+                color: t.bg,
+                fontFamily: t.bodyFont,
+                fontSize: 15,
+                fontWeight: 600,
+                letterSpacing: '0.04em',
+                textAlign: 'center',
+                textDecoration: 'none',
+              }}
+            >
+              SEND US AN EMAIL →
+            </a>
+          </div>
+        </div>
+      </section>
+    </LumiereLayout>
   )
 }

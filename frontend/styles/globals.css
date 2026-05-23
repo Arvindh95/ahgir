@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&family=Geist:wght@300..700&family=Geist+Mono:wght@400;500&display=swap");
 
 @tailwind base;
 @tailwind components;
@@ -15,6 +15,18 @@ html {
 
 :root {
   --font-inter: "Inter", sans-serif;
+  /* Lumière theme — warm cinematic dark */
+  --lumiere-bg: #0e0b08;
+  --lumiere-paper: #181410;
+  --lumiere-ink: #efe3cb;
+  --lumiere-ink-dim: #c9bca0;
+  --lumiere-muted: #7e705b;
+  --lumiere-accent: #d4a574;
+  --lumiere-accent-2: #8b6f4e;
+  --lumiere-border: #2a211a;
+  --font-display: "Instrument Serif", "EB Garamond", Georgia, serif;
+  --font-body: "Geist", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, monospace;
 }
 
 body {
@@ -67,4 +79,31 @@ body {
 
 .toast-slide-in {
   animation: toast-slide-in 0.25s ease-out;
+}
+
+/* Lumière pages opt-in via .lumiere wrapper — overrides base body styles */
+.lumiere {
+  background-color: var(--lumiere-bg);
+  color: var(--lumiere-ink);
+  font-family: var(--font-body);
+}
+
+/* Marquee for EventTicker */
+@keyframes lumiere-marquee {
+  0% {
+    transform: translateY(0);
+  }
+  100% {
+    transform: translateY(-50%);
+  }
+}
+
+@keyframes lumiere-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
 }
