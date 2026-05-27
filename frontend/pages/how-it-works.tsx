@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import Link from 'next/link'
 import {
   Upload,
@@ -14,9 +15,13 @@ import {
 import PublicLayout from '@/components/PublicLayout'
 import { FadeIn, FadeInStagger } from '@/components/FadeIn'
 
-// Gradient swatches for the placeholder photo tiles in the mockups. Kept on
-// the warm/cool spectrum so the grids read as "real photos" without any
-// asset files — these are pure CSS until real screenshots/gifs are dropped in.
+// Real photos live in /public/how-it-works/. Until a file is present, each tile
+// falls back to a CSS gradient (see PhotoTile) so the page never looks broken.
+const UPLOAD_PHOTOS = Array.from({ length: 8 }, (_, i) => `/how-it-works/upload-${i + 1}.jpg`)
+const RESULT_PHOTOS = Array.from({ length: 10 }, (_, i) => `/how-it-works/result-${i + 1}.jpg`)
+const SCAN_PHOTO = '/how-it-works/scan.jpg'
+
+// Gradient fallbacks for any tile whose photo hasn't been added yet.
 const TILE_GRADIENTS = [
   'from-blue-500/40 to-cyan-400/20',
   'from-purple-500/40 to-pink-400/20',
@@ -28,6 +33,24 @@ const TILE_GRADIENTS = [
   'from-fuchsia-500/40 to-purple-400/20',
   'from-teal-500/40 to-emerald-400/20',
 ]
+
+// An <img> that swaps to a gradient placeholder if the file is missing / fails.
+function PhotoTile({ src, gradient, className = '' }: { src: string; gradient: string; className?: string }) {
+  const [failed, setFailed] = useState(false)
+  if (failed) {
+    return <div className={`${className} bg-gradient-to-br ${gradient} border border-white/10`} />
+  }
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={src}
+      alt=""
+      loading="lazy"
+      onError={() => setFailed(true)}
+      className={`${className} object-cover w-full h-full border border-white/10`}
+    />
+  )
+}
 
 const STEPS = [
   {
@@ -54,12 +77,16 @@ const STEPS = [
     icon: Images,
     title: 'Their photos appear',
     body:
-      'In a few seconds, every photo a guest appears in shows up in a personal gallery — ready to download one by one or all at once. They only ever see their own matches.',
-    points: ['Results in ~5 seconds', 'One-tap downloads', 'Only their matches'],
+      'In a few seconds, every photo a guest appears in shows up in their own personal gallery — ready to download one by one or all at once. They can stick to just their matches, or browse the entire event gallery whenever they like.',
+    points: [
+      'Results in ~5 seconds',
+      'See just their photos — or the whole gallery',
+      'One-tap downloads',
+    ],
   },
 ]
 
-/* ----------------------------- CSS mockups ----------------------------- */
+/* ----------------------------- visual mockups ----------------------------- */
 
 function UploadMockup() {
   return (
@@ -79,12 +106,14 @@ function UploadMockup() {
         <p className="text-xs text-gray-500">or click to browse</p>
       </div>
 
-      {/* thumbnail grid */}
+      {/* uploaded photo grid */}
       <div className="grid grid-cols-4 gap-2 mb-4">
-        {TILE_GRADIENTS.slice(0, 8).map((g, i) => (
-          <div
-            key={i}
-            className={`aspect-square rounded-lg bg-gradient-to-br ${g} border border-white/5`}
+        {UPLOAD_PHOTOS.map((src, i) => (
+          <PhotoTile
+            key={src}
+            src={src}
+            gradient={TILE_GRADIENTS[i % TILE_GRADIENTS.length]}
+            className="aspect-square rounded-lg overflow-hidden"
           />
         ))}
       </div>
@@ -102,23 +131,35 @@ function UploadMockup() {
 }
 
 function ScanMockup() {
+  const [failed, setFailed] = useState(false)
   return (
     <div className="flex justify-center">
       {/* phone frame */}
       <div className="relative w-[230px] rounded-[2.5rem] border border-white/15 bg-black/60 p-3 shadow-2xl">
         <div className="absolute top-3 left-1/2 -translate-x-1/2 w-20 h-1.5 rounded-full bg-white/15" />
         <div className="relative mt-5 aspect-[9/16] rounded-[1.8rem] overflow-hidden bg-gradient-to-b from-blue-950/40 to-black border border-white/10">
-          {/* viewfinder brackets */}
-          <div className="absolute inset-6 rounded-2xl">
-            <span className="absolute top-0 left-0 w-7 h-7 border-t-2 border-l-2 border-blue-400/70 rounded-tl-xl" />
-            <span className="absolute top-0 right-0 w-7 h-7 border-t-2 border-r-2 border-blue-400/70 rounded-tr-xl" />
-            <span className="absolute bottom-0 left-0 w-7 h-7 border-b-2 border-l-2 border-blue-400/70 rounded-bl-xl" />
-            <span className="absolute bottom-0 right-0 w-7 h-7 border-b-2 border-r-2 border-blue-400/70 rounded-br-xl" />
-          </div>
+          {/* the guest's face (or fallback icon) */}
+          {failed ? (
+            <div className="absolute inset-0 flex items-center justify-center">
+              <ScanFace className="hiw-pulse w-24 h-24 text-blue-300/80" strokeWidth={1.25} />
+            </div>
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={SCAN_PHOTO}
+              alt="Guest scanning their face"
+              onError={() => setFailed(true)}
+              className="absolute inset-0 w-full h-full object-cover"
+            />
+          )}
 
-          {/* face */}
-          <div className="absolute inset-0 flex items-center justify-center">
-            <ScanFace className="hiw-pulse w-24 h-24 text-blue-300/80" strokeWidth={1.25} />
+          {/* dim + viewfinder brackets sit on top of the photo */}
+          <div className="absolute inset-0 bg-blue-950/20" />
+          <div className="absolute inset-6 rounded-2xl">
+            <span className="absolute top-0 left-0 w-7 h-7 border-t-2 border-l-2 border-blue-400/80 rounded-tl-xl" />
+            <span className="absolute top-0 right-0 w-7 h-7 border-t-2 border-r-2 border-blue-400/80 rounded-tr-xl" />
+            <span className="absolute bottom-0 left-0 w-7 h-7 border-b-2 border-l-2 border-blue-400/80 rounded-bl-xl" />
+            <span className="absolute bottom-0 right-0 w-7 h-7 border-b-2 border-r-2 border-blue-400/80 rounded-br-xl" />
           </div>
 
           {/* scanning line */}
@@ -141,7 +182,7 @@ function GalleryMockup() {
       <div className="flex items-center justify-between mb-4">
         <div>
           <p className="text-sm font-bold">Your photos</p>
-          <p className="text-xs text-gray-400">24 matches found</p>
+          <p className="text-xs text-gray-400">{RESULT_PHOTOS.length} matches found</p>
         </div>
         <div className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium">
           <Download className="w-3.5 h-3.5" />
@@ -151,12 +192,12 @@ function GalleryMockup() {
 
       <FadeInStagger faster>
         <div className="grid grid-cols-3 gap-2">
-          {Array.from({ length: 9 }).map((_, i) => (
-            <FadeIn key={i}>
-              <div
-                className={`aspect-square rounded-xl bg-gradient-to-br ${
-                  TILE_GRADIENTS[i % TILE_GRADIENTS.length]
-                } border border-white/10`}
+          {RESULT_PHOTOS.map((src, i) => (
+            <FadeIn key={src}>
+              <PhotoTile
+                src={src}
+                gradient={TILE_GRADIENTS[i % TILE_GRADIENTS.length]}
+                className="aspect-square rounded-xl overflow-hidden"
               />
             </FadeIn>
           ))}
@@ -171,7 +212,7 @@ const MOCKUPS = [UploadMockup, ScanMockup, GalleryMockup]
 export default function HowItWorks() {
   return (
     <PublicLayout>
-      {/* Scoped, prefix-namespaced keyframes for the in-code mockups. */}
+      {/* Prefix-namespaced keyframes for the in-code mockups. */}
       <style jsx global>{`
         @keyframes hiw-scan {
           0% { top: 12%; opacity: 0; }
