@@ -5,7 +5,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from app.auth import SESSION_COOKIE, EVENT_COOKIE
-from app.routers import abuse_reports, admin, auth, events, guest, guest_accuracy, health, payments, photos
+from app.routers import abuse_reports, admin, auth, events, guest, guest_accuracy, health, oauth, payments, photos
 from app.error_handler import register_error_handlers
 from app.config import settings, validate_production_secrets
 
@@ -95,6 +95,7 @@ app.add_middleware(
 app.include_router(abuse_reports.router)
 app.include_router(admin.router)
 app.include_router(auth.router)
+app.include_router(oauth.router)
 app.include_router(events.router)
 app.include_router(guest_accuracy.router)
 app.include_router(guest.router)

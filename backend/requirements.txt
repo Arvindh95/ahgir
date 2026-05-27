@@ -20,3 +20,7 @@ hypothesis==6.98.3
 httpx==0.26.0
 qrcode[pil]==7.4.2
 stripe==15.1.0
+# Verifies Google ID tokens (signature, issuer, audience, expiry) in the
+# OAuth callback instead of hand-rolling JWKS handling. Pulls in
+# google-auth's own deps (rsa, pyasn1, cachetools).
+google-auth==2.29.0

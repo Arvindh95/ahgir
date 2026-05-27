@@ -1,6 +1,7 @@
 import { useState, FormEvent } from 'react'
 import Head from 'next/head'
 import { authService } from '@/lib/auth'
+import GoogleAuthSection from '@/components/GoogleAuthSection'
 import { Loader2, Lock, Mail, UserPlus, CheckCircle, Check, Circle } from 'lucide-react'
 
 const PASSWORD_RULES = [
@@ -163,6 +164,8 @@ export default function Register() {
           <h1 className="text-3xl font-bold mb-2">Create Account</h1>
           <p className="text-gray-400 text-sm">Register to start managing events</p>
         </div>
+
+        <GoogleAuthSection label="Sign up with Google" />
 
         <form onSubmit={handleSubmit} className="space-y-5">
           <div className="space-y-2">

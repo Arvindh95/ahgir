@@ -270,6 +270,9 @@ services:
         # ReportPhotoModal can render the widget. Empty in dev (the widget
         # is then skipped + the backend also skips token verification).
         NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}
+        # "true" reveals the "Continue with Google" button. Keep in lockstep
+        # with the backend GOOGLE_CLIENT_ID/SECRET being set.
+        NEXT_PUBLIC_GOOGLE_AUTH_ENABLED: ${NEXT_PUBLIC_GOOGLE_AUTH_ENABLED:-}
     environment:
       SERVER_API_URL: http://backend:8000
     volumes: !reset []
@@ -288,6 +291,7 @@ services:
         BUILD_ENV: production
         NEXT_PUBLIC_API_URL: /api
         NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}
+        NEXT_PUBLIC_GOOGLE_AUTH_ENABLED: ${NEXT_PUBLIC_GOOGLE_AUTH_ENABLED:-}
     image: ahgir-frontend
     container_name: picur-frontend-2
     environment:

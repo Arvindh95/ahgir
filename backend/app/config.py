@@ -29,7 +29,30 @@ class Settings(BaseSettings):
     jwt_secret_key: str = "your-secret-key-change-in-production"
     jwt_algorithm: str = "HS256"
     jwt_expiration_hours: int = 24
-    
+
+    # Google OAuth (Sign in with Google)
+    # Both must be set to enable the feature; see google_oauth_enabled below
+    # and the half-configured guard in validate_production_secrets().
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    # Where Google redirects back after consent. Must EXACTLY match an
+    # "Authorized redirect URI" registered on the OAuth client in Google
+    # Cloud Console. Left blank, it derives from frontend_url so prod just
+    # works; override only for non-standard routing.
+    google_oauth_redirect_uri: str = ""
+
+    @property
+    def google_oauth_enabled(self) -> bool:
+        return bool(self.google_client_id and self.google_client_secret)
+
+    @property
+    def effective_google_redirect_uri(self) -> str:
+        if self.google_oauth_redirect_uri:
+            return self.google_oauth_redirect_uri
+        # /api is the public prefix nginx strips before proxying to the
+        # backend, so the registered redirect URI lives under /api/.
+        return f"{self.frontend_url.rstrip('/')}/api/auth/google/callback"
+
     # Face Recognition
     # Cosine-similarity floor applied during guest scan matching, bucketed by
     # the indexed face's min_side (px). The *_medium and *_small variants exist
@@ -359,6 +382,22 @@ def validate_production_secrets():
             f"set={site_key_set}, CLOUDFLARE_TURNSTILE_SECRET_KEY set={secret_key_set}. "
             "Either set both (captcha enforced) or leave both empty (captcha disabled)."
         )
+
+    # Google OAuth, like Turnstile, must be configured as a PAIR. One half set
+    # means the "Continue with Google" button is shown (or the routes are live)
+    # but the flow can never complete. Both empty = feature off; both set =
+    # enabled. Placeholders count as set so a copied-but-unfilled .env trips.
+    gid_set = bool(settings.google_client_id.strip())
+    gsecret_set = bool(settings.google_client_secret.strip())
+    if gid_set != gsecret_set:
+        errors.append(
+            "Google OAuth is half-configured: GOOGLE_CLIENT_ID "
+            f"set={gid_set}, GOOGLE_CLIENT_SECRET set={gsecret_set}. "
+            "Either set both (Google sign-in enabled) or leave both empty (disabled)."
+        )
+    elif gid_set and gsecret_set:
+        if _looks_like_placeholder(settings.google_client_id) or _looks_like_placeholder(settings.google_client_secret):
+            errors.append("GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET still contains a placeholder (e.g. CHANGE_ME_*)")
 
     if errors:
         raise RuntimeError(

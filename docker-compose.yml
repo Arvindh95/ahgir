@@ -104,6 +104,10 @@ services:
       # startup-validation time so the pair check actually fires.
       NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}
       STRIPE_BILLING_PORTAL_CONFIG_ID: ${STRIPE_BILLING_PORTAL_CONFIG_ID:-}
+      # Google OAuth (Sign in with Google). Both must be set to enable the
+      # /auth/google/* routes; validate_production_secrets() enforces the pair.
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
     ports:
       - "8000:8000"
     volumes:
@@ -219,6 +223,11 @@ services:
       # imports config.validate_production_secrets() process-wide.
       CLOUDFLARE_TURNSTILE_SECRET_KEY: ${CLOUDFLARE_TURNSTILE_SECRET_KEY:-}
       NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}
+      # Mirror Google OAuth pair into worker env too — its preflight script
+      # imports config.validate_production_secrets() process-wide, which runs
+      # the half-configured pair check.
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
     volumes:
       - ./backend:/app
     depends_on:

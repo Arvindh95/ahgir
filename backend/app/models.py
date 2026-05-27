@@ -13,7 +13,15 @@ class User(Base):
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email = Column(String(255), unique=True, nullable=False, index=True)
-    password_hash = Column(String(255), nullable=False)
+    # Nullable since migration a4d5e6f7g8: a Google-OAuth-only user never sets
+    # a password. verify_password() treats a NULL hash as "no password login
+    # possible", so an OAuth account can't be logged into via /auth/login.
+    password_hash = Column(String(255), nullable=True)
+    # Google's stable subject identifier (the `sub` claim). Set when an account
+    # is created via Google sign-in, or back-filled when an existing verified
+    # email account is auto-linked on first Google login. Unique so two users
+    # can't claim the same Google identity; NULL for password-only accounts.
+    google_sub = Column(String(255), unique=True, nullable=True, index=True)
     # Default=False at both Python AND DB level (migration d7f8g9h0i1
     # corrects the original migration that left the DB default as
     # 'true'). Aligned defaults stop raw INSERT paths from

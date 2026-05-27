@@ -2,7 +2,20 @@ import { useState, FormEvent, useEffect } from 'react'
 import { useRouter } from 'next/router'
 import Head from 'next/head'
 import { authService } from '@/lib/auth'
+import GoogleAuthSection from '@/components/GoogleAuthSection'
 import { Loader2, Lock, Mail, ArrowRight, RefreshCw } from 'lucide-react'
+
+// Error codes the Google OAuth callback can append as ?error= when it bounces
+// the user back here. Anything unrecognised falls back to a generic message.
+const OAUTH_ERROR_MESSAGES: Record<string, string> = {
+  oauth_cancelled: 'Google sign-in was cancelled.',
+  oauth_state: 'Google sign-in could not be verified. Please try again.',
+  oauth_failed: 'Google sign-in failed. Please try again.',
+  oauth_unverified_email: "Your Google account's email is not verified.",
+  oauth_conflict: 'This email is already linked to a different Google account.',
+  oauth_unavailable: 'Google sign-in is currently unavailable.',
+  account_disabled: 'This account has been disabled. Contact an administrator.',
+}
 
 export default function Login() {
   const router = useRouter()
@@ -23,6 +36,18 @@ export default function Login() {
       if (authed) router.push('/admin/events')
     })
   }, [router])
+
+  useEffect(() => {
+    // Surface a failed Google sign-in (the callback redirects here with
+    // ?error=<code>). Wait for the router to hydrate query params, then strip
+    // the param from the URL so a refresh doesn't re-show a stale error.
+    if (!router.isReady) return
+    const code = router.query.error
+    if (typeof code === 'string') {
+      setError(OAUTH_ERROR_MESSAGES[code] || 'Google sign-in failed. Please try again.')
+      router.replace('/admin/login', undefined, { shallow: true })
+    }
+  }, [router.isReady, router.query.error, router])
 
   const validateForm = (): boolean => {
     if (!email || !password) {
@@ -109,6 +134,8 @@ export default function Login() {
             <h1 className="text-3xl font-bold mb-2">Admin Login</h1>
             <p className="text-gray-400 text-sm">Sign in to manage your events</p>
           </div>
+
+          <GoogleAuthSection label="Continue with Google" />
 
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="space-y-2">

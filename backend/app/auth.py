@@ -18,21 +18,28 @@ from app.models import User
 # else served from picur.my (CSAI-OCR, future apps).
 SESSION_COOKIE = "picur_session"   # admin / event-owner JWT
 EVENT_COOKIE = "picur_event"       # guest event JWT
+# Short-lived CSRF guard for the Google OAuth handshake. Holds the random
+# `state` value while the user is away at Google's consent screen.
+OAUTH_STATE_COOKIE = "picur_oauth_state"
 
 
-def _cookie_kwargs(max_age: int) -> dict:
+def _cookie_kwargs(max_age: int, samesite: str = "strict") -> dict:
     """Shared HttpOnly cookie settings.
 
     httponly: not readable from JS — kills the XSS-exfil class.
     secure: only sent over HTTPS in prod. Disabled in dev so localhost works.
-    samesite=strict: not sent on cross-site navigations; prevents CSRF.
+    samesite=strict: not sent on cross-site navigations; prevents CSRF. The
+      OAuth state cookie overrides this to "lax" — Strict would be dropped on
+      Google's cross-site redirect back to /auth/google/callback, breaking the
+      state check. Lax still withholds the cookie from embedded/POST cross-site
+      requests, which is all the state guard needs.
     """
     secure = settings.environment == "production"
     return dict(
         max_age=max_age,
         httponly=True,
         secure=secure,
-        samesite="strict",
+        samesite=samesite,
         path="/",
     )
 
@@ -61,6 +68,24 @@ def set_event_cookie(response: Response, token: str, max_age_seconds: int) -> No
 
 def clear_event_cookie(response: Response) -> None:
     response.delete_cookie(key=EVENT_COOKIE, path="/")
+
+
+def set_oauth_state_cookie(response: Response, state: str, max_age_seconds: int = 600) -> None:
+    """Store the OAuth `state` while the user is at Google's consent screen.
+
+    SameSite=Lax (not Strict) so the browser still sends it on the top-level
+    GET redirect Google issues back to our callback. 10-minute TTL bounds how
+    long a handshake can stay open.
+    """
+    response.set_cookie(
+        key=OAUTH_STATE_COOKIE,
+        value=state,
+        **_cookie_kwargs(max_age=max_age_seconds, samesite="lax"),
+    )
+
+
+def clear_oauth_state_cookie(response: Response) -> None:
+    response.delete_cookie(key=OAUTH_STATE_COOKIE, path="/")
 
 
 def _bearer_from_header(request: Request) -> Optional[str]:
@@ -172,9 +197,15 @@ def hash_password(password: str) -> str:
     return hashed.decode('utf-8')
 
 
-def verify_password(plain_password: str, hashed_password: str) -> bool:
+def verify_password(plain_password: str, hashed_password: Optional[str]) -> bool:
     """Verify a password. Falls back to legacy 72-byte truncated form for users who
-    registered before the pre-hash change so existing logins keep working."""
+    registered before the pre-hash change so existing logins keep working.
+
+    A NULL/empty hash means the account has no password (Google-OAuth-only).
+    Such accounts can never authenticate via /auth/login — return False rather
+    than raising, so the login handler reports invalid-credentials normally."""
+    if not hashed_password:
+        return False
     hashed_bytes = hashed_password.encode('utf-8')
     if bcrypt.checkpw(_prehash_for_bcrypt(plain_password), hashed_bytes):
         return True
