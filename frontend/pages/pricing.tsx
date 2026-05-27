@@ -6,6 +6,13 @@ import PublicLayout from '@/components/PublicLayout'
 
 type Interval = 'month' | 'year'
 
+const ONE_TIME_FEATURES = [
+  'Tailored to your photo count',
+  'Set how long guests keep access',
+  'One-time payment — no subscription',
+  'Face recognition, scanning & downloads included',
+]
+
 const tiers = [
   {
     key: 'free',
@@ -64,6 +71,9 @@ const tiers = [
   },
 ]
 
+const QUOTE_MAILTO =
+  "mailto:support@picur.my?subject=One-time%20event%20package&body=Hi%2C%20I'd%20like%20a%20quote%20for%20a%20one-time%20event.%0A%0AEvent%20date%3A%0AEstimated%20guest%20count%3A%0AEstimated%20photo%20count%3A%0AAccess%20duration%20needed%3A"
+
 export default function Pricing() {
   const [billingInterval, setBillingInterval] = useState<Interval>('month')
 
@@ -80,14 +90,18 @@ export default function Pricing() {
   return (
     <PublicLayout>
       <Head>
-        <meta name="description" content="PicUr Pricing - Subscription plans for event photographers." />
+        <meta
+          name="description"
+          content="PicUr pricing — pay per event with a one-time package, or choose an optional subscription if you shoot regularly."
+        />
       </Head>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 md:py-24">
         <div className="text-center mb-10">
-          <h1 className="text-3xl md:text-4xl font-bold mb-4">Simple, transparent pricing</h1>
-          <p className="text-gray-400 text-lg max-w-xl mx-auto">
-            Pay monthly or save ~17% with annual billing. Cancel anytime.
+          <h1 className="text-3xl md:text-4xl font-bold mb-4">Pay for the events you shoot</h1>
+          <p className="text-gray-400 text-lg max-w-2xl mx-auto">
+            Most photographers just book a one-time package for the event in front of them — no
+            subscription, no monthly fees. Shooting events year-round? Optional plans are below.
           </p>
         </div>
 
@@ -115,6 +129,63 @@ export default function Pricing() {
               </div>
             </div>
           </div>
+        </div>
+
+        {/* PRIMARY — One-time event packages */}
+        <div className="max-w-4xl mx-auto mb-24">
+          <div className="glass-card rounded-3xl p-8 md:p-12 border border-blue-500/30 ring-1 ring-blue-500/20 relative overflow-hidden">
+            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[500px] h-[220px] bg-blue-500/10 rounded-full blur-[100px] pointer-events-none" />
+            <div className="relative">
+              <div className="text-xs font-bold text-blue-400 mb-3 tracking-wider">
+                PAY PER EVENT · NO SUBSCRIPTION
+              </div>
+              <h2 className="text-2xl md:text-3xl font-bold mb-4">One-time event packages</h2>
+              <p className="text-gray-300 mb-8 max-w-2xl leading-relaxed">
+                Shooting a wedding, conference, or party? Get a package tailored to your photo count
+                and how long guests need access — pay once, and that&apos;s it. No recurring charges,
+                nothing to remember to cancel.
+              </p>
+
+              <ul className="grid sm:grid-cols-2 gap-3 mb-8 max-w-2xl">
+                {ONE_TIME_FEATURES.map((f) => (
+                  <li key={f} className="flex items-center gap-2.5 text-gray-200">
+                    <Check className="w-5 h-5 text-green-400 flex-shrink-0" />
+                    {f}
+                  </li>
+                ))}
+              </ul>
+
+              <div className="flex flex-col sm:flex-row gap-3">
+                <a
+                  href={QUOTE_MAILTO}
+                  className="inline-flex items-center justify-center gap-2 bg-white text-black px-6 py-3.5 rounded-xl font-semibold text-sm hover:bg-gray-100 transition-colors active:scale-[0.98]"
+                >
+                  Request a quote
+                  <ArrowRight className="w-4 h-4" />
+                </a>
+                <Link
+                  href="/contact"
+                  className="inline-flex items-center justify-center gap-2 glass-button px-6 py-3.5 rounded-xl font-semibold text-sm"
+                >
+                  Talk to us
+                </Link>
+              </div>
+
+              <p className="text-sm text-gray-500 mt-4">
+                Free tailor-made packages during beta — just tell us about your event.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* SECONDARY — Optional subscriptions */}
+        <div className="text-center mb-8">
+          <div className="text-xs font-bold text-gray-500 mb-2 tracking-[0.2em]">OPTIONAL</div>
+          <h2 className="text-2xl md:text-3xl font-bold mb-3">Prefer a subscription?</h2>
+          <p className="text-gray-400 max-w-2xl mx-auto">
+            If you shoot events regularly, a monthly or yearly plan can be simpler than booking each
+            one. Start free, upgrade anytime, cancel anytime.
+          </p>
         </div>
 
         <div className="flex justify-center mb-12">
@@ -181,25 +252,6 @@ export default function Pricing() {
               </Link>
             </div>
           ))}
-        </div>
-
-        <div className="max-w-3xl mx-auto mt-16">
-          <div className="glass-card rounded-2xl p-8 text-center border border-blue-500/30 ring-1 ring-blue-500/10">
-            <div className="text-xs font-bold text-blue-400 mb-3 tracking-wider">NEED MORE THAN 500 PHOTOS PER EVENT?</div>
-            <h2 className="text-2xl font-bold mb-3">Custom event packages</h2>
-            <p className="text-gray-400 mb-6 max-w-xl mx-auto">
-              Weddings, large conferences, and full-day shoots usually run past 500 photos.
-              Tell us your event size, photo count, and how long you need access — we&apos;ll send a tailored quote
-              (one-time or recurring).
-            </p>
-            <a
-              href="mailto:support@picur.my?subject=One-time%20event%20package&body=Hi%2C%20I'd%20like%20a%20quote%20for%20a%20one-time%20event.%0A%0AEvent%20date%3A%0AEstimated%20guest%20count%3A%0AEstimated%20photo%20count%3A%0AAccess%20duration%20needed%3A"
-              className="inline-flex items-center gap-2 bg-white text-black px-6 py-3 rounded-xl font-semibold text-sm hover:bg-gray-100 transition-colors"
-            >
-              Request a quote
-              <ArrowRight className="w-4 h-4" />
-            </a>
-          </div>
         </div>
 
         <p className="text-center text-gray-500 text-sm mt-12">

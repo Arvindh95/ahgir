@@ -24,7 +24,7 @@ const PAGE_META: Record<string, { title: string; description: string }> = {
   },
   '/pricing': {
     title: 'Pricing — PicUr',
-    description: 'Simple, transparent pricing for event photographers. Free, $9/mo Starter, $29/mo Pro. Free beta tailor-made packages available.',
+    description: 'Pay per event with one-time packages — no subscription required. Optional monthly plans for photographers who shoot regularly. Free beta packages available.',
   },
   '/contact': {
     title: 'Contact — PicUr',

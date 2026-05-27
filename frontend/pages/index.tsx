@@ -186,12 +186,12 @@ export default function Home() {
                   Get Started Free
                   <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
                 </Link>
-                <a
-                  href="#how-it-works"
+                <Link
+                  href="/how-it-works"
                   className="group inline-flex items-center justify-center gap-2 glass-button px-10 py-4 rounded-full font-semibold text-lg hover:bg-white/10 transition-all"
                 >
                   How it works
-                </a>
+                </Link>
               </div>
             </FadeIn>
           </div>
@@ -323,10 +323,46 @@ export default function Home() {
       <section className="py-32">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <FadeIn>
-            <div className="text-center mb-24">
-              <h2 className="text-4xl md:text-6xl font-bold mb-6 tracking-tight">Simple pricing</h2>
+            <div className="text-center mb-16">
+              <h2 className="text-4xl md:text-6xl font-bold mb-6 tracking-tight">Pay per event</h2>
               <p className="text-gray-400 text-xl max-w-2xl mx-auto font-light">
-                Start free, upgrade your account when you need more.
+                Most photographers just pay for the event in front of them — subscriptions optional.
+              </p>
+            </div>
+          </FadeIn>
+
+          {/* Primary offering: one-time event packages */}
+          <FadeIn>
+            <div className="max-w-3xl mx-auto mb-24">
+              <div className="glass-card rounded-3xl p-8 md:p-12 text-center border border-blue-500/30 ring-1 ring-blue-500/20 relative overflow-hidden">
+                <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[500px] h-[200px] bg-blue-500/10 rounded-full blur-[100px] pointer-events-none" />
+                <div className="relative">
+                  <div className="text-xs font-bold text-blue-400 mb-3 tracking-wider">PAY PER EVENT · NO SUBSCRIPTION</div>
+                  <h3 className="text-2xl md:text-3xl font-bold mb-3">One-time event packages</h3>
+                  <p className="text-gray-400 mb-8 max-w-xl mx-auto font-light leading-relaxed">
+                    Shooting a wedding, conference, or party? Get a package tailored to your photo
+                    count and how long guests need access — pay once, no recurring fees. Free
+                    tailor-made packages during beta.
+                  </p>
+                  <a
+                    href="mailto:support@picur.my?subject=One-time%20event%20package&body=Hi%2C%20I'd%20like%20a%20quote%20for%20a%20one-time%20event.%0A%0AEvent%20date%3A%0AEstimated%20guest%20count%3A%0AEstimated%20photo%20count%3A%0AAccess%20duration%20needed%3A"
+                    className="inline-flex items-center gap-2 bg-white text-black px-8 py-3.5 rounded-full font-semibold text-sm hover:bg-gray-100 transition-colors active:scale-[0.98]"
+                  >
+                    Request a quote
+                    <ArrowRight className="w-4 h-4" />
+                  </a>
+                </div>
+              </div>
+            </div>
+          </FadeIn>
+
+          {/* Optional: subscriptions */}
+          <FadeIn>
+            <div className="text-center mb-12">
+              <div className="text-xs font-bold text-gray-500 mb-2 tracking-[0.2em]">OPTIONAL</div>
+              <h3 className="text-2xl md:text-4xl font-bold mb-3 tracking-tight">Prefer a subscription?</h3>
+              <p className="text-gray-400 text-lg max-w-2xl mx-auto font-light">
+                Shooting events regularly? Start free and upgrade your account when you need more.
               </p>
             </div>
           </FadeIn>
@@ -366,27 +402,6 @@ export default function Home() {
               ))}
             </div>
           </FadeInStagger>
-
-          <FadeIn>
-            <div className="max-w-3xl mx-auto mt-16">
-              <div className="glass-card rounded-2xl p-8 text-center">
-                <div className="text-xs font-bold text-blue-400 mb-3 tracking-wider">SHOOTING ONE EVENT?</div>
-                <h3 className="text-2xl font-bold mb-3">One-time event packages</h3>
-                <p className="text-gray-400 mb-6 max-w-xl mx-auto">
-                  Shooting a single event and don&apos;t need a recurring subscription?
-                  We offer one-time event packages tailored to your photo count and retention needs.
-                  Contact us with your event details and we&apos;ll send a custom quote.
-                </p>
-                <a
-                  href="mailto:support@picur.my?subject=One-time%20event%20package&body=Hi%2C%20I'd%20like%20a%20quote%20for%20a%20one-time%20event.%0A%0AEvent%20date%3A%0AEstimated%20guest%20count%3A%0AEstimated%20photo%20count%3A%0AAccess%20duration%20needed%3A"
-                  className="inline-flex items-center gap-2 bg-white text-black px-6 py-3 rounded-xl font-semibold text-sm hover:bg-gray-100 transition-colors"
-                >
-                  Request a quote
-                  <ArrowRight className="w-4 h-4" />
-                </a>
-              </div>
-            </div>
-          </FadeIn>
 
           <FadeIn>
             <div className="text-center mt-12">
