@@ -226,6 +226,18 @@ export default function Home() {
               ))}
             </div>
           </FadeInStagger>
+
+          <FadeIn>
+            <div className="text-center mt-16">
+              <Link
+                href="/how-it-works"
+                className="inline-flex items-center gap-2 text-blue-400 hover:text-blue-300 font-medium transition-colors"
+              >
+                See the full walkthrough
+                <ArrowRight className="w-4 h-4" />
+              </Link>
+            </div>
+          </FadeIn>
         </div>
       </section>
 

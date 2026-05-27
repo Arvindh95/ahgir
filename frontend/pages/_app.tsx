@@ -17,6 +17,11 @@ const PAGE_META: Record<string, { title: string; description: string }> = {
     title: 'PicUr — AI face recognition photo sharing for events',
     description: DEFAULT_DESCRIPTION,
   },
+  '/how-it-works': {
+    title: 'How it works — PicUr',
+    description:
+      'See how PicUr works in three steps: upload your event photos, guests scan a selfie, and their matched gallery appears instantly.',
+  },
   '/pricing': {
     title: 'Pricing — PicUr',
     description: 'Simple, transparent pricing for event photographers. Free, $9/mo Starter, $29/mo Pro. Free beta tailor-made packages available.',
