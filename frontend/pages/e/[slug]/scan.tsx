@@ -470,6 +470,28 @@ export default function FaceScanner() {
     return canvas.toDataURL('image/jpeg', 0.95)
   }
 
+  // Full (un-cropped) frame for Phase 2 Re-ID body matching. Unlike
+  // captureFrame (which crops to the face), this keeps the whole frame so the
+  // backend can derive the upper-body crop. Downscaled to a 640px longest side
+  // so it fits the same per-frame byte cap the recognition frames use — OSNet
+  // only needs a coarse body/clothing image. Uses a throwaway canvas so it
+  // never disturbs the shared canvasRef mid-capture.
+  const captureFullFrame = (): string | null => {
+    const video = videoRef.current
+    if (!video || !video.videoWidth) return null
+    const maxSide = 640
+    const scale = Math.min(1, maxSide / Math.max(video.videoWidth, video.videoHeight))
+    const w = Math.round(video.videoWidth * scale)
+    const h = Math.round(video.videoHeight * scale)
+    const canvas = document.createElement('canvas')
+    canvas.width = w
+    canvas.height = h
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return null
+    ctx.drawImage(video, 0, 0, w, h)
+    return canvas.toDataURL('image/jpeg', 0.85)
+  }
+
   const handleScan = async () => {
     if (scanning) return
     if (!useUpload && !cameraReady) return
@@ -481,6 +503,9 @@ export default function FaceScanner() {
 
       let primaryImage: string | null = null
       let additionalFrames: string[] = []
+      // Phase 2 Re-ID: full-body frame(s) captured alongside the face crops
+      // (camera flow only). Optional — sent as `full_frames`.
+      let fullFrames: string[] = []
 
       if (useUpload) {
         // Use uploaded file (single frame)
@@ -583,6 +608,9 @@ export default function FaceScanner() {
         )
         let f = captureFrame()
         if (f) { frames.push(f); setFramesCaptured(1) }
+        // Grab one full-body frame at the front pose (body most visible).
+        const ff = captureFullFrame()
+        if (ff) fullFrames.push(ff)
         setStep('captured_front')
         setScanPhase('Front captured')
         await sleep(CONFIRM_FLASH_MS)
@@ -648,6 +676,11 @@ export default function FaceScanner() {
       }
       if (additionalFrames.length > 0) {
         payload.additional_frames = additionalFrames.map(f =>
+          f.includes(',') ? f.split(',')[1] : f
+        )
+      }
+      if (fullFrames.length > 0) {
+        payload.full_frames = fullFrames.map(f =>
           f.includes(',') ? f.split(',')[1] : f
         )
       }

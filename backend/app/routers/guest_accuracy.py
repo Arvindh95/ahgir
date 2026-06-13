@@ -43,6 +43,12 @@ from app.face_match_scoring import (
     aggregate_face_matches,
     score_candidates_diagnostic,
 )
+# Phase 2 Re-ID: shared crop geometry + sidecar client, plus the indexer's
+# detection helper so the probe body crop is derived from the same CompreFace
+# bbox the indexer would have used.
+from app.body_crop import derive_upper_body_bbox
+from app.reid_client import compute_embedding as compute_reid_embedding
+from app.workers.face_indexer_compreface import _detect_faces_compreface
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["guest-accuracy"])
@@ -104,6 +110,160 @@ def _decode_and_sanitize_frames(scan_request: FaceScanRequest) -> list[bytes]:
     return all_frames
 
 
+def _decode_full_frames(scan_request: FaceScanRequest) -> list[bytes]:
+    """Decode + sanitize the optional Phase 2 full-body frames.
+
+    Best-effort: full frames feed only the Re-ID shadow gate, so any decode /
+    bomb / oversize failure on a frame is swallowed (that frame is dropped)
+    rather than failing the scan. Reuses the same per-frame caps and the
+    same _sanitize_scan_frame bomb check as the recognition frames.
+    """
+    if not scan_request.full_frames:
+        return []
+
+    max_b64 = settings.max_scan_frame_bytes * 4 // 3 + 16
+
+    def _decode_frame(data: str) -> bytes:
+        if not isinstance(data, str):
+            raise ValueError("frame must be a string")
+        if len(data) > max_b64:
+            raise ValueError("full frame too large")
+        if data.startswith("data:"):
+            comma = data.find(",")
+            if comma == -1:
+                raise ValueError("invalid data URL")
+            data = data[comma + 1:]
+        decoded = base64.b64decode(data, validate=False)
+        if len(decoded) > settings.max_scan_frame_bytes:
+            raise ValueError("full frame too large")
+        return decoded
+
+    frames: list[bytes] = []
+    for raw in scan_request.full_frames[:2]:
+        try:
+            frames.append(_sanitize_scan_frame(_decode_frame(raw)))
+        except Exception:
+            continue
+    return frames
+
+
+def _reid_cosine(probe: Optional[list[float]], candidate) -> Optional[float]:
+    """Cosine similarity between the probe body embedding and a candidate's
+    stored reid_embedding. Both are L2-normalised at source, so cosine is the
+    dot product. Returns None when either side is absent or shapes mismatch."""
+    if not probe or candidate is None:
+        return None
+    try:
+        cand = list(candidate)
+    except TypeError:
+        return None
+    if len(cand) != len(probe):
+        return None
+    return float(sum(p * c for p, c in zip(probe, cand)))
+
+
+async def _compute_probe_reid(full_frames: list[bytes]) -> Optional[list[float]]:
+    """Derive the guest probe's body/clothing embedding from a full frame.
+
+    Detects the largest face in each full frame (same CompreFace detection the
+    indexer uses), expands it to the shared upper-body crop, and embeds it via
+    the reid-api sidecar. Returns the first frame's embedding that succeeds, or
+    None — fail-soft so a down sidecar / no detectable body simply skips the
+    Re-ID gate for this scan. Only runs when Re-ID is enabled somewhere.
+    """
+    import io
+    from PIL import ImageOps
+    from app.utils.image_safety import safe_open as safe_open_image
+
+    if not full_frames:
+        return None
+    if not (settings.reid_enabled_indexing or settings.reid_enabled_scan):
+        return None
+
+    det_key = settings.compreface_detection_api_key
+    for frame in full_frames:
+        try:
+            # EXIF-correct then re-encode so the detection bbox and the crop
+            # below are read off the SAME pixel grid — mirrors the indexer.
+            pil_img = safe_open_image(frame)
+            pil_img = ImageOps.exif_transpose(pil_img)
+            if pil_img.mode in ("RGBA", "LA", "P"):
+                pil_img = pil_img.convert("RGB")
+            oriented = io.BytesIO()
+            pil_img.save(oriented, format="JPEG", quality=95)
+
+            faces = await _detect_faces_compreface(
+                oriented.getvalue(),
+                det_key,
+                det_prob_threshold=settings.face_min_detection_probability,
+                face_plugins=None,
+            )
+        except Exception as exc:
+            logger.warning("probe Re-ID detection failed: %s", exc)
+            continue
+
+        if not faces:
+            continue
+
+        def _area(f: dict) -> float:
+            b = f.get("box", {})
+            return max(0, b.get("x_max", 0) - b.get("x_min", 0)) * max(
+                0, b.get("y_max", 0) - b.get("y_min", 0)
+            )
+
+        box = max(faces, key=_area).get("box", {})
+        bbox = [
+            box.get("x_min", 0), box.get("y_min", 0),
+            box.get("x_max", 0), box.get("y_max", 0),
+        ]
+        body_bbox = derive_upper_body_bbox(bbox, pil_img.width, pil_img.height)
+        if tuple(body_bbox) == (0, 0, 1, 1):
+            continue
+        try:
+            crop = pil_img.crop(body_bbox)
+            if crop.mode in ("RGBA", "LA", "P"):
+                crop = crop.convert("RGB")
+            buf = io.BytesIO()
+            crop.save(buf, format="JPEG", quality=90)
+            embedding = await compute_reid_embedding(buf.getvalue())
+        except Exception as exc:
+            logger.warning("probe Re-ID embed failed: %s", exc)
+            embedding = None
+        if embedding:
+            return embedding
+    return None
+
+
+def _apply_reid_gate(scored, faces_by_subject, probe_reid):
+    """Phase 3 enforcement: drop matches the Re-ID gate rejects.
+
+    A match is dropped only when it clears the face floor the gate guards
+    (similarity >= reid_face_min_for_gate) AND its body cosine is below
+    reid_similarity_threshold — i.e. a face-confident match the body signal
+    contradicts (the family-lookalike case). A candidate with no Re-ID signal
+    (probe had no body, or candidate face still NULL mid-backfill) bypasses
+    the gate so we never hide a legitimate match on missing data.
+
+    Caller invokes this ONLY when settings.reid_enabled_scan is True.
+    """
+    kept = []
+    for m in scored:
+        face = faces_by_subject.get(m.subject_id)
+        cand_reid = getattr(face, "reid_embedding", None) if face is not None else None
+        reid_sim = _reid_cosine(probe_reid, cand_reid)
+        if reid_sim is None:
+            kept.append(m)
+            continue
+        if m.similarity >= settings.reid_face_min_for_gate and reid_sim < settings.reid_similarity_threshold:
+            logger.info(
+                "Re-ID gate dropped image %s (face=%.3f reid=%.3f)",
+                m.image_id, m.similarity, reid_sim,
+            )
+            continue
+        kept.append(m)
+    return kept
+
+
 def _record_scan_telemetry(
     db: Session,
     *,
@@ -113,12 +273,17 @@ def _record_scan_telemetry(
     candidates: list[CandidateMatch],
     faces_by_subject: dict[str, Face],
     config: MatchScoringConfig,
+    probe_reid: Optional[list[float]] = None,
 ) -> None:
     """Bulk-insert one scan_match_metrics row per candidate image.
 
     Captures both passing matches and filtered-out near-misses so post-
     event analytics can answer "would lowering the threshold to 0.85
     have surfaced more legitimate photos?" without rerunning anything.
+
+    When ``probe_reid`` is provided (Phase 2), each row also records the
+    Re-ID cosine against that candidate and whether BOTH gates would have
+    held — shadow data only, never enforced here.
 
     Wrapped in try/except — telemetry must never fail the scan.
     """
@@ -136,6 +301,20 @@ def _record_scan_telemetry(
                     cluster_uuid = uuid.UUID(d.cluster_id)
                 except ValueError:
                     cluster_uuid = None
+
+            # Re-ID shadow: cosine(probe body, candidate body) + the
+            # hypothetical gate decision. NULL when the probe had no body
+            # embedding or the candidate face has no reid_embedding yet.
+            cand_face = faces_by_subject.get(d.subject_id)
+            cand_reid = getattr(cand_face, "reid_embedding", None) if cand_face is not None else None
+            reid_sim = _reid_cosine(probe_reid, cand_reid)
+            reid_would_pass: Optional[bool] = None
+            if reid_sim is not None:
+                reid_would_pass = (
+                    d.scored_similarity >= settings.reid_face_min_for_gate
+                    and reid_sim >= settings.reid_similarity_threshold
+                )
+
             rows.append(ScanMatchMetric(
                 scan_id=scan_uuid,
                 session_id=session_id,
@@ -152,6 +331,8 @@ def _record_scan_telemetry(
                 face_min_side_px=d.face_min_side_px,
                 quality_score=d.quality_score,
                 cluster_id=cluster_uuid,
+                reid_similarity=reid_sim,
+                reid_would_pass=reid_would_pass,
             ))
         if rows:
             db.bulk_save_objects(rows)
@@ -188,6 +369,7 @@ async def _scan_with_enhanced_scoring(
     session_id: uuid.UUID,
     event: Event,
     db: Session,
+    full_frames: Optional[list[bytes]] = None,
 ) -> FaceScanResponse:
     frame_results_raw = await asyncio.gather(
         *[
@@ -259,9 +441,16 @@ async def _scan_with_enhanced_scoring(
     faces_by_subject = _fetch_face_rows(db, list({c.subject_id for c in candidates}))
     scored = aggregate_face_matches(candidates, faces_by_subject, scoring_config)
 
+    # Phase 2/3 Re-ID. Compute the probe's body embedding once — only now,
+    # past the no-candidates early return, so a scan that matches nothing
+    # never pays the extra detection + sidecar round-trip. Shadow-logged for
+    # every candidate; only ENFORCED (drops matches) once reid_enabled_scan
+    # flips in Phase 3.
+    probe_reid = await _compute_probe_reid(full_frames or [])
+
     # Telemetry — log every candidate (passing and filtered) so the team
-    # can tune thresholds / bonuses from real data. Best effort: a failure
-    # here must never fail the scan.
+    # can tune thresholds / bonuses from real data, plus the Re-ID shadow
+    # columns. Best effort: a failure here must never fail the scan.
     _record_scan_telemetry(
         db,
         scan_uuid=scan_uuid,
@@ -270,7 +459,19 @@ async def _scan_with_enhanced_scoring(
         candidates=candidates,
         faces_by_subject=faces_by_subject,
         config=scoring_config,
+        probe_reid=probe_reid,
     )
+
+    if settings.reid_enabled_scan and probe_reid is not None:
+        scored = _apply_reid_gate(scored, faces_by_subject, probe_reid)
+        if not scored:
+            _log_scan_outcome(
+                db, event_id, session_id,
+                outcome="filtered",
+                frame_count=len(all_frames),
+                detail="all matches dropped by Re-ID gate",
+            )
+            return FaceScanResponse(matches=[], scan_id=str(scan_uuid), total_matches=0)
 
     if not scored:
         _log_scan_outcome(
@@ -362,8 +563,13 @@ async def scan_face_enhanced(
         logger.error("Failed to decode scan frames: %s", exc)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid base64 image data")
 
+    # Optional Phase 2 full-body frames — best-effort, never fails the scan.
+    full_frames = _decode_full_frames(scan_request)
+
     try:
-        return await _scan_with_enhanced_scoring(all_frames, event_id, session_id, event, db)
+        return await _scan_with_enhanced_scoring(
+            all_frames, event_id, session_id, event, db, full_frames=full_frames
+        )
     except NoFaceDetectedError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

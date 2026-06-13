@@ -211,6 +211,16 @@ class ScanMatchMetric(Base):
     face_min_side_px = Column(Float, nullable=True)
     quality_score = Column(Float, nullable=True)
     cluster_id = Column(UUID(as_uuid=True), nullable=True)
+    # Phase 2 Re-ID shadow telemetry. reid_similarity = cosine(probe body
+    # embedding, this candidate's faces.reid_embedding); NULL when the probe
+    # full-frame had no detectable body, the sidecar was down, or the
+    # candidate face has no reid_embedding yet (mid-backfill). reid_would_pass
+    # records whether BOTH gates (face_sim >= reid_face_min_for_gate AND
+    # reid_sim >= reid_similarity_threshold) would have held — logged but NOT
+    # enforced until Phase 3 flips reid_enabled_scan. NULL when reid_similarity
+    # is NULL (gate not evaluable for this candidate).
+    reid_similarity = Column(Float, nullable=True)
+    reid_would_pass = Column(Boolean, nullable=True)
     created_at = Column(TIMESTAMP, server_default=func.now(), nullable=False)
 
 

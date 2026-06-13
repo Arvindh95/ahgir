@@ -360,6 +360,17 @@ class FaceScanRequest(BaseModel):
         max_length=4,
         description="Extra frames for multi-angle scan; capped to 4 additional (5 total).",
     )
+    # Phase 2 Re-ID: full (un-cropped) video frame(s) carrying the guest's
+    # upper body, used to compute a body/clothing embedding for the
+    # family-lookalike gate. Optional and best-effort — absence (older
+    # frontends, no detectable body) just means the Re-ID gate is skipped
+    # for this scan. Each is base64 like `image`; the frontend downscales so
+    # it fits the same per-frame byte cap.
+    full_frames: Optional[List[str]] = Field(
+        default=None,
+        max_length=2,
+        description="Full video frame(s) for Re-ID body matching (Phase 2 shadow). Optional.",
+    )
 
 
 class FaceMatch(BaseModel):
