@@ -95,17 +95,27 @@ class Settings(BaseSettings):
     # detected face and POSTs it to reid-api/embed; the returned 512-d vector
     # is stored in faces.reid_embedding for later scan-time gating.
     # When scan is enabled, /scan computes the probe's body embedding and
-    # requires both face cosine >= face threshold AND Re-ID cosine >=
-    # reid_similarity_threshold for a match to be returned.
-    # Defaults ship `scan` OFF — Phase 0 only writes embeddings; the gate is
-    # flipped on once Phase 2 shadow logs confirm separation.
+    # gates face-confident candidates on it via an ADAPTIVE per-scan rule
+    # (no fixed global cutoff — see _reid_adaptive_gate). This works live at a
+    # single event from the first scan without any shadow data: the guest's
+    # own photos cluster at high body-cosine (same outfit all day), a sibling
+    # sits lower, so the gate drops candidates far below the probe's own top.
     reid_api_url: str = "http://reid-api:5000"
     reid_enabled_indexing: bool = True
     reid_enabled_scan: bool = False
+    # "Confidently the same body" level. Doubles as (a) the trust floor the
+    # probe's best candidate must reach for the adaptive gate to engage at all
+    # — below it the body signal is uninformative and we fall back to
+    # face-only; and (b) the absolute cutoff for the lone-candidate case where
+    # there is no peer distribution to compare against.
     reid_similarity_threshold: float = 0.65
     # Face similarity floor above which the Re-ID gate engages. Candidates
     # rejected by the face threshold alone never see the Re-ID step.
     reid_face_min_for_gate: float = 0.90
+    # Adaptive margin: with >=2 face-confident candidates, drop any whose body
+    # cosine is more than this below the probe's top body cosine. Larger =
+    # more permissive (fewer drops, fewer false negatives).
+    reid_adaptive_margin: float = 0.18
 
     # CompreFace (comma-separated URLs for round-robin load balancing)
     compreface_api_url: str = "http://compreface-api:8080"

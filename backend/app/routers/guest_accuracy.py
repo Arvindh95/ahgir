@@ -234,34 +234,86 @@ async def _compute_probe_reid(full_frames: list[bytes]) -> Optional[list[float]]
     return None
 
 
-def _apply_reid_gate(scored, faces_by_subject, probe_reid):
-    """Phase 3 enforcement: drop matches the Re-ID gate rejects.
+def _reid_adaptive_gate(scored, faces_by_subject, probe_reid):
+    """Adaptive per-scan body gate. No fixed global cutoff.
 
-    A match is dropped only when it clears the face floor the gate guards
-    (similarity >= reid_face_min_for_gate) AND its body cosine is below
-    reid_similarity_threshold — i.e. a face-confident match the body signal
-    contradicts (the family-lookalike case). A candidate with no Re-ID signal
-    (probe had no body, or candidate face still NULL mid-backfill) bypasses
-    the gate so we never hide a legitimate match on missing data.
+    Works live at a single event from the first scan with zero tuning data:
+    the guest's own photos cluster at a high body-cosine (same outfit all
+    day); a sibling who cleared the face floor sits lower. The gate drops
+    face-confident candidates whose body-cosine is far below the probe's own
+    top — judged relative to THIS scan's distribution.
 
-    Caller invokes this ONLY when settings.reid_enabled_scan is True.
+    Returns (reid_sims, gate_kept, surviving):
+      reid_sims  – subject_id -> body cosine, for every candidate that has a
+                   reid_embedding (logged for ALL candidates, shadow + live).
+      gate_kept  – subject_id -> bool, the gate decision, ONLY for the
+                   face-confident candidates the gate actually judged.
+      surviving  – the scored list with rejected matches removed (== scored
+                   when the gate can't engage).
+
+    Decision rules (only face-confident candidates with a body cosine are
+    judged; NULL Re-ID and sub-face-floor matches always pass through):
+      * 0 judged                      -> keep all (no body signal).
+      * 1 judged                      -> absolute: keep iff cosine >=
+                                         reid_similarity_threshold (no peers to
+                                         compare against; a lone face-confident
+                                         match with a low body is the suspicious
+                                         lookalike case).
+      * top < reid_similarity_threshold -> keep all: even the best candidate
+                                         isn't a confident body match, so the
+                                         probe body embedding is uninformative
+                                         (bad crop / occluded) — fall back to
+                                         face-only rather than risk a false neg.
+      * >=2 judged, top healthy       -> drop any whose cosine < top -
+                                         reid_adaptive_margin.
     """
-    kept = []
-    for m in scored:
-        face = faces_by_subject.get(m.subject_id)
+    reid_sims: dict[str, float] = {}
+    for subject_id, face in faces_by_subject.items():
         cand_reid = getattr(face, "reid_embedding", None) if face is not None else None
-        reid_sim = _reid_cosine(probe_reid, cand_reid)
-        if reid_sim is None:
-            kept.append(m)
-            continue
-        if m.similarity >= settings.reid_face_min_for_gate and reid_sim < settings.reid_similarity_threshold:
-            logger.info(
-                "Re-ID gate dropped image %s (face=%.3f reid=%.3f)",
-                m.image_id, m.similarity, reid_sim,
-            )
-            continue
-        kept.append(m)
-    return kept
+        sim = _reid_cosine(probe_reid, cand_reid)
+        if sim is not None:
+            reid_sims[subject_id] = sim
+
+    judged = [
+        m for m in scored
+        if m.similarity >= settings.reid_face_min_for_gate and m.subject_id in reid_sims
+    ]
+    gate_kept: dict[str, bool] = {}
+
+    if not judged:
+        return reid_sims, gate_kept, scored
+
+    if len(judged) == 1:
+        m = judged[0]
+        keep = reid_sims[m.subject_id] >= settings.reid_similarity_threshold
+        gate_kept[m.subject_id] = keep
+        if keep:
+            return reid_sims, gate_kept, scored
+        logger.info(
+            "Re-ID gate dropped lone image %s (face=%.3f reid=%.3f < %.2f)",
+            m.image_id, m.similarity, reid_sims[m.subject_id], settings.reid_similarity_threshold,
+        )
+        return reid_sims, gate_kept, [x for x in scored if x.subject_id != m.subject_id]
+
+    top = max(reid_sims[m.subject_id] for m in judged)
+    if top < settings.reid_similarity_threshold:
+        # Even the best body match is weak — signal uninformative, face-only.
+        return reid_sims, gate_kept, scored
+
+    cutoff = top - settings.reid_adaptive_margin
+    surviving = []
+    for m in scored:
+        if m.similarity >= settings.reid_face_min_for_gate and m.subject_id in reid_sims:
+            keep = reid_sims[m.subject_id] >= cutoff
+            gate_kept[m.subject_id] = keep
+            if not keep:
+                logger.info(
+                    "Re-ID gate dropped image %s (face=%.3f reid=%.3f < top %.3f - %.2f)",
+                    m.image_id, m.similarity, reid_sims[m.subject_id], top, settings.reid_adaptive_margin,
+                )
+                continue
+        surviving.append(m)
+    return reid_sims, gate_kept, surviving
 
 
 def _record_scan_telemetry(
@@ -273,7 +325,8 @@ def _record_scan_telemetry(
     candidates: list[CandidateMatch],
     faces_by_subject: dict[str, Face],
     config: MatchScoringConfig,
-    probe_reid: Optional[list[float]] = None,
+    reid_sims: Optional[dict] = None,
+    gate_kept: Optional[dict] = None,
 ) -> None:
     """Bulk-insert one scan_match_metrics row per candidate image.
 
@@ -281,9 +334,11 @@ def _record_scan_telemetry(
     event analytics can answer "would lowering the threshold to 0.85
     have surfaced more legitimate photos?" without rerunning anything.
 
-    When ``probe_reid`` is provided (Phase 2), each row also records the
-    Re-ID cosine against that candidate and whether BOTH gates would have
-    held — shadow data only, never enforced here.
+    ``reid_sims`` (subject_id -> body cosine) and ``gate_kept`` (subject_id ->
+    adaptive gate decision) come precomputed from _reid_adaptive_gate. Each
+    row records reid_similarity and reid_would_pass — shadow data when the
+    gate is off, the actual live decision when it's on. reid_would_pass is
+    NULL for candidates the gate didn't judge.
 
     Wrapped in try/except — telemetry must never fail the scan.
     """
@@ -302,18 +357,13 @@ def _record_scan_telemetry(
                 except ValueError:
                     cluster_uuid = None
 
-            # Re-ID shadow: cosine(probe body, candidate body) + the
-            # hypothetical gate decision. NULL when the probe had no body
-            # embedding or the candidate face has no reid_embedding yet.
-            cand_face = faces_by_subject.get(d.subject_id)
-            cand_reid = getattr(cand_face, "reid_embedding", None) if cand_face is not None else None
-            reid_sim = _reid_cosine(probe_reid, cand_reid)
-            reid_would_pass: Optional[bool] = None
-            if reid_sim is not None:
-                reid_would_pass = (
-                    d.scored_similarity >= settings.reid_face_min_for_gate
-                    and reid_sim >= settings.reid_similarity_threshold
-                )
+            # Re-ID: body cosine + the adaptive gate's decision for this
+            # candidate. reid_similarity is NULL when the probe had no body
+            # embedding or the candidate is still NULL mid-backfill;
+            # reid_would_pass is NULL when the gate didn't judge it
+            # (sub-face-floor match, or no usable per-scan distribution).
+            reid_sim = (reid_sims or {}).get(d.subject_id)
+            reid_would_pass = (gate_kept or {}).get(d.subject_id)
 
             rows.append(ScanMatchMetric(
                 scan_id=scan_uuid,
@@ -448,9 +498,20 @@ async def _scan_with_enhanced_scoring(
     # flips in Phase 3.
     probe_reid = await _compute_probe_reid(full_frames or [])
 
+    # Adaptive Re-ID: body cosines + the per-scan gate decision, computed once.
+    # Logged for analysis on every scan; only ENFORCED (drops matches) when
+    # reid_enabled_scan is True.
+    reid_sims: dict[str, float] = {}
+    gate_kept: dict[str, bool] = {}
+    gated_scored = scored
+    if probe_reid is not None:
+        reid_sims, gate_kept, gated_scored = _reid_adaptive_gate(
+            scored, faces_by_subject, probe_reid
+        )
+
     # Telemetry — log every candidate (passing and filtered) so the team
-    # can tune thresholds / bonuses from real data, plus the Re-ID shadow
-    # columns. Best effort: a failure here must never fail the scan.
+    # can tune thresholds / bonuses from real data, plus the Re-ID columns.
+    # Best effort: a failure here must never fail the scan.
     _record_scan_telemetry(
         db,
         scan_uuid=scan_uuid,
@@ -459,11 +520,12 @@ async def _scan_with_enhanced_scoring(
         candidates=candidates,
         faces_by_subject=faces_by_subject,
         config=scoring_config,
-        probe_reid=probe_reid,
+        reid_sims=reid_sims,
+        gate_kept=gate_kept,
     )
 
     if settings.reid_enabled_scan and probe_reid is not None:
-        scored = _apply_reid_gate(scored, faces_by_subject, probe_reid)
+        scored = gated_scored
         if not scored:
             _log_scan_outcome(
                 db, event_id, session_id,

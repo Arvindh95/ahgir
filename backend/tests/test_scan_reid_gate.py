@@ -1,6 +1,6 @@
-"""Phase 2 Re-ID scan tests — cosine, the gate, shadow telemetry, probe.
+"""Phase 2/2.1 Re-ID scan tests — cosine, adaptive gate, telemetry, probe.
 
-Exercises the pure gate/cosine logic plus the telemetry write, without
+Exercises the per-scan adaptive gate and the telemetry write without
 standing up CompreFace. The probe-embedding helper is tested with the
 detection + sidecar calls mocked.
 """
@@ -28,6 +28,19 @@ def _vec(v: float) -> list[float]:
 PROBE = _vec(1.0)
 
 
+def _scored(image_id: str, subject_id: str, sim: float) -> ScoredMatch:
+    return ScoredMatch(
+        image_id=image_id, subject_id=subject_id, similarity=sim,
+        raw_similarity=sim, frame_count=1, score_gap=None,
+        bbox=[0, 0, 200, 200], cluster_id=None, quality_score=0.95,
+    )
+
+
+def _faces(**subject_to_vec):
+    """subject_id -> face-like with .reid_embedding (vec or None)."""
+    return {s: SimpleNamespace(reid_embedding=v) for s, v in subject_to_vec.items()}
+
+
 @pytest.fixture
 def enable_scan_gate():
     from app.config import settings
@@ -38,14 +51,6 @@ def enable_scan_gate():
         yield
     finally:
         settings.reid_enabled_indexing, settings.reid_enabled_scan = o_i, o_s
-
-
-def _scored(image_id: str, subject_id: str, sim: float) -> ScoredMatch:
-    return ScoredMatch(
-        image_id=image_id, subject_id=subject_id, similarity=sim,
-        raw_similarity=sim, frame_count=1, score_gap=None,
-        bbox=[0, 0, 200, 200], cluster_id=None, quality_score=0.95,
-    )
 
 
 # --------------------------------------------------------------------------- #
@@ -65,40 +70,74 @@ class TestCosine:
 
 
 # --------------------------------------------------------------------------- #
-# _apply_reid_gate (Phase 3 enforcement)
+# _reid_adaptive_gate — relative per-scan decision
 # --------------------------------------------------------------------------- #
 
-class TestGate:
-    def test_drops_face_confident_body_contradicted(self):
-        """0.95 face / 0.40 body → the sibling case → dropped."""
-        scored = [_scored("imgA", "sA", 0.95)]
-        faces = {"sA": SimpleNamespace(reid_embedding=_vec(0.40))}
-        assert ga._apply_reid_gate(scored, faces, PROBE) == []
+class TestAdaptiveGate:
+    def test_drops_sibling_far_below_top(self):
+        """Two face-confident; sibling body sits far below the guest's top."""
+        scored = [_scored("A", "sA", 0.95), _scored("B", "sB", 0.95)]
+        faces = _faces(sA=_vec(0.80), sB=_vec(0.40))
+        reid_sims, kept, surviving = ga._reid_adaptive_gate(scored, faces, PROBE)
+        assert reid_sims == {"sA": pytest.approx(0.80), "sB": pytest.approx(0.40)}
+        assert kept == {"sA": True, "sB": False}
+        assert [m.subject_id for m in surviving] == ["sA"]
 
-    def test_keeps_face_and_body_agree(self):
-        scored = [_scored("imgB", "sB", 0.95)]
-        faces = {"sB": SimpleNamespace(reid_embedding=_vec(0.70))}
-        assert len(ga._apply_reid_gate(scored, faces, PROBE)) == 1
+    def test_keeps_when_all_cluster_high(self):
+        """All real photos cluster within the margin → none dropped."""
+        scored = [_scored("A", "sA", 0.95), _scored("B", "sB", 0.95)]
+        faces = _faces(sA=_vec(0.80), sB=_vec(0.75))
+        _, kept, surviving = ga._reid_adaptive_gate(scored, faces, PROBE)
+        assert all(kept.values())
+        assert len(surviving) == 2
 
-    def test_null_candidate_embedding_bypasses(self):
-        """Candidate still mid-backfill (NULL) is never gated out."""
-        scored = [_scored("imgC", "sC", 0.95)]
-        faces = {"sC": SimpleNamespace(reid_embedding=None)}
-        assert len(ga._apply_reid_gate(scored, faces, PROBE)) == 1
+    def test_lone_confident_high_kept(self):
+        scored = [_scored("A", "sA", 0.95)]
+        faces = _faces(sA=_vec(0.80))
+        _, kept, surviving = ga._reid_adaptive_gate(scored, faces, PROBE)
+        assert kept == {"sA": True}
+        assert len(surviving) == 1
 
-    def test_below_face_floor_not_gated(self):
-        """Match under reid_face_min_for_gate is left alone even on low body."""
-        scored = [_scored("imgD", "sD", 0.80)]
-        faces = {"sD": SimpleNamespace(reid_embedding=_vec(0.10))}
-        assert len(ga._apply_reid_gate(scored, faces, PROBE)) == 1
+    def test_lone_confident_low_dropped(self):
+        """No peers to compare → fall back to the absolute floor (0.65)."""
+        scored = [_scored("A", "sA", 0.95)]
+        faces = _faces(sA=_vec(0.50))
+        _, kept, surviving = ga._reid_adaptive_gate(scored, faces, PROBE)
+        assert kept == {"sA": False}
+        assert surviving == []
+
+    def test_weak_top_falls_back_to_face_only(self):
+        """Even the best body match is weak → signal uninformative, keep all."""
+        scored = [_scored("A", "sA", 0.95), _scored("B", "sB", 0.95)]
+        faces = _faces(sA=_vec(0.55), sB=_vec(0.50))
+        _, kept, surviving = ga._reid_adaptive_gate(scored, faces, PROBE)
+        assert kept == {}
+        assert len(surviving) == 2
+
+    def test_null_candidate_not_judged(self):
+        """Candidate mid-backfill (NULL) is never judged and always kept."""
+        scored = [_scored("A", "sA", 0.95), _scored("B", "sB", 0.95)]
+        faces = _faces(sA=_vec(0.80), sB=None)
+        reid_sims, kept, surviving = ga._reid_adaptive_gate(scored, faces, PROBE)
+        assert "sB" not in reid_sims
+        assert "sB" not in kept  # never judged
+        assert len(surviving) == 2  # lone judged sA is high → all kept
+
+    def test_subfloor_match_not_gated(self):
+        """A match below the face floor is left alone even with a low body."""
+        scored = [_scored("A", "sA", 0.95), _scored("B", "sB", 0.80)]
+        faces = _faces(sA=_vec(0.80), sB=_vec(0.10))
+        _, kept, surviving = ga._reid_adaptive_gate(scored, faces, PROBE)
+        assert "sB" not in kept  # sub-face-floor → not judged
+        assert len(surviving) == 2
 
 
 # --------------------------------------------------------------------------- #
-# Shadow telemetry — reid columns written, never enforced here
+# Telemetry — reid columns written from the precomputed maps
 # --------------------------------------------------------------------------- #
 
-class TestShadowTelemetry:
-    def _seed(self, db, reid_vec):
+class TestTelemetry:
+    def _seed(self, db):
         user = User(email=f"u_{uuid.uuid4()}@e.com", password_hash=hash_password("pw"))
         db.add(user); db.commit()
         event = Event(owner_user_id=user.id, slug=f"ev-{uuid.uuid4()}", name="E",
@@ -111,11 +150,11 @@ class TestShadowTelemetry:
         subject_id = f"{event.id}/{image.id}/0"
         face = Face(image_id=image.id, event_id=event.id, embedding=[0.1] * 512,
                     bbox=[0.0, 0.0, 200.0, 200.0], quality_score=0.95,
-                    compreface_subject_id=subject_id, reid_embedding=reid_vec)
+                    compreface_subject_id=subject_id, reid_embedding=_vec(0.70))
         db.add(face); db.commit()
         return event, image, subject_id
 
-    def _run(self, db, event, image, subject_id, probe):
+    def _run(self, db, event, image, subject_id, *, reid_sims, gate_kept):
         scan_uuid = uuid.uuid4()
         candidates = [CandidateMatch(subject_id=subject_id, image_id=str(image.id),
                                      similarity=0.95, frame_index=0)]
@@ -124,33 +163,28 @@ class TestShadowTelemetry:
         ga._record_scan_telemetry(
             db, scan_uuid=scan_uuid, session_id=uuid.uuid4(), event_id=event.id,
             candidates=candidates, faces_by_subject=faces_by_subject,
-            config=MatchScoringConfig(), probe_reid=probe,
+            config=MatchScoringConfig(), reid_sims=reid_sims, gate_kept=gate_kept,
         )
         return db.query(ScanMatchMetric).filter(ScanMatchMetric.scan_id == scan_uuid).all()
 
-    def test_writes_reid_sim_and_would_pass_true(self, test_db):
-        event, image, sid = self._seed(test_db, _vec(0.70))
-        rows = self._run(test_db, event, image, sid, PROBE)
+    def test_writes_sim_and_decision_kept(self, test_db):
+        event, image, sid = self._seed(test_db)
+        rows = self._run(test_db, event, image, sid,
+                         reid_sims={sid: 0.70}, gate_kept={sid: True})
         assert len(rows) == 1
-        assert rows[0].reid_similarity == pytest.approx(0.70, abs=1e-6)
+        assert rows[0].reid_similarity == pytest.approx(0.70)
         assert rows[0].reid_would_pass is True
 
-    def test_would_pass_false_on_low_body(self, test_db):
-        event, image, sid = self._seed(test_db, _vec(0.40))
-        rows = self._run(test_db, event, image, sid, PROBE)
-        assert rows[0].reid_similarity == pytest.approx(0.40, abs=1e-6)
+    def test_writes_decision_dropped(self, test_db):
+        event, image, sid = self._seed(test_db)
+        rows = self._run(test_db, event, image, sid,
+                         reid_sims={sid: 0.40}, gate_kept={sid: False})
+        assert rows[0].reid_similarity == pytest.approx(0.40)
         assert rows[0].reid_would_pass is False
 
-    def test_null_when_no_probe(self, test_db):
-        """No full frame → probe None → reid columns stay NULL."""
-        event, image, sid = self._seed(test_db, _vec(0.70))
-        rows = self._run(test_db, event, image, sid, None)
-        assert rows[0].reid_similarity is None
-        assert rows[0].reid_would_pass is None
-
-    def test_null_when_candidate_unbackfilled(self, test_db):
-        event, image, sid = self._seed(test_db, None)
-        rows = self._run(test_db, event, image, sid, PROBE)
+    def test_null_when_no_signal(self, test_db):
+        event, image, sid = self._seed(test_db)
+        rows = self._run(test_db, event, image, sid, reid_sims={}, gate_kept={})
         assert rows[0].reid_similarity is None
         assert rows[0].reid_would_pass is None
 
@@ -169,7 +203,6 @@ class TestProbeReid:
         assert asyncio.run(ga._compute_probe_reid([])) is None
 
     def test_disabled_returns_none(self):
-        """conftest leaves both flags off → no detection call, None."""
         with patch.object(ga, "_detect_faces_compreface", new=AsyncMock()) as det:
             assert asyncio.run(ga._compute_probe_reid([self._jpeg()])) is None
         det.assert_not_called()

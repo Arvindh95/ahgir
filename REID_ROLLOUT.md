@@ -40,8 +40,12 @@ curl -s localhost:5000/healthcheck      # {"status":"ok",...}
 |------|------|-----------|--------|
 | 0 | Sidecar + index-time embedding + schema | n/a | merged code |
 | 1 | Backfill NULL embeddings on existing events | n/a | run job/endpoint |
-| 2 | Scan computes probe Re-ID, logs gate decision | **No (shadow)** | deploy + observe |
+| 2 | Scan computes probe Re-ID + adaptive gate, logs decision | **No (logged)** | deploy + observe |
 | 3 | Enforce the gate | **Yes** | env flip + restart |
+
+The gate is **adaptive per scan** — no fixed global threshold to tune — so it
+works LIVE at a single event from the first scan with no shadow-data period.
+Phase 2 logging is for confidence/monitoring, not a required waiting room.
 
 ### Phase 1 — backfill
 
@@ -66,13 +70,34 @@ SELECT count(*) FILTER (WHERE reid_embedding IS NULL) AS still_null,
 FROM faces;
 ```
 
-### Phase 2 — shadow mode (default after deploy)
+### The adaptive gate
 
-`REID_ENABLED_SCAN=false`. Each scan computes the probe's body embedding from
-the full video frame the frontend now sends (`full_frames`), cosine-compares
-to each candidate, and writes `scan_match_metrics.reid_similarity` +
-`reid_would_pass` **without enforcing**. Run for ~48h of real traffic, then
-validate that Re-ID separates a known sibling pair:
+There is no global "same body" cutoff to tune. For each scan the gate looks at
+the probe's body cosine against every face-confident candidate (face similarity
+≥ `REID_FACE_MIN_FOR_GATE`, 0.90) and decides relative to THIS scan:
+
+- **≥2 face-confident candidates** → drop any whose body cosine is more than
+  `REID_ADAPTIVE_MARGIN` (0.18) below the probe's top. The guest's own photos
+  (same outfit) cluster at the top; a sibling who cleared the face floor sits
+  well below and is dropped.
+- **Exactly 1 face-confident candidate** → no peers to compare, so fall back to
+  the absolute `REID_SIMILARITY_THRESHOLD` (0.65): a lone face-confident match
+  with a low body is the suspicious lookalike case.
+- **Even the top body cosine < 0.65** → the probe body embedding is
+  uninformative (bad crop / occluded) → keep all (face-only).
+- **NULL Re-ID** (candidate mid-backfill, or probe had no detectable body) →
+  never judged, always kept. Missing data never hides a real match.
+
+Why this is safe live with no tuning data: within one event a guest wears one
+outfit, so their real photos always cluster together and the decision is purely
+relative. Nothing depends on a pre-calibrated number.
+
+### Phase 2 — observe (default after deploy)
+
+`REID_ENABLED_SCAN=false`. Every scan still computes the body cosines and runs
+the adaptive gate, writing `scan_match_metrics.reid_similarity` +
+`reid_would_pass` (the gate's decision) **without enforcing**. Optional sanity
+check on any event — confirm the guest's own photos out-score a lookalike's:
 
 ```sql
 SELECT image_id,
@@ -81,17 +106,16 @@ SELECT image_id,
        reid_would_pass
 FROM   scan_match_metrics
 WHERE  reid_similarity IS NOT NULL
-  AND  event_id = '<event-with-known-siblings>'
-ORDER  BY created_at DESC;
+  AND  event_id = '<event-id>'
+ORDER  BY reid_similarity DESC;
 ```
 
-Expect: self ≳ 0.65, sister/lookalike ≲ 0.40. If separation holds, proceed.
 If `reid_similarity` is mostly NULL, the probe had no detectable body (frontend
-full-frame too tight / sidecar down) — fix before Phase 3.
+full-frame too tight / sidecar down) — fix before enabling.
 
 ### Phase 3 — enable the gate (env only, no code)
 
-Once shadow data confirms separation:
+Safe to flip on directly for live events — no shadow period needed:
 
 ```bash
 # in .env.production on the VPS
@@ -100,13 +124,19 @@ REID_ENABLED_SCAN=true
 docker compose up -d backend          # or: docker compose restart backend
 ```
 
-The gate drops a match ONLY when its face similarity already cleared
-`REID_FACE_MIN_FOR_GATE` (0.90) AND its body cosine is below
-`REID_SIMILARITY_THRESHOLD` (0.65). Candidates with NULL Re-ID (mid-backfill,
-or probe had no body) bypass the gate — missing data never hides a real match.
+Tune `REID_ADAPTIVE_MARGIN` up if real matches are ever dropped (more
+permissive), down if siblings still leak.
 
 **Rollback** (instant, no deploy): set `REID_ENABLED_SCAN=false`, restart
 backend. Watch scan success rate for false-negative spikes after enabling.
+
+### Known limits
+
+- **Children** — OSNet is trained on adults; kids may separate weaker. If a
+  sibling pair includes a child and leaks, lower `REID_ADAPTIVE_MARGIN`.
+- **Group photos** — when two people stand together their body crops overlap,
+  blurring the signal. The face floor + relative margin absorb most of this;
+  an explicit overlap guard is a future add.
 
 ## Fail-soft guarantees
 
