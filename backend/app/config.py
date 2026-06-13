@@ -90,6 +90,23 @@ class Settings(BaseSettings):
     # reindex so Face.gender is populated.
     face_gender_filter_enabled: bool = False
 
+    # Re-Identification sidecar (Phase 0 of family-lookalike disambiguation).
+    # When indexing is enabled, the worker derives an upper-body crop for each
+    # detected face and POSTs it to reid-api/embed; the returned 512-d vector
+    # is stored in faces.reid_embedding for later scan-time gating.
+    # When scan is enabled, /scan computes the probe's body embedding and
+    # requires both face cosine >= face threshold AND Re-ID cosine >=
+    # reid_similarity_threshold for a match to be returned.
+    # Defaults ship `scan` OFF — Phase 0 only writes embeddings; the gate is
+    # flipped on once Phase 2 shadow logs confirm separation.
+    reid_api_url: str = "http://reid-api:5000"
+    reid_enabled_indexing: bool = True
+    reid_enabled_scan: bool = False
+    reid_similarity_threshold: float = 0.65
+    # Face similarity floor above which the Re-ID gate engages. Candidates
+    # rejected by the face threshold alone never see the Re-ID step.
+    reid_face_min_for_gate: float = 0.90
+
     # CompreFace (comma-separated URLs for round-robin load balancing)
     compreface_api_url: str = "http://compreface-api:8080"
     compreface_api_key: str = ""  # Recognition service API key

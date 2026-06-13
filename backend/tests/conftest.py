@@ -195,6 +195,28 @@ def rate_limiter(redis_client):
 
 
 @pytest.fixture(autouse=True)
+def _disable_reid_in_tests():
+    """Default-off in tests so existing indexer / scan tests that mock
+    `_run_async` (face_indexer_compreface) don't have to know about Re-ID.
+    Production defaults to ON; the env-driven setting in app/config.py wins
+    at startup, this fixture flips it locally for the test run only.
+
+    Tests that exercise the Re-ID path explicitly (e.g. test_reid_client)
+    re-enable it via their own fixture before assertions.
+    """
+    from app.config import settings as app_settings
+    original_index = app_settings.reid_enabled_indexing
+    original_scan = app_settings.reid_enabled_scan
+    app_settings.reid_enabled_indexing = False
+    app_settings.reid_enabled_scan = False
+    try:
+        yield
+    finally:
+        app_settings.reid_enabled_indexing = original_index
+        app_settings.reid_enabled_scan = original_scan
+
+
+@pytest.fixture(autouse=True)
 def _lift_auth_rate_limits():
     """The TestClient always sources requests from a single 'testclient' IP and
     we share the production Redis bucket. Without this, sequential auth /

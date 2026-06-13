@@ -18,6 +18,8 @@ from app.utils.thumbnail import generate_thumbnail
 from app.utils.image_safety import safe_open as safe_open_image
 from app.cache import cache_delete_pattern
 from app.face_quality import compute_face_quality_metrics
+from app.body_crop import derive_upper_body_bbox
+from app.reid_client import compute_embedding as compute_reid_embedding
 
 
 class CompreFaceUpstreamError(Exception):
@@ -438,6 +440,39 @@ def index_photo_compreface(image_id: str, api_key: str, db_session: Optional[Ses
                 else:
                     gender_value = None
 
+                # Compute the per-face Re-ID body embedding. Derives an upper-
+                # body crop from the same `img` already in memory, ships it to
+                # the reid-api sidecar, and writes the returned 512-d vector
+                # into the Face row. Any failure (sidecar down, timeout,
+                # degenerate crop, missing model) is fail-soft — leaves
+                # reid_embedding NULL and the scan-time Re-ID gate falls back
+                # to face-only matching for that candidate. Same `img` /
+                # bbox geometry MUST flow through derive_upper_body_bbox so
+                # the probe-side crop at scan time matches.
+                reid_embedding_value: Optional[list[float]] = None
+                if settings.reid_enabled_indexing:
+                    try:
+                        body_bbox = derive_upper_body_bbox(
+                            [x_min, y_min, x_max, y_max],
+                            img.width,
+                            img.height,
+                        )
+                        body_crop_img = img.crop(body_bbox)
+                        if body_crop_img.mode in ('RGBA', 'LA', 'P'):
+                            body_crop_img = body_crop_img.convert('RGB')
+                        body_buf = io.BytesIO()
+                        body_crop_img.save(body_buf, format='JPEG', quality=90)
+                        reid_embedding_value = _run_async(
+                            compute_reid_embedding(body_buf.getvalue())
+                        )
+                    except Exception as reid_exc:
+                        # Indexer must never fail because Re-ID failed. Log and
+                        # write NULL — the backfill job can fill it in later.
+                        logger.warning(
+                            f"Re-ID embedding failed for face {idx} of image {image_id}: {reid_exc}"
+                        )
+                        reid_embedding_value = None
+
                 # We store the CompreFace subject_id as the embedding reference
                 # (CompreFace manages actual embeddings internally)
                 face = Face(
@@ -452,6 +487,7 @@ def index_photo_compreface(image_id: str, api_key: str, db_session: Optional[Ses
                     blur_score=quality_metrics.blur_score if quality_metrics else None,
                     brightness_score=quality_metrics.brightness_score if quality_metrics else None,
                     crop_clipped=quality_metrics.crop_clipped if quality_metrics else False,
+                    reid_embedding=reid_embedding_value,
                 )
                 db.add(face)
                 face_count += 1

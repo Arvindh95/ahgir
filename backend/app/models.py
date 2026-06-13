@@ -143,6 +143,13 @@ class Face(Base):
     crop_clipped = Column(Boolean, nullable=False, default=False, server_default=sa.text('false'))
     # Set by the background same-person clustering job (see face_clustering.py).
     face_cluster_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    # Person Re-Identification body embedding (Phase 0 of the Re-ID rollout).
+    # 512-d L2-normalised vector from the reid-api sidecar (OSNet-AIN ONNX).
+    # NULL means "no Re-ID signal" — set on legacy rows (pre-Phase-0), on
+    # newly-indexed rows when the sidecar is down (fail-soft), and when the
+    # body crop is degenerate (face touching frame edge with no torso room).
+    # Read by the scan endpoint's Re-ID gate (Phase 3) — NULL skips the gate.
+    reid_embedding = Column(Vector(512), nullable=True)
     created_at = Column(TIMESTAMP, server_default=func.now(), nullable=False)
 
     # Relationships

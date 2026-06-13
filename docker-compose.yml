@@ -121,6 +121,11 @@ services:
         condition: service_healthy
       compreface-api:
         condition: service_started
+      reid-api:
+        # service_started — NOT service_healthy. A missing OSNet model or
+        # crashed sidecar must not block the backend; the Re-ID client is
+        # fail-soft and writes NULL embeddings until the sidecar recovers.
+        condition: service_started
     security_opt:
       - seccomp:unconfined
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --proxy-headers --forwarded-allow-ips='*'
@@ -237,6 +242,8 @@ services:
         condition: service_healthy
       compreface-api:
         condition: service_started
+      reid-api:
+        condition: service_started
     security_opt:
       - seccomp:unconfined
     command: rq worker --url redis://redis:6379/0 face_indexing retention default
@@ -338,6 +345,22 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
+
+  # Re-Identification (Re-ID) sidecar — body / clothing embedding service
+  # used by the indexer to populate faces.reid_embedding and (Phase 3) by
+  # the scan endpoint to gate face matches that pass the cosine threshold
+  # but fail to match on body. See reid-api/README.md for one-time model
+  # export. Backend depends on it with service_started (not service_healthy)
+  # so a missing model / down sidecar never blocks the rest of the stack.
+  reid-api:
+    build:
+      context: ./reid-api
+      dockerfile: Dockerfile
+    container_name: reid-api
+    volumes:
+      - ./reid-api/models:/app/models:ro
+    ports:
+      - "5001:5000"
 
 volumes:
   postgres_data:

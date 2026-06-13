@@ -126,6 +126,11 @@ services:
         condition: service_healthy
       compreface-api:
         condition: service_started
+      reid-api:
+        # service_started — Re-ID is fail-soft. A missing OSNet model must
+        # not block the indexer or backend; missing embeddings are written
+        # as NULL and the scan-time gate falls back to face-only.
+        condition: service_started
     security_opt:
       - seccomp:unconfined
     command: >
@@ -181,6 +186,11 @@ services:
         condition: service_healthy
       compreface-api:
         condition: service_started
+      reid-api:
+        # service_started — Re-ID is fail-soft. A missing OSNet model must
+        # not block the indexer or backend; missing embeddings are written
+        # as NULL and the scan-time gate falls back to face-only.
+        condition: service_started
     security_opt:
       - seccomp:unconfined
     command: >
@@ -235,6 +245,11 @@ services:
       redis:
         condition: service_healthy
       compreface-api:
+        condition: service_started
+      reid-api:
+        # service_started — Re-ID is fail-soft. A missing OSNet model must
+        # not block the indexer or backend; missing embeddings are written
+        # as NULL and the scan-time gate falls back to face-only.
         condition: service_started
     security_opt:
       - seccomp:unconfined
@@ -324,6 +339,13 @@ services:
     restart: unless-stopped
 
   compreface-postgres-db:
+    restart: unless-stopped
+
+  # Re-ID sidecar (Phase 0 — see reid-api/README.md). Built from this repo;
+  # OSNet ONNX model lives in reid-api/models/ mounted read-only. Fail-soft:
+  # if the model is missing the container starts but /embed returns 503 and
+  # the indexer writes NULL embeddings until the model is in place.
+  reid-api:
     restart: unless-stopped
 
   # Caddy is disabled in VPS mode — the host's nginx terminates TLS instead.
