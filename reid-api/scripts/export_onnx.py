@@ -8,9 +8,22 @@ runs the same script and gets bit-identical weights. The torchreid dependency
 is intentionally NOT in reid-api/requirements.txt because we only need it
 once at export time; the runtime container ships only onnxruntime.
 
-Usage:
-    pip install torch==2.1.2 torchvision==0.16.2 torchreid==1.4.0
-    python reid-api/scripts/export_onnx.py
+torchreid is NOT a PyPI package at the version we need (PyPI 'torchreid' stops
+at 0.2.5 and lacks osnet_ain). Install it from KaiyangZhou's deep-person-reid
+source, and note torch.onnx.export needs the `onnx` package too. The simplest
+reproducible path is a throwaway container (no host pollution):
+
+    docker run --rm -v "$PWD/reid-api:/work" -w /work python:3.11-slim bash -c '
+      apt-get update -qq && apt-get install -y -qq libgl1 libglib2.0-0 gcc g++ git
+      pip install "numpy<2" Cython onnx
+      pip install torch==2.1.2 torchvision==0.16.2 --index-url https://download.pytorch.org/whl/cpu
+      git clone --depth 1 https://github.com/KaiyangZhou/deep-person-reid.git /tmp/dpr
+      grep -vE "tb-nightly|flake8|yapf|isort" /tmp/dpr/requirements.txt > /tmp/req.txt
+      pip install -r /tmp/req.txt tensorboard
+      pip install --no-build-isolation -e /tmp/dpr
+      python scripts/export_onnx.py'
+
+Then `docker compose restart reid-api`.
 """
 from __future__ import annotations
 
