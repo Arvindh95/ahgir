@@ -104,6 +104,14 @@ services:
       FACE_MIN_CROP_PIXELS: ${FACE_MIN_CROP_PIXELS:-32}
       FACE_CROP_PADDING_FACTOR: ${FACE_CROP_PADDING_FACTOR:-0.4}
       FACE_GENDER_FILTER_ENABLED: ${FACE_GENDER_FILTER_ENABLED:-false}
+      # Re-ID body matching. Indexing/backfill default ON; the scan-time gate
+      # defaults OFF (shadow mode). Phase 3 = set REID_ENABLED_SCAN=true in
+      # .env.production once shadow data confirms separation, then restart.
+      # reid-api URL uses the config default (http://reid-api:5000).
+      REID_ENABLED_INDEXING: ${REID_ENABLED_INDEXING:-true}
+      REID_ENABLED_SCAN: ${REID_ENABLED_SCAN:-false}
+      REID_SIMILARITY_THRESHOLD: ${REID_SIMILARITY_THRESHOLD:-0.65}
+      REID_FACE_MIN_FOR_GATE: ${REID_FACE_MIN_FOR_GATE:-0.90}
       SUBSCRIPTION_GRACE_PERIOD_DAYS: ${SUBSCRIPTION_GRACE_PERIOD_DAYS:-3}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-only-not-for-prod}
       ENVIRONMENT: production
@@ -164,6 +172,14 @@ services:
       FACE_MIN_CROP_PIXELS: ${FACE_MIN_CROP_PIXELS:-32}
       FACE_CROP_PADDING_FACTOR: ${FACE_CROP_PADDING_FACTOR:-0.4}
       FACE_GENDER_FILTER_ENABLED: ${FACE_GENDER_FILTER_ENABLED:-false}
+      # Re-ID body matching. Indexing/backfill default ON; the scan-time gate
+      # defaults OFF (shadow mode). Phase 3 = set REID_ENABLED_SCAN=true in
+      # .env.production once shadow data confirms separation, then restart.
+      # reid-api URL uses the config default (http://reid-api:5000).
+      REID_ENABLED_INDEXING: ${REID_ENABLED_INDEXING:-true}
+      REID_ENABLED_SCAN: ${REID_ENABLED_SCAN:-false}
+      REID_SIMILARITY_THRESHOLD: ${REID_SIMILARITY_THRESHOLD:-0.65}
+      REID_FACE_MIN_FOR_GATE: ${REID_FACE_MIN_FOR_GATE:-0.90}
       SUBSCRIPTION_GRACE_PERIOD_DAYS: ${SUBSCRIPTION_GRACE_PERIOD_DAYS:-3}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-only-not-for-prod}
       ENVIRONMENT: production
@@ -224,6 +240,14 @@ services:
       FACE_MIN_CROP_PIXELS: ${FACE_MIN_CROP_PIXELS:-32}
       FACE_CROP_PADDING_FACTOR: ${FACE_CROP_PADDING_FACTOR:-0.4}
       FACE_GENDER_FILTER_ENABLED: ${FACE_GENDER_FILTER_ENABLED:-false}
+      # Re-ID body matching. Indexing/backfill default ON; the scan-time gate
+      # defaults OFF (shadow mode). Phase 3 = set REID_ENABLED_SCAN=true in
+      # .env.production once shadow data confirms separation, then restart.
+      # reid-api URL uses the config default (http://reid-api:5000).
+      REID_ENABLED_INDEXING: ${REID_ENABLED_INDEXING:-true}
+      REID_ENABLED_SCAN: ${REID_ENABLED_SCAN:-false}
+      REID_SIMILARITY_THRESHOLD: ${REID_SIMILARITY_THRESHOLD:-0.65}
+      REID_FACE_MIN_FOR_GATE: ${REID_FACE_MIN_FOR_GATE:-0.90}
       SUBSCRIPTION_GRACE_PERIOD_DAYS: ${SUBSCRIPTION_GRACE_PERIOD_DAYS:-3}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-only-not-for-prod}
       ENVIRONMENT: production
