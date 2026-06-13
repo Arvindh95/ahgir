@@ -225,6 +225,27 @@ def enqueue_event_reindex(event_id: str, actor_user_id: Optional[str] = None) ->
     return job.id
 
 
+def enqueue_reid_backfill(event_id: Optional[str] = None) -> str:
+    """Enqueue a Phase 1 Re-ID backfill of NULL faces.reid_embedding rows.
+
+    Scoped to one event when ``event_id`` is given, else every event. Runs on
+    the retention queue (lower priority than face_indexing) so a long backfill
+    never starves live per-image indexing. The job id is deterministic per
+    scope (``reid_backfill:{event|all}``) so an operator double-tapping the
+    admin button doesn't stack two concurrent backfills over the same rows.
+    """
+    from app.workers.reid_backfill import backfill_reid_embeddings
+    job = retention_queue.enqueue(
+        backfill_reid_embeddings,
+        event_id,
+        job_id=f"reid_backfill:{event_id or 'all'}",
+        job_timeout="2h",
+        failure_ttl="7d",
+        result_ttl="7d",
+    )
+    return job.id
+
+
 def enqueue_stale_pending_reconciler() -> str:
     """Enqueue the stale-pending-images reconciler.
 

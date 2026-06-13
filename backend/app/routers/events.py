@@ -881,6 +881,10 @@ class ReindexResponse(BaseModel):
     message: str
     queued_count: int
 
+class ReidBackfillResponse(BaseModel):
+    message: str
+    job_id: str
+
 class AuditLogItem(BaseModel):
     log_id: str
     event_id: str
@@ -2023,6 +2027,70 @@ async def reindex_event(
             "as images are reprocessed."
         ),
         queued_count=image_count_at_request,
+    )
+
+
+@router.post("/{event_id}/reid-backfill", response_model=ReidBackfillResponse)
+async def reid_backfill_event(
+    event_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Backfill Re-ID body embeddings for an Event (Phase 1 of the Re-ID rollout).
+
+    - **event_id**: UUID of the event
+
+    Enqueues a background job that fills every ``faces.reid_embedding`` still
+    NULL for this event — legacy faces indexed before Phase 0, plus any whose
+    embedding failed fail-soft at index time. Idempotent: re-running only
+    touches rows that are still NULL. Does NOT re-run face detection or affect
+    scan results (the Re-ID gate stays off until Phase 3).
+    """
+    try:
+        event_uuid = uuid.UUID(event_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid event ID format"
+        )
+
+    event = db.query(Event).filter(Event.id == event_uuid).first()
+    if not event:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Event not found"
+        )
+
+    # Same ownership rule as reindex: owner or superadmin.
+    if not current_user.is_superadmin and event.owner_user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to backfill this event"
+        )
+
+    from app.queue import enqueue_reid_backfill
+    try:
+        job_id = enqueue_reid_backfill(str(event_uuid))
+    except Exception as e:
+        logger.error(f"Failed to enqueue reid backfill for event {event_uuid}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not queue Re-ID backfill right now. Please try again in a moment.",
+        )
+
+    log_action(
+        db=db,
+        event_id=event_uuid,
+        actor_type='admin',
+        actor_id=current_user.id,
+        action='reid_backfill',
+        metadata={'reid_backfill_job_id': job_id},
+    )
+
+    return ReidBackfillResponse(
+        message="Re-ID backfill started in the background.",
+        job_id=job_id,
     )
 
 
