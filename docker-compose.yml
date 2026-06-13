@@ -79,6 +79,13 @@ services:
       FACE_MIN_CROP_PIXELS: ${FACE_MIN_CROP_PIXELS:-32}
       FACE_CROP_PADDING_FACTOR: ${FACE_CROP_PADDING_FACTOR:-0.4}
       FACE_GENDER_FILTER_ENABLED: ${FACE_GENDER_FILTER_ENABLED:-false}
+      # Re-ID body matching (reid-api URL uses the in-image default). Indexing
+      # ON by default; the adaptive scan gate OFF until flipped in .env.
+      REID_ENABLED_INDEXING: ${REID_ENABLED_INDEXING:-true}
+      REID_ENABLED_SCAN: ${REID_ENABLED_SCAN:-false}
+      REID_SIMILARITY_THRESHOLD: ${REID_SIMILARITY_THRESHOLD:-0.65}
+      REID_FACE_MIN_FOR_GATE: ${REID_FACE_MIN_FOR_GATE:-0.90}
+      REID_ADAPTIVE_MARGIN: ${REID_ADAPTIVE_MARGIN:-0.18}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-only-not-for-prod}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
       ENVIRONMENT: ${ENVIRONMENT:-development}
@@ -209,6 +216,13 @@ services:
       FACE_MIN_CROP_PIXELS: ${FACE_MIN_CROP_PIXELS:-32}
       FACE_CROP_PADDING_FACTOR: ${FACE_CROP_PADDING_FACTOR:-0.4}
       FACE_GENDER_FILTER_ENABLED: ${FACE_GENDER_FILTER_ENABLED:-false}
+      # Re-ID body matching (reid-api URL uses the in-image default). Indexing
+      # ON by default; the adaptive scan gate OFF until flipped in .env.
+      REID_ENABLED_INDEXING: ${REID_ENABLED_INDEXING:-true}
+      REID_ENABLED_SCAN: ${REID_ENABLED_SCAN:-false}
+      REID_SIMILARITY_THRESHOLD: ${REID_SIMILARITY_THRESHOLD:-0.65}
+      REID_FACE_MIN_FOR_GATE: ${REID_FACE_MIN_FOR_GATE:-0.90}
+      REID_ADAPTIVE_MARGIN: ${REID_ADAPTIVE_MARGIN:-0.18}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-only-not-for-prod}
       ENVIRONMENT: ${ENVIRONMENT:-development}
       SMTP_HOST: ${SMTP_HOST:-smtp-relay.brevo.com}
